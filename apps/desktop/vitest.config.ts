@@ -5,6 +5,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
+    environmentMatchGlobs: [
+      // Main process tests run in node environment
+      ['src/main/**', 'node'],
+    ],
   },
   resolve: {
     alias: {
