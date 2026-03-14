@@ -37,9 +37,13 @@ export function ThumbnailCell({
   // Request thumbnail if not yet requested
   useEffect(() => {
     if (thumbnail === 'loading') {
+      const encodedPath = image.path
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/');
       requestThumbnail(
         image.path,
-        `app://${encodeURIComponent(image.path)}`,
+        `app://file${encodedPath}`,
         256,
         groupIndex,
       );

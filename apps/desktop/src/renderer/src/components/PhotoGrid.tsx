@@ -57,6 +57,11 @@ export function PhotoGrid({
     overscan: 3,
   });
 
+  // Force virtualizer to recalculate when cell size or container width changes
+  useEffect(() => {
+    virtualizer.measure();
+  }, [cellSize, containerWidth, groups.length, virtualizer]);
+
   // Track container width via ResizeObserver
   useEffect(() => {
     const el = parentRef.current;

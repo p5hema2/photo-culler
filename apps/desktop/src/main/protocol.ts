@@ -18,6 +18,8 @@ export function registerSchemes(): void {
 export function registerProtocolHandlers(): void {
   protocol.handle('app', (request) => {
     const url = new URL(request.url);
+    // URL format: app://file/path/to/image.jpg
+    // pathname gives /path/to/image.jpg with each segment percent-encoded
     const filePath = decodeURIComponent(url.pathname);
     const normalized = path.normalize(filePath);
     return net.fetch(`file://${normalized}`);
