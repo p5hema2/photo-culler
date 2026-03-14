@@ -9,7 +9,10 @@
     "preview": "electron-vite preview",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "package": "electron-builder",
+    "package:mac": "electron-builder --mac",
+    "package:win": "electron-builder --win"
   },
   "dependencies": {
     "react": "^19.2.0",
