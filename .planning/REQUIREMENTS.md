@@ -13,9 +13,9 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **INFRA-02**: All dependencies are pure JS/TS or bundled WASM — no native Node.js addons
 - [x] **INFRA-03**: Prettier formats all code with a single `pnpm format` command
 - [x] **INFRA-04**: ESLint enforces code quality across all packages
-- [ ] **INFRA-05**: Electron app launches via `pnpm dev` with hot module reload
-- [ ] **INFRA-06**: Custom `app://` protocol serves local images securely (no webSecurity disable)
-- [ ] **INFRA-07**: Typed IPC bridge via contextBridge — renderer never accesses Node.js directly
+- [x] **INFRA-05**: Electron app launches via `pnpm dev` with hot module reload
+- [x] **INFRA-06**: Custom `app://` protocol serves local images securely (no webSecurity disable)
+- [x] **INFRA-07**: Typed IPC bridge via contextBridge — renderer never accesses Node.js directly
 
 ### Browsing
 
