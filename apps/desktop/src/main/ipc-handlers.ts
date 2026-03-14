@@ -1,5 +1,5 @@
 import { ipcMain, dialog, shell } from 'electron';
-import { writeFile, readFile, mkdir, rename } from 'node:fs/promises';
+import { writeFile, readFile, mkdir, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { IPC_CHANNELS } from '@photo-culler/types';
 import type { SessionConfig, TrashResult } from '@photo-culler/types';
@@ -116,6 +116,24 @@ export function registerIpcHandlers(): void {
     for (const filePath of filePaths) {
       try {
         await shell.trashItem(filePath);
+        result.succeeded.push(filePath);
+      } catch (err) {
+        result.failed.push({
+          path: filePath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return result;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.DELETE_FILES, async (_event, filePaths: string[]) => {
+    const result: TrashResult = { succeeded: [], failed: [] };
+
+    for (const filePath of filePaths) {
+      try {
+        await unlink(filePath);
         result.succeeded.push(filePath);
       } catch (err) {
         result.failed.push({

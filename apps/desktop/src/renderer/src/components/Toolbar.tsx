@@ -11,6 +11,7 @@ interface ToolbarProps {
   thumbnailSize: 'small' | 'medium' | 'large';
   groupingThresholdMs: number;
   exifProgress: { completed: number; total: number };
+  deleteCount: number;
   onSelectFolder: () => void;
   onSortFieldChange: (field: SortField) => void;
   onSortDirectionChange: (direction: SortDirection) => void;
@@ -19,6 +20,7 @@ interface ToolbarProps {
   onSearchQueryChange: (query: string) => void;
   onThumbnailSizeChange: (size: 'small' | 'medium' | 'large') => void;
   onGroupingThresholdChange: (ms: number) => void;
+  onExecute: () => void;
 }
 
 const SORT_OPTIONS: Array<{ value: SortField; label: string }> = [
@@ -71,6 +73,7 @@ export function Toolbar({
   thumbnailSize,
   groupingThresholdMs,
   exifProgress,
+  deleteCount,
   onSelectFolder,
   onSortFieldChange,
   onSortDirectionChange,
@@ -79,6 +82,7 @@ export function Toolbar({
   onSearchQueryChange,
   onThumbnailSizeChange,
   onGroupingThresholdChange,
+  onExecute,
 }: ToolbarProps): React.JSX.Element {
   const [localSearch, setLocalSearch] = useState(searchQuery);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -281,12 +285,29 @@ export function Toolbar({
         ))}
       </div>
 
+      {/* Spacer to push execute button right */}
+      <div className="flex-1" />
+
       {/* EXIF progress */}
       {showProgress && (
         <span className="text-xs text-gray-500" data-testid="exif-progress">
           Extracting metadata: {exifProgress.completed}/{exifProgress.total}
         </span>
       )}
+
+      {/* Execute button */}
+      <button
+        onClick={onExecute}
+        disabled={deleteCount === 0}
+        className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+          deleteCount > 0
+            ? 'bg-red-600 hover:bg-red-700'
+            : 'bg-gray-600 cursor-not-allowed text-gray-400'
+        }`}
+        data-testid="execute-btn"
+      >
+        Execute{deleteCount > 0 ? ` (${deleteCount})` : ''}
+      </button>
     </div>
   );
 }

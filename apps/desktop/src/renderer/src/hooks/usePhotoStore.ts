@@ -7,6 +7,7 @@ import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import { loadResults, saveResults } from '../lib/results';
 import { useExifExtractor } from './useExifExtractor';
 import { useThumbnailWorker } from './useThumbnailWorker';
+import type { ExecuteOptions, ExecuteResult } from '../components/ExecutePanel';
 
 export interface PhotoState {
   folderPath: string | null;
@@ -67,6 +68,7 @@ export interface PhotoStoreAPI {
   setGroupingThresholdMs: (ms: number) => void;
   setFocusedImage: (path: string | null) => void;
   clearError: () => void;
+  executeActions: (options: ExecuteOptions) => Promise<ExecuteResult>;
 }
 
 export function usePhotoStore(): PhotoStoreAPI {
@@ -76,6 +78,10 @@ export function usePhotoStore(): PhotoStoreAPI {
   const resultsRef = useRef<ResultsFile | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const stateRef = useRef(state);
+
+  // Keep stateRef in sync
+  stateRef.current = state;
 
   // Track mounted state
   useEffect(() => {
@@ -118,6 +124,20 @@ export function usePhotoStore(): PhotoStoreAPI {
         clearTimeout(saveTimerRef.current);
       }
     };
+  }, []);
+
+  // Flush save on beforeunload
+  useEffect(() => {
+    const handleBeforeUnload = (): void => {
+      if (saveTimerRef.current && resultsRef.current && stateRef.current.folderPath) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        // Best-effort save -- IPC call fires but page may unload before completion
+        saveResults(stateRef.current.folderPath, resultsRef.current);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
   // Update exif progress from hook
@@ -318,6 +338,103 @@ export function usePhotoStore(): PhotoStoreAPI {
     setState((prev) => ({ ...prev, error: null }));
   }, []);
 
+  const executeActions = useCallback(
+    async (options: ExecuteOptions): Promise<ExecuteResult> => {
+      const current = stateRef.current;
+      if (!current.folderPath) {
+        return { trashedCount: 0, movedCount: 0, failedPaths: [] };
+      }
+
+      const folderPath = current.folderPath;
+      const executeResult: ExecuteResult = { trashedCount: 0, movedCount: 0, failedPaths: [] };
+
+      // Get paths of delete-classified images
+      const deletePaths = current.images
+        .filter((img) => (current.classifications[img.name] ?? 'review') === 'delete')
+        .map((img) => img.path);
+
+      // Execute delete/trash
+      if (deletePaths.length > 0) {
+        const deleteResult =
+          options.deleteMode === 'trash'
+            ? await window.api.trashFiles(deletePaths)
+            : await window.api.deleteFiles(deletePaths);
+
+        executeResult.trashedCount = deleteResult.succeeded.length;
+        executeResult.failedPaths.push(...deleteResult.failed);
+      }
+
+      // Move keep images to picks/ if requested
+      let moveSucceeded: string[] = [];
+      if (options.movePicks) {
+        const keepPaths = current.images
+          .filter((img) => (current.classifications[img.name] ?? 'review') === 'keep')
+          .map((img) => img.path);
+
+        if (keepPaths.length > 0) {
+          const moveResult = await window.api.moveToPicks(folderPath, keepPaths);
+          executeResult.movedCount = moveResult.succeeded.length;
+          executeResult.failedPaths.push(...moveResult.failed);
+          moveSucceeded = moveResult.succeeded;
+        }
+      }
+
+      // Collect paths that were successfully processed (not in failedPaths)
+      const failedPathSet = new Set(executeResult.failedPaths.map((f) => f.path));
+      const succeededDeletePaths = new Set(deletePaths.filter((p) => !failedPathSet.has(p)));
+      const succeededMovePaths = new Set(moveSucceeded);
+
+      // Remove succeeded images from state
+      setState((prev) => {
+        const nextImages = prev.images.filter(
+          (img) => !succeededDeletePaths.has(img.path) && !succeededMovePaths.has(img.path),
+        );
+        const nextClassifications = { ...prev.classifications };
+        for (const img of prev.images) {
+          if (succeededDeletePaths.has(img.path) || succeededMovePaths.has(img.path)) {
+            delete nextClassifications[img.name];
+          }
+        }
+        return { ...prev, images: nextImages, classifications: nextClassifications };
+      });
+
+      // Cancel any pending debounced save
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+
+      // Save updated results file immediately (not debounced)
+      if (resultsRef.current) {
+        // Build new results from remaining images
+        const remainingClassifications: Record<string, Classification> = {};
+        for (const img of stateRef.current.images) {
+          if (!succeededDeletePaths.has(img.path) && !succeededMovePaths.has(img.path)) {
+            remainingClassifications[img.name] = stateRef.current.classifications[img.name] ?? 'review';
+          }
+        }
+
+        resultsRef.current = {
+          ...resultsRef.current,
+          images: Object.fromEntries(
+            Object.entries(remainingClassifications).map(([k, v]) => [
+              k,
+              {
+                classification: v,
+                userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
+                qualityScore: resultsRef.current?.images[k]?.qualityScore,
+              },
+            ]),
+          ),
+        };
+        await saveResults(folderPath, resultsRef.current);
+      }
+
+      return executeResult;
+    },
+    [],
+  );
+
   // Derived state
   const filteredImages = useMemo(() => {
     let result = state.images;
@@ -395,6 +512,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     setGroupingThresholdMs,
     setFocusedImage,
     clearError,
+    executeActions,
   };
 }
 

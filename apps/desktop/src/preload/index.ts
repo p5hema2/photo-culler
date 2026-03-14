@@ -13,6 +13,7 @@ const api: ElectronAPI = {
   setSession: (config) => ipcRenderer.invoke(IPC_CHANNELS.SET_SESSION, config),
   moveToPicks: (folderPath, filePaths) =>
     ipcRenderer.invoke(IPC_CHANNELS.MOVE_TO_PICKS, folderPath, filePaths),
+  deleteFiles: (filePaths) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_FILES, filePaths),
 };
 
 contextBridge.exposeInMainWorld('api', api);

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { usePhotoStore } from './hooks/usePhotoStore';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { DropZone } from './components/DropZone';
 import { Toolbar } from './components/Toolbar';
 import { PhotoGrid } from './components/PhotoGrid';
 import { EmptyState } from './components/EmptyState';
+import { ExecutePanel } from './components/ExecutePanel';
 
 function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX.Element {
   return (
@@ -52,6 +53,7 @@ function App(): React.JSX.Element {
   const store = usePhotoStore();
   const { state, groups, thumbnailWorker } = store;
   const gridContainerRef = useRef<HTMLDivElement>(null);
+  const [showExecutePanel, setShowExecutePanel] = useState(false);
 
   useKeyboardNav({
     groups,
@@ -84,6 +86,19 @@ function App(): React.JSX.Element {
     },
     [store],
   );
+
+  const handleOpenExecute = useCallback(() => {
+    setShowExecutePanel(true);
+  }, []);
+
+  const handleCloseExecute = useCallback(() => {
+    setShowExecutePanel(false);
+  }, []);
+
+  // Count delete-classified images for the Execute button
+  const deleteCount = useMemo(() => {
+    return Object.values(state.classifications).filter((c) => c === 'delete').length;
+  }, [state.classifications]);
 
   const renderContent = (): React.JSX.Element => {
     if (state.isLoading) {
@@ -121,6 +136,7 @@ function App(): React.JSX.Element {
           thumbnailSize={state.thumbnailSize}
           groupingThresholdMs={state.groupingThresholdMs}
           exifProgress={state.exifProgress}
+          deleteCount={deleteCount}
           onSelectFolder={handleSelectFolder}
           onSortFieldChange={store.setSortField}
           onSortDirectionChange={store.setSortDirection}
@@ -129,6 +145,7 @@ function App(): React.JSX.Element {
           onSearchQueryChange={store.setSearchQuery}
           onThumbnailSizeChange={store.setThumbnailSize}
           onGroupingThresholdChange={store.setGroupingThresholdMs}
+          onExecute={handleOpenExecute}
         />
 
         {/* Error banner */}
@@ -151,6 +168,13 @@ function App(): React.JSX.Element {
           {renderContent()}
         </div>
       </div>
+
+      <ExecutePanel
+        classifications={state.classifications}
+        isOpen={showExecutePanel}
+        onClose={handleCloseExecute}
+        onExecute={store.executeActions}
+      />
     </DropZone>
   );
 }

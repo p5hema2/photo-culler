@@ -9,6 +9,7 @@ export const IPC_CHANNELS = {
   GET_SESSION: 'store:get-session',
   SET_SESSION: 'store:set-session',
   MOVE_TO_PICKS: 'fs:move-to-picks',
+  DELETE_FILES: 'fs:delete-files',
 } as const;
 
 export interface TrashResult {
@@ -59,4 +60,5 @@ export interface ElectronAPI {
     folderPath: string,
     filePaths: string[],
   ) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
+  deleteFiles: (filePaths: string[]) => Promise<TrashResult>;
 }
