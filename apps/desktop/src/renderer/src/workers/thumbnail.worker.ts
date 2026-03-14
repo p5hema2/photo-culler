@@ -1,12 +1,16 @@
 /**
  * Thumbnail generation Web Worker.
- * Receives image URLs, generates 256x256 center-cropped JPEG thumbnails
- * using createImageBitmap + OffscreenCanvas, and transfers back as ImageBitmap.
+ * Receives image data as ArrayBuffer, generates 256x256 center-cropped JPEG
+ * thumbnails using createImageBitmap + OffscreenCanvas, and transfers back as ImageBitmap.
+ *
+ * The main thread handles fetching (which requires app:// protocol access)
+ * and passes raw image data to the worker for heavy processing.
  */
 
 export interface ThumbnailRequest {
   id: string;
-  url: string;
+  buffer: ArrayBuffer;
+  mimeType: string;
   size: number;
 }
 
@@ -17,15 +21,10 @@ export interface ThumbnailResponse {
 }
 
 self.onmessage = async (event: MessageEvent<ThumbnailRequest>) => {
-  const { id, url, size } = event.data;
+  const { id, buffer, mimeType, size } = event.data;
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Fetch failed: ${response.status}`);
-    }
-
-    const blob = await response.blob();
+    const blob = new Blob([buffer], { type: mimeType });
     const bitmap = await createImageBitmap(blob);
 
     // Center-crop with object-fit:cover math

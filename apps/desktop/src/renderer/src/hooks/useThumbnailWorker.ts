@@ -46,18 +46,42 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
       const bVisible = b.groupIndex >= first && b.groupIndex <= last;
       if (aVisible && !bVisible) return -1;
       if (!aVisible && bVisible) return 1;
-      // Within same visibility, prefer lower group index
       return a.groupIndex - b.groupIndex;
     });
 
     const item = queue.shift()!;
     busyRef.current.add(workerIndex);
-    workersRef.current[workerIndex]?.postMessage({
-      id: item.id,
-      url: item.url,
-      size: item.size,
-    });
+    fetchAndSendToWorker(workerIndex, item.id, item.url, item.size);
   }, []);
+
+  /**
+   * Fetch image blob in the main thread (which has app:// protocol access),
+   * then transfer the ArrayBuffer to the worker for heavy processing.
+   */
+  const fetchAndSendToWorker = useCallback(
+    async (workerIndex: number, id: string, url: string, size: number) => {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Fetch failed: ${response.status}`);
+        }
+        const blob = await response.blob();
+        const buffer = await blob.arrayBuffer();
+        const worker = workersRef.current[workerIndex];
+        if (worker) {
+          worker.postMessage({ id, buffer, mimeType: blob.type, size }, [buffer]);
+        }
+      } catch {
+        // Fetch failed in main thread — report error directly
+        pendingRef.current.delete(id);
+        cacheRef.current.set(id, 'error');
+        setVersion((v) => v + 1);
+        busyRef.current.delete(workerIndex);
+        dispatchNext(workerIndex);
+      }
+    },
+    [dispatchNext],
+  );
 
   const handleWorkerMessage = useCallback(
     (workerIndex: number, event: MessageEvent<ThumbnailResponse>) => {
@@ -119,7 +143,7 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
       for (let i = 0; i < workers.length; i++) {
         if (!busyRef.current.has(i)) {
           busyRef.current.add(i);
-          workers[i].postMessage({ id, url, size });
+          fetchAndSendToWorker(i, id, url, size);
           return;
         }
       }
@@ -127,7 +151,7 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
       // All workers busy -- add to queue
       queueRef.current.push({ id, url, size, groupIndex });
     },
-    [],
+    [fetchAndSendToWorker],
   );
 
   const getThumbnail = useCallback((id: string): ThumbnailStatus => {

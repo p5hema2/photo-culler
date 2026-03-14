@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { useThumbnailWorker } from '../hooks/useThumbnailWorker';
 
 // Mock Worker
@@ -24,6 +24,10 @@ Object.defineProperty(globalThis.navigator, 'hardwareConcurrency', {
   configurable: true,
 });
 
+// Mock fetch to return a fake blob
+const mockBlob = new Blob(['fake-image-data'], { type: 'image/jpeg' });
+const mockArrayBuffer = new ArrayBuffer(16);
+
 beforeEach(() => {
   mockWorkers.length = 0;
 
@@ -36,6 +40,18 @@ beforeEach(() => {
       }
     },
   );
+
+  // Mock fetch to resolve with a blob
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(mockBlob),
+    }),
+  );
+
+  // Mock Blob.prototype.arrayBuffer
+  vi.spyOn(Blob.prototype, 'arrayBuffer').mockResolvedValue(mockArrayBuffer);
 });
 
 afterEach(() => {
@@ -48,40 +64,52 @@ describe('useThumbnailWorker', () => {
     expect(mockWorkers).toHaveLength(4);
   });
 
-  it('requestThumbnail sends message to a free worker', () => {
+  it('requestThumbnail fetches and sends buffer to a free worker', async () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     act(() => {
-      result.current.requestThumbnail('img-1', 'app://local/test.jpg', 256);
+      result.current.requestThumbnail('img-1', 'app://file/test.jpg', 256);
     });
 
-    // Should have posted to one of the workers
-    const posted = mockWorkers.some((w) => w.postMessage.mock.calls.length > 0);
-    expect(posted).toBe(true);
+    // Wait for async fetch + postMessage
+    await waitFor(() => {
+      const posted = mockWorkers.some((w) => w.postMessage.mock.calls.length > 0);
+      expect(posted).toBe(true);
+    });
 
     const calledWorker = mockWorkers.find((w) => w.postMessage.mock.calls.length > 0)!;
-    expect(calledWorker.postMessage).toHaveBeenCalledWith({
+    const call = calledWorker.postMessage.mock.calls[0];
+    expect(call[0]).toMatchObject({
       id: 'img-1',
-      url: 'app://local/test.jpg',
+      mimeType: 'image/jpeg',
       size: 256,
     });
+    expect(call[0].buffer).toBe(mockArrayBuffer);
+    // ArrayBuffer transferred
+    expect(call[1]).toEqual([mockArrayBuffer]);
   });
 
   it('getThumbnail returns loading for pending requests', () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     act(() => {
-      result.current.requestThumbnail('img-1', 'app://local/test.jpg', 256);
+      result.current.requestThumbnail('img-1', 'app://file/test.jpg', 256);
     });
 
     expect(result.current.getThumbnail('img-1')).toBe('loading');
   });
 
-  it('getThumbnail returns bitmap after worker responds', () => {
+  it('getThumbnail returns bitmap after worker responds', async () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     act(() => {
-      result.current.requestThumbnail('img-1', 'app://local/test.jpg', 256);
+      result.current.requestThumbnail('img-1', 'app://file/test.jpg', 256);
+    });
+
+    // Wait for fetch to complete and message to be sent
+    await waitFor(() => {
+      const posted = mockWorkers.some((w) => w.postMessage.mock.calls.length > 0);
+      expect(posted).toBe(true);
     });
 
     const mockBitmap = { close: vi.fn() } as unknown as ImageBitmap;
@@ -94,11 +122,16 @@ describe('useThumbnailWorker', () => {
     expect(result.current.getThumbnail('img-1')).toBe(mockBitmap);
   });
 
-  it('getThumbnail returns error after worker error response', () => {
+  it('getThumbnail returns error after worker error response', async () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     act(() => {
-      result.current.requestThumbnail('img-1', 'app://local/test.jpg', 256);
+      result.current.requestThumbnail('img-1', 'app://file/test.jpg', 256);
+    });
+
+    await waitFor(() => {
+      const posted = mockWorkers.some((w) => w.postMessage.mock.calls.length > 0);
+      expect(posted).toBe(true);
     });
 
     act(() => {
@@ -128,30 +161,27 @@ describe('useThumbnailWorker', () => {
     expect(mockWorkers).toHaveLength(8);
   });
 
-  it('queues requests when all workers are busy', () => {
+  it('queues requests when all workers are busy', async () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     // Fill all 4 workers
     act(() => {
       for (let i = 0; i < 4; i++) {
-        result.current.requestThumbnail(`img-${i}`, `app://local/test${i}.jpg`, 256);
+        result.current.requestThumbnail(`img-${i}`, `app://file/test${i}.jpg`, 256);
       }
     });
 
-    // All workers should have received a message
-    for (const worker of mockWorkers) {
-      expect(worker.postMessage).toHaveBeenCalledTimes(1);
-    }
-
-    // This should go to queue
-    act(() => {
-      result.current.requestThumbnail('img-4', 'app://local/test4.jpg', 256, 5);
+    // Wait for all fetches to complete
+    await waitFor(() => {
+      for (const worker of mockWorkers) {
+        expect(worker.postMessage).toHaveBeenCalledTimes(1);
+      }
     });
 
-    // Still only 1 message per worker
-    for (const worker of mockWorkers) {
-      expect(worker.postMessage).toHaveBeenCalledTimes(1);
-    }
+    // This should go to queue (all workers busy)
+    act(() => {
+      result.current.requestThumbnail('img-4', 'app://file/test4.jpg', 256, 5);
+    });
 
     // Complete first worker's task -- should dispatch queued item
     const mockBitmap = { close: vi.fn() } as unknown as ImageBitmap;
@@ -159,24 +189,32 @@ describe('useThumbnailWorker', () => {
       mockWorkers[0].simulateMessage({ id: 'img-0', bitmap: mockBitmap });
     });
 
-    // First worker should now have 2 messages (original + queued)
-    expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(2);
+    // Wait for the queued fetch to complete
+    await waitFor(() => {
+      expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(2);
+    });
   });
 
-  it('updateVisibleRange reprioritizes pending queue', () => {
+  it('updateVisibleRange reprioritizes pending queue', async () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     // Fill all workers
     act(() => {
       for (let i = 0; i < 4; i++) {
-        result.current.requestThumbnail(`busy-${i}`, `app://local/busy${i}.jpg`, 256);
+        result.current.requestThumbnail(`busy-${i}`, `app://file/busy${i}.jpg`, 256);
+      }
+    });
+
+    await waitFor(() => {
+      for (const worker of mockWorkers) {
+        expect(worker.postMessage).toHaveBeenCalledTimes(1);
       }
     });
 
     // Queue items with different group indices
     act(() => {
-      result.current.requestThumbnail('far-item', 'app://local/far.jpg', 256, 100);
-      result.current.requestThumbnail('near-item', 'app://local/near.jpg', 256, 2);
+      result.current.requestThumbnail('far-item', 'app://file/far.jpg', 256, 100);
+      result.current.requestThumbnail('near-item', 'app://file/near.jpg', 256, 2);
     });
 
     // Update visible range to include near-item's group
@@ -190,16 +228,26 @@ describe('useThumbnailWorker', () => {
       mockWorkers[0].simulateMessage({ id: 'busy-0', bitmap: mockBitmap });
     });
 
+    // Wait for the prioritized fetch to complete
+    await waitFor(() => {
+      expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(2);
+    });
+
     // The dispatched item should be near-item (group 2, in visible range 0-5)
     const lastCall = mockWorkers[0].postMessage.mock.calls[1];
     expect(lastCall[0].id).toBe('near-item');
   });
 
-  it('does not re-request already cached thumbnails', () => {
+  it('does not re-request already cached thumbnails', async () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     act(() => {
-      result.current.requestThumbnail('img-1', 'app://local/test.jpg', 256);
+      result.current.requestThumbnail('img-1', 'app://file/test.jpg', 256);
+    });
+
+    await waitFor(() => {
+      const posted = mockWorkers.some((w) => w.postMessage.mock.calls.length > 0);
+      expect(posted).toBe(true);
     });
 
     const mockBitmap = { close: vi.fn() } as unknown as ImageBitmap;
@@ -209,10 +257,10 @@ describe('useThumbnailWorker', () => {
 
     // Try requesting same thumbnail again
     act(() => {
-      result.current.requestThumbnail('img-1', 'app://local/test.jpg', 256);
+      result.current.requestThumbnail('img-1', 'app://file/test.jpg', 256);
     });
 
-    // Should only have been posted once
+    // Should only have been posted once (cached, so no second fetch)
     expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(1);
   });
 });
