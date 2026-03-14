@@ -9,10 +9,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Infrastructure
 
-- [ ] **INFRA-01**: Project uses Turborepo monorepo with pnpm workspaces and shared packages
-- [ ] **INFRA-02**: All dependencies are pure JS/TS or bundled WASM — no native Node.js addons
-- [ ] **INFRA-03**: Prettier formats all code with a single `pnpm format` command
-- [ ] **INFRA-04**: ESLint enforces code quality across all packages
+- [x] **INFRA-01**: Project uses Turborepo monorepo with pnpm workspaces and shared packages
+- [x] **INFRA-02**: All dependencies are pure JS/TS or bundled WASM — no native Node.js addons
+- [x] **INFRA-03**: Prettier formats all code with a single `pnpm format` command
+- [x] **INFRA-04**: ESLint enforces code quality across all packages
 - [ ] **INFRA-05**: Electron app launches via `pnpm dev` with hot module reload
 - [ ] **INFRA-06**: Custom `app://` protocol serves local images securely (no webSecurity disable)
 - [ ] **INFRA-07**: Typed IPC bridge via contextBridge — renderer never accesses Node.js directly
@@ -128,10 +128,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 1 | Pending |
-| INFRA-02 | Phase 1 | Pending |
-| INFRA-03 | Phase 1 | Pending |
-| INFRA-04 | Phase 1 | Pending |
+| INFRA-01 | Phase 1 | Complete |
+| INFRA-02 | Phase 1 | Complete |
+| INFRA-03 | Phase 1 | Complete |
+| INFRA-04 | Phase 1 | Complete |
 | INFRA-05 | Phase 1 | Pending |
 | INFRA-06 | Phase 1 | Pending |
 | INFRA-07 | Phase 1 | Pending |
