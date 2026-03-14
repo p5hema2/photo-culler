@@ -20,13 +20,13 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Browsing
 
 - [x] **BROW-01**: User can select a folder via native OS dialog (Cmd+O / Ctrl+O)
-- [ ] **BROW-02**: User can view all images (JPG, JPEG, PNG, TIFF, WebP) as a scrollable thumbnail grid
-- [ ] **BROW-03**: Thumbnail grid handles 1,000+ images without UI freezes (virtualized scrolling)
+- [x] **BROW-02**: User can view all images (JPG, JPEG, PNG, TIFF, WebP) as a scrollable thumbnail grid
+- [x] **BROW-03**: Thumbnail grid handles 1,000+ images without UI freezes (virtualized scrolling)
 - [x] **BROW-04**: Thumbnails load progressively via Web Workers — grid is immediately scrollable
-- [ ] **BROW-05**: User can navigate thumbnails with arrow keys
+- [x] **BROW-05**: User can navigate thumbnails with arrow keys
 - [x] **BROW-06**: User can sort images by filename, date taken, file size, and dimensions
-- [ ] **BROW-07**: User can filter images by file type (JPG, PNG, etc.)
-- [ ] **BROW-08**: User can search images by filename (instant client-side filter)
+- [x] **BROW-07**: User can filter images by file type (JPG, PNG, etc.)
+- [x] **BROW-08**: User can search images by filename (instant client-side filter)
 
 ### Preview
 
@@ -78,10 +78,10 @@ Requirements for initial release. Each maps to roadmap phases.
 ### UX Polish
 
 - [x] **UX-01**: App remembers last opened folder across sessions
-- [ ] **UX-02**: User can drag-and-drop a folder onto the window to open it
+- [x] **UX-02**: User can drag-and-drop a folder onto the window to open it
 - [ ] **UX-03**: App supports dark theme (default) and light theme toggle
 - [x] **UX-04**: App handles edge cases gracefully: empty folders, corrupted images, permission errors
-- [ ] **UX-05**: User can adjust thumbnail size (small / medium / large grid)
+- [x] **UX-05**: User can adjust thumbnail size (small / medium / large grid)
 
 ## v2 Requirements
 
@@ -140,17 +140,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DIST-03 | Phase 1 | Complete |
 | DIST-04 | Phase 1 | Complete |
 | BROW-01 | Phase 2 | Complete |
-| BROW-02 | Phase 2 | Pending |
-| BROW-03 | Phase 2 | Pending |
+| BROW-02 | Phase 2 | Complete |
+| BROW-03 | Phase 2 | Complete |
 | BROW-04 | Phase 2 | Complete |
-| BROW-05 | Phase 2 | Pending |
+| BROW-05 | Phase 2 | Complete |
 | BROW-06 | Phase 2 | Complete |
-| BROW-07 | Phase 2 | Pending |
-| BROW-08 | Phase 2 | Pending |
+| BROW-07 | Phase 2 | Complete |
+| BROW-08 | Phase 2 | Complete |
 | UX-01 | Phase 2 | Complete |
-| UX-02 | Phase 2 | Pending |
+| UX-02 | Phase 2 | Complete |
 | UX-04 | Phase 2 | Complete |
-| UX-05 | Phase 2 | Pending |
+| UX-05 | Phase 2 | Complete |
 | PREV-01 | Phase 3 | Pending |
 | PREV-02 | Phase 3 | Pending |
 | PREV-03 | Phase 3 | Pending |
