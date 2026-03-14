@@ -1,5 +1,6 @@
 {
   "name": "photo-culler",
+  "type": "module",
   "private": true,
   "packageManager": "pnpm@10.32.1",
   "engines": {
@@ -15,7 +16,11 @@
     "test": "turbo run test"
   },
   "devDependencies": {
-    "turbo": "^2.8.0",
-    "prettier": "^3.5.0"
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
+    "eslint": "^10.0.3",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "prettier": "^3.5.0",
+    "turbo": "^2.8.0"
   }
 }
