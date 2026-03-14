@@ -29,12 +29,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. The renderer process cannot access Node.js APIs directly -- all OS interaction goes through a typed contextBridge IPC layer
   4. Running `pnpm format` and `pnpm lint` checks all packages; CI pipeline runs build and lint on both macOS and Windows runners
   5. No dependency in the lockfile triggers native compilation (no node-gyp, no Python/C++ build tools required)
-**Plans**: TBD
+**Plans:** 3 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
-- [ ] 01-03: TBD
+- [ ] 01-01-PLAN.md -- Monorepo scaffold with Turborepo, pnpm workspaces, shared packages, Prettier, and ESLint
+- [ ] 01-02-PLAN.md -- Electron app with electron-vite, typed IPC via contextBridge, custom app:// protocol, and React renderer
+- [ ] 01-03-PLAN.md -- electron-builder packaging for macOS/Windows and GitHub Actions CI/release workflows
 
 ### Phase 2: Folder Browsing and Thumbnail Grid
 **Goal**: Users can select a folder and browse all discovered images in a responsive, performant thumbnail grid with sorting, filtering, and search
