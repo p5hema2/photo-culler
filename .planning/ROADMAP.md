@@ -96,6 +96,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Electron Shell and Build Pipeline | 3/3 | Complete | 2026-03-14 |
-| 2. Folder Browsing and Thumbnail Grid | 0/4 | Not started | - |
+| 2. Folder Browsing and Thumbnail Grid | 1/4 | In progress | - |
 | 3. Preview, Selection, and Deletion | 0/3 | Not started | - |
 | 4. Culling Workflow and Quality Scoring | 0/3 | Not started | - |
