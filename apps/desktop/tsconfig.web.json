@@ -1,0 +1,8 @@
+{
+  "extends": "@photo-culler/tsconfig/react.json",
+  "compilerOptions": {
+    "outDir": "./out",
+    "composite": true
+  },
+  "include": ["src/renderer/src/**/*"]
+}

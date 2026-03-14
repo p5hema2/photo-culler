@@ -15,6 +15,9 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": ["electron", "esbuild", "electron-winstaller"]
+  },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.57.0",
     "@typescript-eslint/parser": "^8.57.0",
