@@ -70,10 +70,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Distribution
 
-- [ ] **DIST-01**: App compiles to a macOS `.dmg` installer (Intel + Apple Silicon)
-- [ ] **DIST-02**: App compiles to a Windows `.exe` installer
-- [ ] **DIST-03**: End users have zero system requirements — download, install, run
-- [ ] **DIST-04**: CI pipeline builds and tests on both macOS and Windows runners
+- [x] **DIST-01**: App compiles to a macOS `.dmg` installer (Intel + Apple Silicon)
+- [x] **DIST-02**: App compiles to a Windows `.exe` installer
+- [x] **DIST-03**: End users have zero system requirements — download, install, run
+- [x] **DIST-04**: CI pipeline builds and tests on both macOS and Windows runners
 
 ### UX Polish
 
@@ -135,10 +135,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INFRA-05 | Phase 1 | Pending |
 | INFRA-06 | Phase 1 | Pending |
 | INFRA-07 | Phase 1 | Pending |
-| DIST-01 | Phase 1 | Pending |
-| DIST-02 | Phase 1 | Pending |
-| DIST-03 | Phase 1 | Pending |
-| DIST-04 | Phase 1 | Pending |
+| DIST-01 | Phase 1 | Complete |
+| DIST-02 | Phase 1 | Complete |
+| DIST-03 | Phase 1 | Complete |
+| DIST-04 | Phase 1 | Complete |
 | BROW-01 | Phase 2 | Pending |
 | BROW-02 | Phase 2 | Pending |
 | BROW-03 | Phase 2 | Pending |
