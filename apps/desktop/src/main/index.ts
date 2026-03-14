@@ -1,7 +1,10 @@
-import { app, BrowserWindow, Menu } from 'electron';
+import { app, BrowserWindow, Menu, dialog } from 'electron';
 import path from 'node:path';
 import { registerSchemes, registerProtocolHandlers } from './protocol';
 import { registerIpcHandlers } from './ipc-handlers';
+
+// Ensure store module is initialized early
+import './store';
 
 // Register custom protocol schemes BEFORE app.whenReady()
 registerSchemes();
@@ -36,7 +39,25 @@ function buildMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: 'File',
-      submenu: [{ role: 'quit' }],
+      submenu: [
+        {
+          label: 'Open Folder...',
+          accelerator: 'CmdOrCtrl+O',
+          click: async (): Promise<void> => {
+            const result = await dialog.showOpenDialog({
+              properties: ['openDirectory'],
+            });
+            if (!result.canceled && result.filePaths.length > 0) {
+              const focusedWindow = BrowserWindow.getFocusedWindow();
+              if (focusedWindow) {
+                focusedWindow.webContents.send('menu:open-folder', result.filePaths[0]);
+              }
+            }
+          },
+        },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
     },
     {
       label: 'Edit',

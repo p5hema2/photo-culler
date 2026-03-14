@@ -4,10 +4,11 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ['electron-store'] })],
     resolve: {
       alias: {
         '@photo-culler/types': resolve(__dirname, '../../packages/types/src'),
+        '@photo-culler/image-utils': resolve(__dirname, '../../packages/image-utils/src'),
       },
     },
   },
