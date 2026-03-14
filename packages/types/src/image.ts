@@ -9,6 +9,8 @@ export interface ImageFileInfo {
   size: number;
   /** Last modified timestamp (ms since epoch) */
   lastModified: number;
+  /** EXIF DateTimeOriginal timestamp (ms since epoch), if available */
+  dateTaken?: number;
   /** Image width in pixels (available after metadata extraction) */
   width?: number;
   /** Image height in pixels (available after metadata extraction) */
