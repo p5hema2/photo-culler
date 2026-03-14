@@ -37,7 +37,7 @@ Plans:
 - [ ] 01-03-PLAN.md -- electron-builder packaging for macOS/Windows and GitHub Actions CI/release workflows
 
 ### Phase 2: Folder Browsing and Thumbnail Grid
-**Goal**: Users can select a folder and browse all discovered images in a responsive, performant thumbnail grid with sorting, filtering, and search
+**Goal**: Users can select a folder and browse all discovered images in a grouped, virtualized thumbnail grid with timestamp-based grouping, classification borders, sorting, filtering, search, and batch execute
 **Depends on**: Phase 1
 **Requirements**: BROW-01, BROW-02, BROW-03, BROW-04, BROW-05, BROW-06, BROW-07, BROW-08, UX-01, UX-02, UX-04, UX-05
 **Success Criteria** (what must be TRUE):
@@ -46,12 +46,13 @@ Plans:
   3. User can sort images by filename, date taken, file size, and dimensions, and filter by file type or search by filename
   4. User can navigate thumbnails with arrow keys and adjust thumbnail size (small/medium/large)
   5. App remembers the last opened folder across sessions and handles empty folders, corrupted images, and permission errors gracefully
-**Plans**: TBD
+**Plans:** 4 plans
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
-- [ ] 02-03: TBD
+- [ ] 02-01-PLAN.md -- Types extension, folder scanner, grouping, and sorting pure functions with TDD
+- [ ] 02-02-PLAN.md -- Main process IPC handlers, session store, Web Workers for thumbnails and EXIF
+- [ ] 02-03-PLAN.md -- Virtualized grouped grid UI, toolbar, drag-and-drop, keyboard navigation
+- [ ] 02-04-PLAN.md -- Execute panel for batch operations, results auto-save, end-to-end verification
 
 ### Phase 3: Preview, Selection, and Deletion
 **Goal**: Users can preview images at full size, select multiple images, and batch-delete unwanted shots to the OS trash -- completing the core value proposition
@@ -95,6 +96,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Electron Shell and Build Pipeline | 3/3 | Complete | 2026-03-14 |
-| 2. Folder Browsing and Thumbnail Grid | 0/3 | Not started | - |
+| 2. Folder Browsing and Thumbnail Grid | 0/4 | Not started | - |
 | 3. Preview, Selection, and Deletion | 0/3 | Not started | - |
 | 4. Culling Workflow and Quality Scoring | 0/3 | Not started | - |
