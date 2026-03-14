@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { PhotoGroup } from '@photo-culler/image-utils';
+import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import { GroupRow } from './GroupRow';
 import type { Classification } from './ThumbnailCell';
 

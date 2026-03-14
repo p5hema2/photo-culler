@@ -1,7 +1,9 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import type { ImageFileInfo, Classification, ResultsFile, SessionConfig } from '@photo-culler/types';
-import { sortImages, groupByTimestamp } from '@photo-culler/image-utils';
-import type { SortField, SortDirection, PhotoGroup } from '@photo-culler/image-utils';
+import type { ImageFileInfo, ResultsFile, SessionConfig } from '@photo-culler/types';
+import { sortImages } from '@photo-culler/image-utils/sorting';
+import type { SortField, SortDirection } from '@photo-culler/image-utils/sorting';
+import { groupByTimestamp } from '@photo-culler/image-utils/grouping';
+import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import { loadResults, saveResults } from '../lib/results';
 import { useExifExtractor } from './useExifExtractor';
 import { useThumbnailWorker } from './useThumbnailWorker';

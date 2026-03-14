@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
-import { groupByTimestamp } from '@photo-culler/image-utils';
-import type { PhotoGroup } from '@photo-culler/image-utils';
+import { groupByTimestamp } from '@photo-culler/image-utils/grouping';
+import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 
 const HEADER_HEIGHT = 32;
 const DIVIDER_HEIGHT = 16;

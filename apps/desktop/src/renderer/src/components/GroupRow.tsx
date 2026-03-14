@@ -1,4 +1,4 @@
-import type { PhotoGroup } from '@photo-culler/image-utils';
+import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { ImageFileInfo } from '@photo-culler/types';
 import { ThumbnailCell } from './ThumbnailCell';
 import type { Classification } from './ThumbnailCell';
