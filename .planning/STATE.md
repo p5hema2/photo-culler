@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-03-14T18:07:00.000Z"
-last_activity: 2026-03-14 -- Completed 02-01 types, scanner, grouping, sorting with TDD
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-03-14T18:17:00.000Z"
+last_activity: 2026-03-14 -- Completed 02-02 IPC handlers, workers, hooks, and tests
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 7
-  completed_plans: 4
-  percent: 57
+  completed_plans: 5
+  percent: 71
 ---
 
 # Project State
@@ -26,28 +26,28 @@ See: .planning/PROJECT.md (updated 2026-03-14)
 ## Current Position
 
 Phase: 2 of 4 (Folder Browsing and Thumbnail Grid)
-Plan: 1 of 4 in current phase
-Status: 02-01 Complete, continuing Phase 2
-Last activity: 2026-03-14 -- Completed 02-01 types, scanner, grouping, sorting with TDD
+Plan: 2 of 4 in current phase
+Status: 02-02 Complete, continuing Phase 2
+Last activity: 2026-03-14 -- Completed 02-02 IPC handlers, workers, hooks, and tests
 
-Progress: [█████░░░░░] 57% (4/7 plans)
+Progress: [███████░░░] 71% (5/7 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
+- Total plans completed: 5
 - Average duration: 7 min
-- Total execution time: 0.5 hours
+- Total execution time: 0.6 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-electron-shell | 3 | 23 min | 8 min |
-| 02-folder-browsing | 1 | 5 min | 5 min |
+| 02-folder-browsing | 2 | 13 min | 7 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (5 min), 01-02 (7 min), 01-03 (11 min), 02-01 (5 min)
+- Last 5 plans: 01-01 (5 min), 01-02 (7 min), 01-03 (11 min), 02-01 (5 min), 02-02 (8 min)
 - Trend: stable
 
 *Updated after each plan completion*
@@ -73,6 +73,10 @@ Recent decisions affecting current work:
 - [02-01]: natural-orderby v5 for filename sorting (lightweight, well-maintained)
 - [02-01]: Group IDs use sequential index-based scheme (group-0, group-1, etc.)
 - [02-01]: Scanner returns flat array combining main folder and picks/ subfolder
+- [02-02]: electron-store excluded from Vite externalization (ESM-only package fix)
+- [02-02]: ImageBitmap duck-typing check for jsdom test compatibility
+- [02-02]: menuEvents exposed as separate contextBridge namespace
+- [02-02]: Write queue pattern for results file concurrent write prevention
 
 ### Pending Todos
 
@@ -86,6 +90,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-14T18:07:00Z
-Stopped at: Completed 02-01-PLAN.md
-Resume file: Continue with 02-02-PLAN.md
+Last session: 2026-03-14T18:17:00Z
+Stopped at: Completed 02-02-PLAN.md
+Resume file: Continue with 02-03-PLAN.md

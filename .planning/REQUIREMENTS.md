@@ -19,10 +19,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Browsing
 
-- [ ] **BROW-01**: User can select a folder via native OS dialog (Cmd+O / Ctrl+O)
+- [x] **BROW-01**: User can select a folder via native OS dialog (Cmd+O / Ctrl+O)
 - [ ] **BROW-02**: User can view all images (JPG, JPEG, PNG, TIFF, WebP) as a scrollable thumbnail grid
 - [ ] **BROW-03**: Thumbnail grid handles 1,000+ images without UI freezes (virtualized scrolling)
-- [ ] **BROW-04**: Thumbnails load progressively via Web Workers — grid is immediately scrollable
+- [x] **BROW-04**: Thumbnails load progressively via Web Workers — grid is immediately scrollable
 - [ ] **BROW-05**: User can navigate thumbnails with arrow keys
 - [x] **BROW-06**: User can sort images by filename, date taken, file size, and dimensions
 - [ ] **BROW-07**: User can filter images by file type (JPG, PNG, etc.)
@@ -77,7 +77,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### UX Polish
 
-- [ ] **UX-01**: App remembers last opened folder across sessions
+- [x] **UX-01**: App remembers last opened folder across sessions
 - [ ] **UX-02**: User can drag-and-drop a folder onto the window to open it
 - [ ] **UX-03**: App supports dark theme (default) and light theme toggle
 - [x] **UX-04**: App handles edge cases gracefully: empty folders, corrupted images, permission errors
@@ -139,15 +139,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DIST-02 | Phase 1 | Complete |
 | DIST-03 | Phase 1 | Complete |
 | DIST-04 | Phase 1 | Complete |
-| BROW-01 | Phase 2 | Pending |
+| BROW-01 | Phase 2 | Complete |
 | BROW-02 | Phase 2 | Pending |
 | BROW-03 | Phase 2 | Pending |
-| BROW-04 | Phase 2 | Pending |
+| BROW-04 | Phase 2 | Complete |
 | BROW-05 | Phase 2 | Pending |
 | BROW-06 | Phase 2 | Complete |
 | BROW-07 | Phase 2 | Pending |
 | BROW-08 | Phase 2 | Pending |
-| UX-01 | Phase 2 | Pending |
+| UX-01 | Phase 2 | Complete |
 | UX-02 | Phase 2 | Pending |
 | UX-04 | Phase 2 | Complete |
 | UX-05 | Phase 2 | Pending |
