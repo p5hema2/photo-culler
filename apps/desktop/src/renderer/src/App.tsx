@@ -70,13 +70,14 @@ function App(): React.JSX.Element {
     }
   }, [store]);
 
-  // Listen for Cmd+O from menu
+  // Listen for Cmd+O from menu (only available in Electron via contextBridge)
   useEffect(() => {
+    if (!window.menuEvents) return;
     window.menuEvents.onOpenFolder((folderPath: string) => {
       store.openFolder(folderPath);
     });
     return () => {
-      window.menuEvents.removeOpenFolderListener();
+      window.menuEvents?.removeOpenFolderListener();
     };
   }, [store]);
 

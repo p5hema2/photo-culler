@@ -1,10 +1,15 @@
 import { resolve } from 'path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['electron-store'] })],
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: ['electron-store', '@photo-culler/image-utils', '@photo-culler/types'],
+      }),
+    ],
     resolve: {
       alias: {
         '@photo-culler/types': resolve(__dirname, '../../packages/types/src'),
@@ -29,6 +34,6 @@ export default defineConfig({
         '@photo-culler/image-utils/grouping': resolve(__dirname, '../../packages/image-utils/src/grouping'),
       },
     },
-    plugins: [react()],
+    plugins: [tailwindcss(), react()],
   },
 });
