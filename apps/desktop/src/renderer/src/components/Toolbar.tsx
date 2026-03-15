@@ -2,11 +2,13 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import type { SortField, SortDirection } from '@photo-culler/image-utils/sorting';
 import type { Classification } from './ThumbnailCell';
 
+type ClassificationFilter = Classification | 'unclassified' | null;
+
 interface ToolbarProps {
   sortField: SortField;
   sortDirection: SortDirection;
   filterExtensions: Set<string>;
-  filterClassification: Classification | null;
+  filterClassification: ClassificationFilter;
   searchQuery: string;
   thumbnailSize: 'small' | 'medium' | 'large';
   groupingThresholdMs: number;
@@ -14,14 +16,17 @@ interface ToolbarProps {
   deleteCount: number;
   selectedCount: number;
   totalCount: number;
+  filterStarRating: number | null;
+  scoringProgress: { completed: number; total: number };
   onSelectFolder: () => void;
   onSortFieldChange: (field: SortField) => void;
   onSortDirectionChange: (direction: SortDirection) => void;
   onFilterExtensionsChange: (extensions: Set<string>) => void;
-  onFilterClassificationChange: (classification: Classification | null) => void;
+  onFilterClassificationChange: (classification: ClassificationFilter) => void;
   onSearchQueryChange: (query: string) => void;
   onThumbnailSizeChange: (size: 'small' | 'medium' | 'large') => void;
   onGroupingThresholdChange: (ms: number) => void;
+  onFilterStarRatingChange: (rating: number | null) => void;
   onExecute: () => void;
   onDeleteSelected: () => void;
 }
@@ -31,16 +36,27 @@ const SORT_OPTIONS: Array<{ value: SortField; label: string }> = [
   { value: 'filename', label: 'Filename' },
   { value: 'size', label: 'File Size' },
   { value: 'dimensions', label: 'Dimensions' },
+  { value: 'qualityScore', label: 'Quality' },
 ];
 
 const GROUPING_STEPS = [500, 1000, 2000, 3000, 5000, 10000, 15000, 30000, 60000];
 
 const FILE_TYPE_CHIPS = ['jpg', 'png', 'tiff', 'webp'] as const;
 
-const CLASSIFICATION_CHIPS: Array<{ value: Classification; label: string; color: string; activeColor: string }> = [
+const CLASSIFICATION_CHIPS: Array<{ value: ClassificationFilter; label: string; color: string; activeColor: string }> = [
+  { value: 'unclassified', label: 'None', color: 'text-gray-400', activeColor: 'bg-gray-700 text-gray-300 border-gray-500' },
   { value: 'keep', label: 'Keep', color: 'text-green-400', activeColor: 'bg-green-900 text-green-300 border-green-500' },
   { value: 'review', label: 'Review', color: 'text-yellow-400', activeColor: 'bg-yellow-900 text-yellow-300 border-yellow-500' },
   { value: 'delete', label: 'Delete', color: 'text-red-400', activeColor: 'bg-red-900 text-red-300 border-red-500' },
+];
+
+const STAR_FILTER_CHIPS: Array<{ value: number; label: string }> = [
+  { value: 0, label: 'Unrated' },
+  { value: 1, label: '1+' },
+  { value: 2, label: '2+' },
+  { value: 3, label: '3+' },
+  { value: 4, label: '4+' },
+  { value: 5, label: '5' },
 ];
 
 const SIZE_OPTIONS: Array<{ value: 'small' | 'medium' | 'large'; label: string }> = [
@@ -79,6 +95,8 @@ export function Toolbar({
   deleteCount,
   selectedCount,
   totalCount,
+  filterStarRating,
+  scoringProgress,
   onSelectFolder,
   onSortFieldChange,
   onSortDirectionChange,
@@ -87,6 +105,7 @@ export function Toolbar({
   onSearchQueryChange,
   onThumbnailSizeChange,
   onGroupingThresholdChange,
+  onFilterStarRatingChange,
   onExecute,
   onDeleteSelected,
 }: ToolbarProps): React.JSX.Element {
@@ -144,10 +163,17 @@ export function Toolbar({
   );
 
   const handleClassificationToggle = useCallback(
-    (cls: Classification) => {
+    (cls: ClassificationFilter) => {
       onFilterClassificationChange(filterClassification === cls ? null : cls);
     },
     [filterClassification, onFilterClassificationChange],
+  );
+
+  const handleStarFilterToggle = useCallback(
+    (value: number) => {
+      onFilterStarRatingChange(filterStarRating === value ? null : value);
+    },
+    [filterStarRating, onFilterStarRatingChange],
   );
 
   const handleSliderChange = useCallback(
@@ -161,7 +187,8 @@ export function Toolbar({
     [onGroupingThresholdChange],
   );
 
-  const showProgress = exifProgress.total > 0 && exifProgress.completed < exifProgress.total;
+  const showExifProgress = exifProgress.total > 0 && exifProgress.completed < exifProgress.total;
+  const showScoringProgress = scoringProgress.total > 0 && scoringProgress.completed < scoringProgress.total;
 
   return (
     <div
@@ -236,7 +263,7 @@ export function Toolbar({
       <div className="flex items-center gap-1" data-testid="classification-filters">
         {CLASSIFICATION_CHIPS.map((chip) => (
           <button
-            key={chip.value}
+            key={String(chip.value)}
             onClick={() => handleClassificationToggle(chip.value)}
             className={`px-2 py-0.5 text-xs rounded border transition-colors ${
               filterClassification === chip.value
@@ -246,6 +273,23 @@ export function Toolbar({
             data-testid={`filter-cls-${chip.value}`}
           >
             {chip.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-1" data-testid="star-filters">
+        {STAR_FILTER_CHIPS.map((chip) => (
+          <button
+            key={chip.value}
+            onClick={() => handleStarFilterToggle(chip.value)}
+            className={`px-2 py-0.5 text-xs rounded border transition-colors ${
+              filterStarRating === chip.value
+                ? 'bg-yellow-900 text-yellow-300 border-yellow-500'
+                : 'text-yellow-600 border-gray-700 hover:border-gray-500'
+            }`}
+            data-testid={`filter-star-${chip.value}`}
+          >
+            {chip.value > 0 ? '\u2605'.repeat(Math.min(chip.value, 3)) : ''} {chip.label}
           </button>
         ))}
       </div>
@@ -311,9 +355,16 @@ export function Toolbar({
       )}
 
       {/* EXIF progress */}
-      {showProgress && (
+      {showExifProgress && (
         <span className="text-xs text-gray-500" data-testid="exif-progress">
           Extracting metadata: {exifProgress.completed}/{exifProgress.total}
+        </span>
+      )}
+
+      {/* Scoring progress */}
+      {showScoringProgress && (
+        <span className="text-xs text-gray-500" data-testid="scoring-progress">
+          Scoring: {scoringProgress.completed}/{scoringProgress.total}
         </span>
       )}
 

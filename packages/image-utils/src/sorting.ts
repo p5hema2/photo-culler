@@ -1,7 +1,7 @@
 import { compare } from 'natural-orderby';
 import type { ImageFileInfo } from '@photo-culler/types';
 
-export type SortField = 'filename' | 'dateTaken' | 'size' | 'dimensions';
+export type SortField = 'filename' | 'dateTaken' | 'size' | 'dimensions' | 'qualityScore';
 export type SortDirection = 'asc' | 'desc';
 
 /**
@@ -17,6 +17,7 @@ export function sortImages(
   images: ImageFileInfo[],
   field: SortField,
   direction: SortDirection,
+  context?: { qualityScores?: Record<string, number> },
 ): ImageFileInfo[] {
   const sorted = [...images];
   const dirMultiplier = direction === 'asc' ? 1 : -1;
@@ -59,6 +60,22 @@ export function sortImages(
         if (bPixels === 0) return -1;
 
         return (aPixels - bPixels) * dirMultiplier;
+      });
+      break;
+    }
+
+    case 'qualityScore': {
+      const scores = context?.qualityScores ?? {};
+      sorted.sort((a, b) => {
+        const aScore = scores[a.name];
+        const bScore = scores[b.name];
+
+        // Unscored images sort to end
+        if (aScore == null && bScore == null) return 0;
+        if (aScore == null) return 1;
+        if (bScore == null) return -1;
+
+        return (aScore - bScore) * dirMultiplier;
       });
       break;
     }

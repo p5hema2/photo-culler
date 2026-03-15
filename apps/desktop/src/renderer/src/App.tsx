@@ -181,6 +181,16 @@ function App(): React.JSX.Element {
     return state.classifications[focusedImage.name] ?? null;
   }, [focusedImage, state.classifications]);
 
+  const focusedStarRating = useMemo(() => {
+    if (!focusedImage) return undefined;
+    return state.starRatings[focusedImage.name];
+  }, [focusedImage, state.starRatings]);
+
+  const focusedQualityScore = useMemo(() => {
+    if (!focusedImage) return undefined;
+    return state.qualityScores[focusedImage.name];
+  }, [focusedImage, state.qualityScores]);
+
   const renderContent = (): React.JSX.Element => {
     if (state.isLoading) {
       return <LoadingState progress={state.exifProgress} />;
@@ -246,6 +256,9 @@ function App(): React.JSX.Element {
           onSearchQueryChange={store.setSearchQuery}
           onThumbnailSizeChange={store.setThumbnailSize}
           onGroupingThresholdChange={store.setGroupingThresholdMs}
+          filterStarRating={state.filterStarRating}
+          scoringProgress={state.scoringProgress}
+          onFilterStarRatingChange={store.setFilterStarRating}
           onExecute={handleOpenExecute}
           onDeleteSelected={handleTrashSelected}
         />
@@ -273,6 +286,8 @@ function App(): React.JSX.Element {
           <InfoPanel
             image={focusedImage}
             classification={focusedClassification}
+            starRating={focusedStarRating}
+            qualityScore={focusedQualityScore}
             isOpen={infoPanelOpen}
             onToggle={handleToggleInfoPanel}
           />

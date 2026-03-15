@@ -5,6 +5,8 @@ import type { Classification } from './ThumbnailCell';
 interface InfoPanelProps {
   image: ImageFileInfo | null;
   classification: Classification;
+  starRating?: number;
+  qualityScore?: number;
   isOpen: boolean;
   onToggle: () => void;
 }
@@ -29,6 +31,8 @@ function formatDate(ms: number): string {
 export function InfoPanel({
   image,
   classification,
+  starRating,
+  qualityScore,
   isOpen,
   onToggle,
 }: InfoPanelProps): React.JSX.Element {
@@ -181,6 +185,22 @@ export function InfoPanel({
                     {badge.label}
                   </span>
                 </div>
+
+                {/* Star rating and quality score */}
+                {(starRating != null || qualityScore != null) && (
+                  <div className="flex items-center gap-3">
+                    {starRating != null && (
+                      <span className="text-yellow-400 text-sm tracking-wide" data-testid="info-panel-stars">
+                        {'\u2605'.repeat(starRating)}{'\u2606'.repeat(5 - starRating)}
+                      </span>
+                    )}
+                    {qualityScore != null && (
+                      <span className="text-xs text-gray-500" data-testid="info-panel-score">
+                        Score: {qualityScore}/100
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 {/* Exposure summary bar — full width */}
                 {(image.aperture || image.shutterSpeed || image.iso || image.focalLength) && (
