@@ -7,6 +7,7 @@ import { PhotoGrid } from './components/PhotoGrid';
 import { EmptyState } from './components/EmptyState';
 import { ExecutePanel } from './components/ExecutePanel';
 import { InfoPanel } from './components/InfoPanel';
+import { PreviewPanel } from './components/PreviewPanel';
 
 function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX.Element {
   return (
@@ -192,9 +193,14 @@ function App(): React.JSX.Element {
     }
     if (state.isPreviewMode && state.previewImageId) {
       return (
-        <div className="flex items-center justify-center h-full text-gray-400 text-lg" data-testid="preview-placeholder">
-          Preview mode - coming in Wave 2
-        </div>
+        <PreviewPanel
+          imageId={state.previewImageId}
+          images={sortedFlatImages}
+          onNavigate={(path) => store.enterPreview(path)}
+          onClose={store.exitPreview}
+          getThumbnail={thumbnailWorker.getThumbnail}
+          requestThumbnail={thumbnailWorker.requestThumbnail}
+        />
       );
     }
     return (
