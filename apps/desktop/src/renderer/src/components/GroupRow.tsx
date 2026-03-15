@@ -7,6 +7,7 @@ interface GroupRowProps {
   group: PhotoGroup;
   cellSize: number;
   classifications: Record<string, Classification>;
+  starRatings: Record<string, number>;
   focusedImageId: string | null;
   selectedImages: Set<string>;
   onImageClick: (filename: string) => void;
@@ -54,6 +55,7 @@ export function GroupRow({
   group,
   cellSize,
   classifications,
+  starRatings,
   focusedImageId,
   selectedImages,
   onImageClick,
@@ -96,6 +98,7 @@ export function GroupRow({
             image={image}
             cellSize={cellSize}
             classification={classifications[image.name] ?? null}
+            starRating={starRatings[image.name]}
             isFocused={focusedImageId === image.path}
             isSelected={selectedImages.has(image.path)}
             onClick={() => onImageClick(image.name)}

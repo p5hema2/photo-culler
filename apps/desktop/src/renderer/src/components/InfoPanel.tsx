@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
 import type { Classification } from './ThumbnailCell';
+import { StarRating } from './StarRating';
+import { Histogram } from './Histogram';
 
 interface InfoPanelProps {
   image: ImageFileInfo | null;
   classification: Classification;
   starRating?: number;
   qualityScore?: number;
+  onStarRatingChange?: (rating: number) => void;
   isOpen: boolean;
   onToggle: () => void;
 }
@@ -33,14 +36,19 @@ export function InfoPanel({
   classification,
   starRating,
   qualityScore,
+  onStarRatingChange,
   isOpen,
   onToggle,
 }: InfoPanelProps): React.JSX.Element {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
+  const previewImgRef = useRef<HTMLImageElement | null>(null);
+  const [previewImgElement, setPreviewImgElement] = useState<HTMLImageElement | null>(null);
 
   // Load large preview via IPC — runs on every image change
   useEffect(() => {
+    setPreviewImgElement(null);
+
     if (!isOpen || !image) {
       setPreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
@@ -159,12 +167,24 @@ export function InfoPanel({
                 )}
                 {previewUrl && (
                   <img
+                    ref={(el) => {
+                      previewImgRef.current = el;
+                    }}
                     src={previewUrl}
                     alt={image.name}
                     className="w-full h-full object-contain"
+                    crossOrigin="anonymous"
                     data-testid="info-panel-preview"
+                    onLoad={() => {
+                      setPreviewImgElement(previewImgRef.current);
+                    }}
                   />
                 )}
+              </div>
+
+              {/* RGB Histogram */}
+              <div className="px-5 pt-3">
+                <Histogram imageElement={previewImgElement} />
               </div>
 
               {/* Info content */}
@@ -187,20 +207,19 @@ export function InfoPanel({
                 </div>
 
                 {/* Star rating and quality score */}
-                {(starRating != null || qualityScore != null) && (
-                  <div className="flex items-center gap-3">
-                    {starRating != null && (
-                      <span className="text-yellow-400 text-sm tracking-wide" data-testid="info-panel-stars">
-                        {'\u2605'.repeat(starRating)}{'\u2606'.repeat(5 - starRating)}
-                      </span>
-                    )}
-                    {qualityScore != null && (
-                      <span className="text-xs text-gray-500" data-testid="info-panel-score">
-                        Score: {qualityScore}/100
-                      </span>
-                    )}
-                  </div>
-                )}
+                <div className="flex items-center gap-3">
+                  <StarRating
+                    rating={starRating}
+                    size="md"
+                    onChange={onStarRatingChange}
+                    readonly={!onStarRatingChange}
+                  />
+                  {qualityScore != null && (
+                    <span className="text-xs text-gray-500" data-testid="info-panel-score">
+                      Score: {qualityScore}/100
+                    </span>
+                  )}
+                </div>
 
                 {/* Exposure summary bar — full width */}
                 {(image.aperture || image.shutterSpeed || image.iso || image.focalLength) && (

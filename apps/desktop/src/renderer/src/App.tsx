@@ -247,6 +247,7 @@ function App(): React.JSX.Element {
       <PhotoGrid
         groups={groups}
         classifications={state.classifications}
+        starRatings={state.starRatings}
         thumbnailSize={state.thumbnailSize}
         focusedImageId={state.focusedImageId}
         selectedImages={state.selectedImages}
@@ -318,6 +319,7 @@ function App(): React.JSX.Element {
             classification={focusedClassification}
             starRating={focusedStarRating}
             qualityScore={focusedQualityScore}
+            onStarRatingChange={focusedImage ? (rating) => store.setStarRating(focusedImage.name, rating) : undefined}
             isOpen={infoPanelOpen}
             onToggle={handleToggleInfoPanel}
           />
