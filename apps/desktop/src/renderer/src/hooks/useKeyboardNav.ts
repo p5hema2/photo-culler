@@ -1,5 +1,6 @@
 import { useCallback, useRef, useEffect } from 'react';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
+import type { ImageFileInfo } from '@photo-culler/types';
 
 interface KeyboardNavOptions {
   groups: PhotoGroup[];
@@ -7,6 +8,16 @@ interface KeyboardNavOptions {
   onFocusChange: (path: string | null) => void;
   onCycleClassification: (filename: string) => void;
   containerRef: React.RefObject<HTMLElement | null>;
+  onToggleSelect: (path: string) => void;
+  onRangeSelect: (path: string) => void;
+  onSelectAll: () => void;
+  onClearSelection: () => void;
+  onTrashFocused: () => void;
+  onTrashSelected: () => void;
+  onEnterPreview: (path: string) => void;
+  onExitPreview: () => void;
+  isPreviewMode: boolean;
+  sortedFlatImages: ImageFileInfo[];
 }
 
 interface KeyboardNavResult {
@@ -37,11 +48,25 @@ export function useKeyboardNav({
   onFocusChange,
   onCycleClassification,
   containerRef,
+  onToggleSelect,
+  onRangeSelect,
+  onSelectAll,
+  onClearSelection,
+  onTrashFocused,
+  onTrashSelected,
+  onEnterPreview,
+  onExitPreview,
+  isPreviewMode,
+  sortedFlatImages,
 }: KeyboardNavOptions): KeyboardNavResult {
   const groupsRef = useRef(groups);
   const focusRef = useRef(focusedImageId);
+  const previewRef = useRef(isPreviewMode);
+  const flatImagesRef = useRef(sortedFlatImages);
   groupsRef.current = groups;
   focusRef.current = focusedImageId;
+  previewRef.current = isPreviewMode;
+  flatImagesRef.current = sortedFlatImages;
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -49,6 +74,15 @@ export function useKeyboardNav({
       if (currentGroups.length === 0) return;
 
       const focused = focusRef.current;
+      const inPreview = previewRef.current;
+      const flatImages = flatImagesRef.current;
+
+      // Ctrl/Cmd+A: select all (before switch since 'a' is a letter)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        onSelectAll();
+        return;
+      }
 
       // If nothing focused, focus the first image on any nav key
       if (!focused) {
@@ -58,6 +92,29 @@ export function useKeyboardNav({
           if (first) onFocusChange(first.path);
         }
         return;
+      }
+
+      // Preview mode: arrow keys navigate linearly through flat image list
+      if (inPreview) {
+        const flatIndex = flatImages.findIndex((img) => img.path === focused);
+        switch (e.key) {
+          case 'ArrowRight':
+          case 'ArrowDown': {
+            e.preventDefault();
+            if (flatIndex < flatImages.length - 1) {
+              onEnterPreview(flatImages[flatIndex + 1]!.path);
+            }
+            return;
+          }
+          case 'ArrowLeft':
+          case 'ArrowUp': {
+            e.preventDefault();
+            if (flatIndex > 0) {
+              onEnterPreview(flatImages[flatIndex - 1]!.path);
+            }
+            return;
+          }
+        }
       }
 
       const pos = findImagePosition(currentGroups, focused);
@@ -70,10 +127,8 @@ export function useKeyboardNav({
         case 'ArrowRight': {
           e.preventDefault();
           if (imageIndex < currentGroup.images.length - 1) {
-            // Next image in same group
             onFocusChange(currentGroup.images[imageIndex + 1]!.path);
           } else if (groupIndex < currentGroups.length - 1) {
-            // First image of next group
             const nextGroup = currentGroups[groupIndex + 1]!;
             onFocusChange(nextGroup.images[0]!.path);
           }
@@ -83,10 +138,8 @@ export function useKeyboardNav({
         case 'ArrowLeft': {
           e.preventDefault();
           if (imageIndex > 0) {
-            // Previous image in same group
             onFocusChange(currentGroup.images[imageIndex - 1]!.path);
           } else if (groupIndex > 0) {
-            // Last image of previous group
             const prevGroup = currentGroups[groupIndex - 1]!;
             onFocusChange(prevGroup.images[prevGroup.images.length - 1]!.path);
           }
@@ -97,7 +150,6 @@ export function useKeyboardNav({
           e.preventDefault();
           if (groupIndex < currentGroups.length - 1) {
             const nextGroup = currentGroups[groupIndex + 1]!;
-            // Same column position, clamped
             const targetIndex = Math.min(imageIndex, nextGroup.images.length - 1);
             onFocusChange(nextGroup.images[targetIndex]!.path);
           }
@@ -108,7 +160,6 @@ export function useKeyboardNav({
           e.preventDefault();
           if (groupIndex > 0) {
             const prevGroup = currentGroups[groupIndex - 1]!;
-            // Same column position, clamped
             const targetIndex = Math.min(imageIndex, prevGroup.images.length - 1);
             onFocusChange(prevGroup.images[targetIndex]!.path);
           }
@@ -137,9 +188,52 @@ export function useKeyboardNav({
           }
           break;
         }
+
+        case 'Enter': {
+          if (!inPreview && focused) {
+            e.preventDefault();
+            onEnterPreview(focused);
+          }
+          break;
+        }
+
+        case 'Escape': {
+          e.preventDefault();
+          if (inPreview) {
+            onExitPreview();
+          } else {
+            onClearSelection();
+          }
+          break;
+        }
+
+        case 'Backspace': {
+          const tag = (document.activeElement as HTMLElement)?.tagName?.toLowerCase();
+          if (tag === 'input' || tag === 'textarea') return;
+          e.preventDefault();
+          onTrashFocused();
+          break;
+        }
+
+        case 'Delete': {
+          const tag = (document.activeElement as HTMLElement)?.tagName?.toLowerCase();
+          if (tag === 'input' || tag === 'textarea') return;
+          e.preventDefault();
+          onTrashSelected();
+          break;
+        }
       }
     },
-    [onFocusChange, onCycleClassification],
+    [
+      onFocusChange,
+      onCycleClassification,
+      onSelectAll,
+      onClearSelection,
+      onTrashFocused,
+      onTrashSelected,
+      onEnterPreview,
+      onExitPreview,
+    ],
   );
 
   // Attach keydown listener to container

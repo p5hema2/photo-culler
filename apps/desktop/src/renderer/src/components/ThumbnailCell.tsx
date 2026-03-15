@@ -9,8 +9,12 @@ interface ThumbnailCellProps {
   cellSize: number;
   classification: Classification;
   isFocused: boolean;
+  isSelected: boolean;
   onClick: () => void;
   onHover: () => void;
+  onToggleSelect: (path: string) => void;
+  onRangeSelect: (path: string) => void;
+  onOpenPreview: (path: string) => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   setLastModified?: (id: string, lastModified: number) => void;
@@ -28,8 +32,12 @@ export function ThumbnailCell({
   cellSize,
   classification,
   isFocused,
+  isSelected,
   onClick,
   onHover,
+  onToggleSelect,
+  onRangeSelect,
+  onOpenPreview,
   getThumbnail,
   requestThumbnail,
   setLastModified,
@@ -86,6 +94,23 @@ export function ThumbnailCell({
     ctx.drawImage(thumbnail, 0, 0, displaySize, displaySize);
   }, [thumbnail, cellSize]);
 
+  const handleClick = (e: React.MouseEvent): void => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      onToggleSelect(image.path);
+    } else if (e.shiftKey) {
+      e.preventDefault();
+      onRangeSelect(image.path);
+    } else {
+      onClick();
+    }
+  };
+
+  const handleDoubleClick = (e: React.MouseEvent): void => {
+    e.preventDefault();
+    onOpenPreview(image.path);
+  };
+
   const borderColor = BORDER_COLORS[classification];
 
   return (
@@ -93,13 +118,24 @@ export function ThumbnailCell({
       ref={cellRef}
       className="relative cursor-pointer flex-shrink-0"
       style={{ width: cellSize, height: cellSize }}
-      onClick={onClick}
+      onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       onMouseEnter={onHover}
       data-image-path={image.path}
       data-testid="thumbnail-cell"
       role="gridcell"
       tabIndex={isFocused ? 0 : -1}
     >
+      {/* Selection overlay */}
+      {isSelected && (
+        <div className="absolute inset-0 bg-blue-500/30 z-10 pointer-events-none">
+          <div className="absolute top-1 left-1 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
+            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+        </div>
+      )}
       {/* Focus ring as outline - outside everything */}
       <div className={`absolute inset-0 ${isFocused ? 'outline-2 outline-blue-400 outline' : ''}`} />
       {/* Classification border */}

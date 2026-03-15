@@ -18,8 +18,12 @@ interface PhotoGridProps {
   classifications: Record<string, Classification>;
   thumbnailSize: 'small' | 'medium' | 'large';
   focusedImageId: string | null;
+  selectedImages: Set<string>;
   onImageClick: (filename: string) => void;
   onImageHover: (path: string) => void;
+  onToggleSelect: (path: string) => void;
+  onRangeSelect: (path: string) => void;
+  onOpenPreview: (path: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   setLastModified?: (id: string, lastModified: number) => void;
@@ -31,8 +35,12 @@ export function PhotoGrid({
   classifications,
   thumbnailSize,
   focusedImageId,
+  selectedImages,
   onImageClick,
   onImageHover,
+  onToggleSelect,
+  onRangeSelect,
+  onOpenPreview,
   getThumbnail,
   requestThumbnail,
   setLastModified,
@@ -126,8 +134,12 @@ export function PhotoGrid({
               cellSize={cellSize}
               classifications={classifications}
               focusedImageId={focusedImageId}
+              selectedImages={selectedImages}
               onImageClick={onImageClick}
               onImageHover={onImageHover}
+              onToggleSelect={onToggleSelect}
+              onRangeSelect={onRangeSelect}
+              onOpenPreview={onOpenPreview}
               getThumbnail={getThumbnail}
               requestThumbnail={requestThumbnail}
               setLastModified={setLastModified}

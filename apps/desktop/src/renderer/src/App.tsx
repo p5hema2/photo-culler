@@ -57,12 +57,71 @@ function App(): React.JSX.Element {
   const [showExecutePanel, setShowExecutePanel] = useState(false);
   const [infoPanelOpen, setInfoPanelOpen] = useState(true);
 
+  const sortedFlatImages = useMemo(() => groups.flatMap((g) => g.images), [groups]);
+
+  const handleToggleSelect = useCallback(
+    (path: string) => {
+      store.toggleSelect(path);
+    },
+    [store],
+  );
+
+  const handleRangeSelect = useCallback(
+    (path: string) => {
+      store.rangeSelect(path);
+    },
+    [store],
+  );
+
+  const handleSelectAll = useCallback(() => {
+    store.selectAll();
+  }, [store]);
+
+  const handleClearSelection = useCallback(() => {
+    store.clearSelection();
+  }, [store]);
+
+  const handleTrashFocused = useCallback(() => {
+    if (state.focusedImageId) {
+      store.trashImages([state.focusedImageId]);
+    }
+  }, [store, state.focusedImageId]);
+
+  const handleTrashSelected = useCallback(() => {
+    if (state.selectedImages.size > 0) {
+      store.trashImages(Array.from(state.selectedImages));
+    } else if (state.focusedImageId) {
+      store.trashImages([state.focusedImageId]);
+    }
+  }, [store, state.selectedImages, state.focusedImageId]);
+
+  const handleEnterPreview = useCallback(
+    (path: string) => {
+      store.enterPreview(path);
+    },
+    [store],
+  );
+
+  const handleExitPreview = useCallback(() => {
+    store.exitPreview();
+  }, [store]);
+
   useKeyboardNav({
     groups,
     focusedImageId: state.focusedImageId,
     onFocusChange: store.setFocusedImage,
     onCycleClassification: store.cycleClassification,
     containerRef: gridContainerRef,
+    onToggleSelect: handleToggleSelect,
+    onRangeSelect: handleRangeSelect,
+    onSelectAll: handleSelectAll,
+    onClearSelection: handleClearSelection,
+    onTrashFocused: handleTrashFocused,
+    onTrashSelected: handleTrashSelected,
+    onEnterPreview: handleEnterPreview,
+    onExitPreview: handleExitPreview,
+    isPreviewMode: state.isPreviewMode,
+    sortedFlatImages,
   });
 
   const handleSelectFolder = useCallback(async () => {
@@ -102,6 +161,9 @@ function App(): React.JSX.Element {
     setInfoPanelOpen((prev) => !prev);
   }, []);
 
+  const selectedCount = state.selectedImages.size;
+  const totalCount = store.filteredImages.length;
+
   // Count delete-classified images for the Execute button
   const deleteCount = useMemo(() => {
     return Object.values(state.classifications).filter((c) => c === 'delete').length;
@@ -128,14 +190,25 @@ function App(): React.JSX.Element {
     if (groups.length === 0) {
       return <EmptyState />;
     }
+    if (state.isPreviewMode && state.previewImageId) {
+      return (
+        <div className="flex items-center justify-center h-full text-gray-400 text-lg" data-testid="preview-placeholder">
+          Preview mode - coming in Wave 2
+        </div>
+      );
+    }
     return (
       <PhotoGrid
         groups={groups}
         classifications={state.classifications}
         thumbnailSize={state.thumbnailSize}
         focusedImageId={state.focusedImageId}
+        selectedImages={state.selectedImages}
         onImageClick={handleImageClick}
         onImageHover={store.setFocusedImage}
+        onToggleSelect={handleToggleSelect}
+        onRangeSelect={handleRangeSelect}
+        onOpenPreview={handleEnterPreview}
         getThumbnail={thumbnailWorker.getThumbnail}
         requestThumbnail={thumbnailWorker.requestThumbnail}
         setLastModified={thumbnailWorker.setLastModified}
@@ -157,6 +230,8 @@ function App(): React.JSX.Element {
           groupingThresholdMs={state.groupingThresholdMs}
           exifProgress={state.exifProgress}
           deleteCount={deleteCount}
+          selectedCount={selectedCount}
+          totalCount={totalCount}
           onSelectFolder={handleSelectFolder}
           onSortFieldChange={store.setSortField}
           onSortDirectionChange={store.setSortDirection}
@@ -166,6 +241,7 @@ function App(): React.JSX.Element {
           onThumbnailSizeChange={store.setThumbnailSize}
           onGroupingThresholdChange={store.setGroupingThresholdMs}
           onExecute={handleOpenExecute}
+          onDeleteSelected={handleTrashSelected}
         />
 
         {/* Error banner */}

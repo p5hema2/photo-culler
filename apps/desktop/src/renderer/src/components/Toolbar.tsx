@@ -12,6 +12,8 @@ interface ToolbarProps {
   groupingThresholdMs: number;
   exifProgress: { completed: number; total: number };
   deleteCount: number;
+  selectedCount: number;
+  totalCount: number;
   onSelectFolder: () => void;
   onSortFieldChange: (field: SortField) => void;
   onSortDirectionChange: (direction: SortDirection) => void;
@@ -21,6 +23,7 @@ interface ToolbarProps {
   onThumbnailSizeChange: (size: 'small' | 'medium' | 'large') => void;
   onGroupingThresholdChange: (ms: number) => void;
   onExecute: () => void;
+  onDeleteSelected: () => void;
 }
 
 const SORT_OPTIONS: Array<{ value: SortField; label: string }> = [
@@ -74,6 +77,8 @@ export function Toolbar({
   groupingThresholdMs,
   exifProgress,
   deleteCount,
+  selectedCount,
+  totalCount,
   onSelectFolder,
   onSortFieldChange,
   onSortDirectionChange,
@@ -83,6 +88,7 @@ export function Toolbar({
   onThumbnailSizeChange,
   onGroupingThresholdChange,
   onExecute,
+  onDeleteSelected,
 }: ToolbarProps): React.JSX.Element {
   const [localSearch, setLocalSearch] = useState(searchQuery);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -287,6 +293,22 @@ export function Toolbar({
 
       {/* Spacer to push execute button right */}
       <div className="flex-1" />
+
+      {/* Selection count and trash button */}
+      {selectedCount > 0 && (
+        <span className="text-sm text-blue-400" data-testid="selection-count">
+          {selectedCount} of {totalCount} selected
+        </span>
+      )}
+      {selectedCount > 0 && (
+        <button
+          onClick={onDeleteSelected}
+          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded text-sm font-medium transition-colors"
+          data-testid="delete-selected-btn"
+        >
+          Trash Selected ({selectedCount})
+        </button>
+      )}
 
       {/* EXIF progress */}
       {showProgress && (

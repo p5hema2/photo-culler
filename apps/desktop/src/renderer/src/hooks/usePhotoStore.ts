@@ -24,6 +24,10 @@ export interface PhotoState {
   exifProgress: { completed: number; total: number };
   focusedImageId: string | null;
   error: string | null;
+  selectedImages: Set<string>;
+  selectionAnchor: string | null;
+  isPreviewMode: boolean;
+  previewImageId: string | null;
 }
 
 export type Classification = 'keep' | 'review' | 'delete';
@@ -49,6 +53,10 @@ const initialState: PhotoState = {
   exifProgress: { completed: 0, total: 0 },
   focusedImageId: null,
   error: null,
+  selectedImages: new Set<string>(),
+  selectionAnchor: null,
+  isPreviewMode: false,
+  previewImageId: null,
 };
 
 export interface PhotoStoreAPI {
@@ -69,6 +77,13 @@ export interface PhotoStoreAPI {
   setFocusedImage: (path: string | null) => void;
   clearError: () => void;
   executeActions: (options: ExecuteOptions) => Promise<ExecuteResult>;
+  toggleSelect: (path: string) => void;
+  rangeSelect: (path: string) => void;
+  selectAll: () => void;
+  clearSelection: () => void;
+  trashImages: (paths: string[]) => Promise<void>;
+  enterPreview: (path: string) => void;
+  exitPreview: () => void;
 }
 
 export function usePhotoStore(): PhotoStoreAPI {
@@ -158,6 +173,10 @@ export function usePhotoStore(): PhotoStoreAPI {
         images: [],
         classifications: {},
         focusedImageId: null,
+        selectedImages: new Set<string>(),
+        selectionAnchor: null,
+        isPreviewMode: false,
+        previewImageId: null,
       }));
 
       thumbnailWorker.clearAll();
@@ -445,6 +464,174 @@ export function usePhotoStore(): PhotoStoreAPI {
     [],
   );
 
+  const toggleSelect = useCallback((path: string) => {
+    setState((prev) => {
+      const next = new Set(prev.selectedImages);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return {
+        ...prev,
+        selectedImages: next,
+        selectionAnchor: next.size > 0 ? path : null,
+      };
+    });
+  }, []);
+
+  const rangeSelect = useCallback((path: string) => {
+    setState((prev) => {
+      const anchor = prev.selectionAnchor;
+      if (!anchor) {
+        const next = new Set(prev.selectedImages);
+        next.add(path);
+        return { ...prev, selectedImages: next, selectionAnchor: path };
+      }
+      // Find anchor and target in the same group
+      const currentGroups = groupsRef.current;
+      for (const group of currentGroups) {
+        const anchorIdx = group.images.findIndex((img) => img.path === anchor);
+        const targetIdx = group.images.findIndex((img) => img.path === path);
+        if (anchorIdx !== -1 && targetIdx !== -1) {
+          const [start, end] =
+            anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+          const next = new Set(prev.selectedImages);
+          for (let i = start; i <= end; i++) {
+            next.add(group.images[i]!.path);
+          }
+          return { ...prev, selectedImages: next };
+        }
+      }
+      // Different groups -- just select the target
+      const next = new Set(prev.selectedImages);
+      next.add(path);
+      return { ...prev, selectedImages: next, selectionAnchor: path };
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    setState((prev) => {
+      // Use stateRef to access current filtered images
+      const currentState = stateRef.current;
+      let result = currentState.images;
+      if (currentState.filterExtensions.size > 0) {
+        result = result.filter((img) => currentState.filterExtensions.has(img.extension.toLowerCase()));
+      }
+      if (currentState.filterClassification) {
+        result = result.filter(
+          (img) =>
+            (currentState.classifications[img.name] ?? 'review') === currentState.filterClassification,
+        );
+      }
+      if (currentState.searchQuery.trim()) {
+        const query = currentState.searchQuery.toLowerCase().trim();
+        result = result.filter((img) => img.name.toLowerCase().includes(query));
+      }
+      const next = new Set(result.map((img) => img.path));
+      return { ...prev, selectedImages: next };
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setState((prev) => ({
+      ...prev,
+      selectedImages: new Set<string>(),
+      selectionAnchor: null,
+    }));
+  }, []);
+
+  const trashImages = useCallback(async (paths: string[]) => {
+    if (paths.length === 0) return;
+
+    const result = await window.api.trashFiles(paths);
+    const trashedSet = new Set(result.succeeded);
+    if (trashedSet.size === 0) return;
+
+    setState((prev) => {
+      const nextImages = prev.images.filter((img) => !trashedSet.has(img.path));
+      const nextClassifications = { ...prev.classifications };
+      const nextSelected = new Set(prev.selectedImages);
+
+      for (const img of prev.images) {
+        if (trashedSet.has(img.path)) {
+          delete nextClassifications[img.name];
+          nextSelected.delete(img.path);
+        }
+      }
+
+      // Advance focus if current focus was trashed
+      let nextFocused = prev.focusedImageId;
+      if (prev.focusedImageId && trashedSet.has(prev.focusedImageId)) {
+        const oldIndex = prev.images.findIndex((img) => img.path === prev.focusedImageId);
+        const nextImg = nextImages[oldIndex] ?? nextImages[oldIndex - 1] ?? null;
+        nextFocused = nextImg?.path ?? null;
+      }
+
+      // Update preview if previewed image was trashed
+      let nextPreviewId = prev.previewImageId;
+      if (prev.previewImageId && trashedSet.has(prev.previewImageId)) {
+        nextPreviewId = nextFocused;
+      }
+
+      return {
+        ...prev,
+        images: nextImages,
+        classifications: nextClassifications,
+        selectedImages: nextSelected,
+        focusedImageId: nextFocused,
+        previewImageId: nextPreviewId,
+      };
+    });
+
+    // Save results file immediately
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+
+    const current = stateRef.current;
+    if (resultsRef.current && current.folderPath) {
+      const remainingClassifications: Record<string, Classification> = {};
+      for (const img of current.images) {
+        if (!trashedSet.has(img.path)) {
+          remainingClassifications[img.name] = current.classifications[img.name] ?? 'review';
+        }
+      }
+      resultsRef.current = {
+        ...resultsRef.current,
+        images: Object.fromEntries(
+          Object.entries(remainingClassifications).map(([k, v]) => [
+            k,
+            {
+              classification: v,
+              userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
+              qualityScore: resultsRef.current?.images[k]?.qualityScore,
+            },
+          ]),
+        ),
+      };
+      await saveResults(current.folderPath, resultsRef.current);
+    }
+  }, []);
+
+  const enterPreview = useCallback((path: string) => {
+    setState((prev) => ({
+      ...prev,
+      isPreviewMode: true,
+      previewImageId: path,
+      focusedImageId: path,
+    }));
+  }, []);
+
+  const exitPreview = useCallback(() => {
+    setState((prev) => ({
+      ...prev,
+      isPreviewMode: false,
+      previewImageId: null,
+    }));
+  }, []);
+
   // Derived state
   const filteredImages = useMemo(() => {
     let result = state.images;
@@ -477,6 +664,9 @@ export function usePhotoStore(): PhotoStoreAPI {
   const groups = useMemo(() => {
     return groupByTimestamp(sortedImages, state.groupingThresholdMs);
   }, [sortedImages, state.groupingThresholdMs]);
+
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
 
   // Auto-open last folder on mount
   useEffect(() => {
@@ -523,6 +713,13 @@ export function usePhotoStore(): PhotoStoreAPI {
     setFocusedImage,
     clearError,
     executeActions,
+    toggleSelect,
+    rangeSelect,
+    selectAll,
+    clearSelection,
+    trashImages,
+    enterPreview,
+    exitPreview,
   };
 }
 
