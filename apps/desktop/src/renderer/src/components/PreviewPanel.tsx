@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
 import { useZoomPan } from '../hooks/useZoomPan';
 import { Filmstrip } from './Filmstrip';
+import { FocusPeakingOverlay } from './FocusPeakingOverlay';
+import { ExposureClippingOverlay } from './ExposureClippingOverlay';
 
 type ThumbnailStatus = ImageBitmap | 'loading' | 'error';
 
@@ -12,6 +14,8 @@ interface PreviewPanelProps {
   onClose: () => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number) => void;
+  showFocusPeaking: boolean;
+  showClipping: boolean;
 }
 
 const mimeMap: Record<string, string> = {
@@ -36,6 +40,8 @@ export function PreviewPanel({
   onClose,
   getThumbnail,
   requestThumbnail,
+  showFocusPeaking,
+  showClipping,
 }: PreviewPanelProps): React.JSX.Element {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -258,20 +264,39 @@ export function PreviewPanel({
           </div>
         )}
 
-        {/* Full-size image */}
+        {/* Full-size image with overlay canvases */}
         {imageUrl && (
-          <img
-            src={imageUrl}
-            alt=""
-            onLoad={handleImageLoad}
+          <div
             style={{
               transform: `scale(${zoom}) translate(${panX}px, ${panY}px)`,
               transformOrigin: '0 0',
               willChange: 'transform',
+              position: 'relative',
+              display: 'inline-block',
             }}
-            className="max-w-none select-none"
-            draggable={false}
-          />
+          >
+            <img
+              src={imageUrl}
+              alt=""
+              onLoad={handleImageLoad}
+              className="max-w-none select-none"
+              draggable={false}
+            />
+            {showFocusPeaking && (
+              <FocusPeakingOverlay
+                imageUrl={imageUrl}
+                imageDimensions={imageDimensions}
+                visible={showFocusPeaking}
+              />
+            )}
+            {showClipping && (
+              <ExposureClippingOverlay
+                imageUrl={imageUrl}
+                imageDimensions={imageDimensions}
+                visible={showClipping}
+              />
+            )}
+          </div>
         )}
       </div>
 

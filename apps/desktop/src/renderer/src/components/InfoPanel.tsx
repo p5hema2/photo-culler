@@ -12,6 +12,11 @@ interface InfoPanelProps {
   onStarRatingChange?: (rating: number) => void;
   isOpen: boolean;
   onToggle: () => void;
+  showFocusPeaking?: boolean;
+  onToggleFocusPeaking?: () => void;
+  showClipping?: boolean;
+  onToggleClipping?: () => void;
+  isPreviewMode?: boolean;
 }
 
 const CLASSIFICATION_BADGES: Record<string, { label: string; className: string }> = {
@@ -39,6 +44,11 @@ export function InfoPanel({
   onStarRatingChange,
   isOpen,
   onToggle,
+  showFocusPeaking,
+  onToggleFocusPeaking,
+  showClipping,
+  onToggleClipping,
+  isPreviewMode,
 }: InfoPanelProps): React.JSX.Element {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
@@ -186,6 +196,34 @@ export function InfoPanel({
               <div className="px-5 pt-3">
                 <Histogram imageElement={previewImgElement} />
               </div>
+
+              {/* Overlay toggle buttons (preview mode only) */}
+              {isPreviewMode && onToggleFocusPeaking && onToggleClipping && (
+                <div className="px-5 pt-3 flex gap-2">
+                  <button
+                    onClick={onToggleFocusPeaking}
+                    className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                      showFocusPeaking
+                        ? 'bg-cyan-900 text-cyan-300 border-cyan-500'
+                        : 'bg-gray-800 text-gray-400 border-gray-600 hover:border-gray-500'
+                    }`}
+                    data-testid="toggle-focus-peaking"
+                  >
+                    Focus Peaking
+                  </button>
+                  <button
+                    onClick={onToggleClipping}
+                    className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                      showClipping
+                        ? 'bg-red-900 text-red-300 border-red-500'
+                        : 'bg-gray-800 text-gray-400 border-gray-600 hover:border-gray-500'
+                    }`}
+                    data-testid="toggle-clipping"
+                  >
+                    Clipping
+                  </button>
+                </div>
+              )}
 
               {/* Info content */}
               <div className="p-5 flex flex-col gap-4">

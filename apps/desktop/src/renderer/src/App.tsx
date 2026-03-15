@@ -60,6 +60,8 @@ function App(): React.JSX.Element {
   const scoringTriggeredRef = useRef<string | null>(null);
   const [showExecutePanel, setShowExecutePanel] = useState(false);
   const [infoPanelOpen, setInfoPanelOpen] = useState(true);
+  const [showFocusPeaking, setShowFocusPeaking] = useState(false);
+  const [showClipping, setShowClipping] = useState(false);
 
   const sortedFlatImages = useMemo(() => groups.flatMap((g) => g.images), [groups]);
 
@@ -108,6 +110,8 @@ function App(): React.JSX.Element {
 
   const handleExitPreview = useCallback(() => {
     store.exitPreview();
+    setShowFocusPeaking(false);
+    setShowClipping(false);
   }, [store]);
 
   useKeyboardNav({
@@ -163,6 +167,14 @@ function App(): React.JSX.Element {
 
   const handleToggleInfoPanel = useCallback(() => {
     setInfoPanelOpen((prev) => !prev);
+  }, []);
+
+  const handleToggleFocusPeaking = useCallback(() => {
+    setShowFocusPeaking((prev) => !prev);
+  }, []);
+
+  const handleToggleClipping = useCallback(() => {
+    setShowClipping((prev) => !prev);
   }, []);
 
   // Trigger quality scoring after folder opens, with a 2-second delay to avoid IPC contention
@@ -240,6 +252,8 @@ function App(): React.JSX.Element {
           onClose={store.exitPreview}
           getThumbnail={thumbnailWorker.getThumbnail}
           requestThumbnail={thumbnailWorker.requestThumbnail}
+          showFocusPeaking={showFocusPeaking}
+          showClipping={showClipping}
         />
       );
     }
@@ -322,6 +336,11 @@ function App(): React.JSX.Element {
             onStarRatingChange={focusedImage ? (rating) => store.setStarRating(focusedImage.name, rating) : undefined}
             isOpen={infoPanelOpen}
             onToggle={handleToggleInfoPanel}
+            showFocusPeaking={showFocusPeaking}
+            onToggleFocusPeaking={handleToggleFocusPeaking}
+            showClipping={showClipping}
+            onToggleClipping={handleToggleClipping}
+            isPreviewMode={state.isPreviewMode}
           />
         </div>
       </div>
