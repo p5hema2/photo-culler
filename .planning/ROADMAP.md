@@ -12,9 +12,9 @@ Photo Culler goes from zero to a distributable desktop app in four phases. Phase
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Electron Shell and Build Pipeline** - Turborepo monorepo with Electron app that launches, registers custom protocol, typed IPC bridge, and packages into macOS/Windows installers with CI
-- [ ] **Phase 2: Folder Browsing and Thumbnail Grid** - User can open a folder and browse all images in a virtualized, sortable, filterable thumbnail grid that handles 1,000+ photos
-- [ ] **Phase 3: Preview, Selection, and Deletion** - User can preview images full-size with zoom/pan, multi-select images, and batch-delete to OS trash
+- [x] **Phase 1: Electron Shell and Build Pipeline** - Turborepo monorepo with Electron app that launches, registers custom protocol, typed IPC bridge, and packages into macOS/Windows installers with CI
+- [x] **Phase 2: Folder Browsing and Thumbnail Grid** - User can open a folder and browse all images in a virtualized, sortable, filterable thumbnail grid that handles 1,000+ photos
+- [x] **Phase 3: Preview, Selection, and Deletion** - User can preview images full-size with zoom/pan, multi-select images, and batch-delete to OS trash
 - [ ] **Phase 4: Culling Workflow and Quality Scoring** - User can flag/rate/label images with keyboard shortcuts and get automatic quality scores with visual analysis tools
 
 ## Phase Details
@@ -32,9 +32,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 3/3 plans executed
 
 Plans:
-- [ ] 01-01-PLAN.md -- Monorepo scaffold with Turborepo, pnpm workspaces, shared packages, Prettier, and ESLint
-- [ ] 01-02-PLAN.md -- Electron app with electron-vite, typed IPC via contextBridge, custom app:// protocol, and React renderer
-- [ ] 01-03-PLAN.md -- electron-builder packaging for macOS/Windows and GitHub Actions CI/release workflows
+- [x] 01-01-PLAN.md -- Monorepo scaffold with Turborepo, pnpm workspaces, shared packages, Prettier, and ESLint
+- [x] 01-02-PLAN.md -- Electron app with electron-vite, typed IPC via contextBridge, custom app:// protocol, and React renderer
+- [x] 01-03-PLAN.md -- electron-builder packaging for macOS/Windows and GitHub Actions CI/release workflows
 
 ### Phase 2: Folder Browsing and Thumbnail Grid
 **Goal**: Users can select a folder and browse all discovered images in a grouped, virtualized thumbnail grid with timestamp-based grouping, classification borders, sorting, filtering, search, and batch execute
@@ -46,13 +46,13 @@ Plans:
   3. User can sort images by filename, date taken, file size, and dimensions, and filter by file type or search by filename
   4. User can navigate thumbnails with arrow keys and adjust thumbnail size (small/medium/large)
   5. App remembers the last opened folder across sessions and handles empty folders, corrupted images, and permission errors gracefully
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans executed
 
 Plans:
-- [ ] 02-01-PLAN.md -- Types extension, folder scanner, grouping, and sorting pure functions with TDD
-- [ ] 02-02-PLAN.md -- Main process IPC handlers, session store, Web Workers for thumbnails and EXIF
-- [ ] 02-03-PLAN.md -- Virtualized grouped grid UI, toolbar, drag-and-drop, keyboard navigation
-- [ ] 02-04-PLAN.md -- Execute panel for batch operations, results auto-save, end-to-end verification
+- [x] 02-01-PLAN.md -- Types extension, folder scanner, grouping, and sorting pure functions with TDD
+- [x] 02-02-PLAN.md -- Main process IPC handlers, session store, Web Workers for thumbnails and EXIF
+- [x] 02-03-PLAN.md -- Virtualized grouped grid UI, toolbar, drag-and-drop, keyboard navigation
+- [x] 02-04-PLAN.md -- Execute panel for batch operations, results auto-save, end-to-end verification
 
 ### Phase 3: Preview, Selection, and Deletion
 **Goal**: Users can preview images at full size, select multiple images, and batch-delete unwanted shots to the OS trash -- completing the core value proposition
@@ -64,12 +64,10 @@ Plans:
   3. User can select images via click, Ctrl/Cmd+click (toggle), Shift+click (range), and Ctrl+A (all), with a visible selection count in the toolbar
   4. User can delete selected images via Delete key or toolbar button, sees a confirmation dialog, and deleted images move to OS trash (never permanent delete) and disappear from the grid
   5. App supports dark theme (default) and light theme toggle
-**Plans**: TBD
+**Plans**: 1/1 plans executed
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
-- [ ] 03-03: TBD
+- [x] PLAN.md -- Selection state, trash operations, keyboard extensions, preview panel with zoom/pan, filmstrip
 
 ### Phase 4: Culling Workflow and Quality Scoring
 **Goal**: Users can efficiently cull photos using keyboard-driven flagging, rating, and labeling, enhanced by automatic quality scoring and visual analysis tools
@@ -96,6 +94,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Electron Shell and Build Pipeline | 3/3 | Complete | 2026-03-14 |
-| 2. Folder Browsing and Thumbnail Grid | 3/4 | In Progress|  |
-| 3. Preview, Selection, and Deletion | 0/3 | Not started | - |
-| 4. Culling Workflow and Quality Scoring | 0/3 | Not started | - |
+| 2. Folder Browsing and Thumbnail Grid | 4/4 | Complete | 2026-03-15 |
+| 3. Preview, Selection, and Deletion | 1/1 | Complete | 2026-03-15 |
+| 4. Culling Workflow and Quality Scoring | 0/? | Not started | - |
