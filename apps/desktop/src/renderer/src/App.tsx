@@ -177,8 +177,8 @@ function App(): React.JSX.Element {
   }, [state.focusedImageId, state.images]);
 
   const focusedClassification = useMemo(() => {
-    if (!focusedImage) return 'review' as const;
-    return state.classifications[focusedImage.name] ?? ('review' as const);
+    if (!focusedImage) return null;
+    return state.classifications[focusedImage.name] ?? null;
   }, [focusedImage, state.classifications]);
 
   const renderContent = (): React.JSX.Element => {

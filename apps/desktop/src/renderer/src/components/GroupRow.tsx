@@ -34,10 +34,14 @@ function getClassificationSummary(
   images: ImageFileInfo[],
   classifications: Record<string, Classification>,
 ): string {
-  const counts = { keep: 0, review: 0, delete: 0 };
+  const counts = { keep: 0, review: 0, delete: 0, unclassified: 0 };
   for (const img of images) {
-    const cls = classifications[img.name] ?? 'review';
-    counts[cls]++;
+    const cls = classifications[img.name] ?? null;
+    if (cls === null) {
+      counts.unclassified++;
+    } else {
+      counts[cls]++;
+    }
   }
   const parts: string[] = [];
   if (counts.keep > 0) parts.push(`${counts.keep} keep`);
@@ -91,7 +95,7 @@ export function GroupRow({
             key={image.path}
             image={image}
             cellSize={cellSize}
-            classification={classifications[image.name] ?? 'review'}
+            classification={classifications[image.name] ?? null}
             isFocused={focusedImageId === image.path}
             isSelected={selectedImages.has(image.path)}
             onClick={() => onImageClick(image.name)}

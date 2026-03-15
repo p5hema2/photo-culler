@@ -30,7 +30,7 @@ export interface PhotoState {
   previewImageId: string | null;
 }
 
-export type Classification = 'keep' | 'review' | 'delete';
+export type Classification = 'keep' | 'review' | 'delete' | null;
 
 const THUMBNAIL_SIZE_MAP: Record<string, number> = {
   small: 120,
@@ -192,7 +192,7 @@ export function usePhotoStore(): PhotoStoreAPI {
           if (results?.images[img.name]) {
             classifications[img.name] = results.images[img.name].classification;
           } else {
-            classifications[img.name] = 'review';
+            classifications[img.name] = null;
           }
         }
 
@@ -299,13 +299,12 @@ export function usePhotoStore(): PhotoStoreAPI {
   const cycleClassification = useCallback(
     (filename: string) => {
       setState((prev) => {
-        const current = prev.classifications[filename] ?? 'review';
-        const cycle: Record<Classification, Classification> = {
-          review: 'keep',
-          keep: 'delete',
-          delete: 'review',
-        };
-        const next = cycle[current];
+        const current = prev.classifications[filename] ?? null;
+        const next: Classification =
+          current === null ? 'keep' :
+          current === 'keep' ? 'review' :
+          current === 'review' ? 'delete' :
+          null;
         const newClassifications = { ...prev.classifications, [filename]: next };
         if (prev.folderPath) {
           if (resultsRef.current) {
@@ -379,7 +378,7 @@ export function usePhotoStore(): PhotoStoreAPI {
 
       // Get paths of delete-classified images
       const deletePaths = current.images
-        .filter((img) => (current.classifications[img.name] ?? 'review') === 'delete')
+        .filter((img) => (current.classifications[img.name] ?? null) === 'delete')
         .map((img) => img.path);
 
       // Execute delete/trash
@@ -397,7 +396,7 @@ export function usePhotoStore(): PhotoStoreAPI {
       let moveSucceeded: string[] = [];
       if (options.movePicks) {
         const keepPaths = current.images
-          .filter((img) => (current.classifications[img.name] ?? 'review') === 'keep')
+          .filter((img) => (current.classifications[img.name] ?? null) === 'keep')
           .map((img) => img.path);
 
         if (keepPaths.length > 0) {
@@ -439,7 +438,7 @@ export function usePhotoStore(): PhotoStoreAPI {
         const remainingClassifications: Record<string, Classification> = {};
         for (const img of stateRef.current.images) {
           if (!succeededDeletePaths.has(img.path) && !succeededMovePaths.has(img.path)) {
-            remainingClassifications[img.name] = stateRef.current.classifications[img.name] ?? 'review';
+            remainingClassifications[img.name] = stateRef.current.classifications[img.name] ?? null;
           }
         }
 
@@ -521,7 +520,7 @@ export function usePhotoStore(): PhotoStoreAPI {
       if (currentState.filterClassification) {
         result = result.filter(
           (img) =>
-            (currentState.classifications[img.name] ?? 'review') === currentState.filterClassification,
+            (currentState.classifications[img.name] ?? null) === currentState.filterClassification,
         );
       }
       if (currentState.searchQuery.trim()) {
@@ -595,7 +594,7 @@ export function usePhotoStore(): PhotoStoreAPI {
       const remainingClassifications: Record<string, Classification> = {};
       for (const img of current.images) {
         if (!trashedSet.has(img.path)) {
-          remainingClassifications[img.name] = current.classifications[img.name] ?? 'review';
+          remainingClassifications[img.name] = current.classifications[img.name] ?? null;
         }
       }
       resultsRef.current = {
@@ -644,7 +643,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     // Classification filter
     if (state.filterClassification) {
       result = result.filter(
-        (img) => (state.classifications[img.name] ?? 'review') === state.filterClassification,
+        (img) => (state.classifications[img.name] ?? null) === state.filterClassification,
       );
     }
 

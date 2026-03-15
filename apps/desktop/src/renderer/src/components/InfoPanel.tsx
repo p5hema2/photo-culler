@@ -9,10 +9,11 @@ interface InfoPanelProps {
   onToggle: () => void;
 }
 
-const CLASSIFICATION_BADGES: Record<Classification, { label: string; className: string }> = {
+const CLASSIFICATION_BADGES: Record<string, { label: string; className: string }> = {
   keep: { label: 'Keep', className: 'bg-green-900 text-green-300 border-green-500' },
   review: { label: 'Review', className: 'bg-yellow-900 text-yellow-300 border-yellow-500' },
   delete: { label: 'Delete', className: 'bg-red-900 text-red-300 border-red-500' },
+  null: { label: 'Unscored', className: 'bg-gray-700 text-gray-400 border-gray-500' },
 };
 
 function formatFileSize(bytes: number): string {
@@ -105,7 +106,7 @@ export function InfoPanel({
     };
   }, []);
 
-  const badge = CLASSIFICATION_BADGES[classification];
+  const badge = CLASSIFICATION_BADGES[String(classification)] ?? CLASSIFICATION_BADGES['null'];
 
   // Compute quick stats
   const megapixels =

@@ -1,7 +1,7 @@
 import { useRef, useEffect } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
 
-export type Classification = 'keep' | 'review' | 'delete';
+export type Classification = 'keep' | 'review' | 'delete' | null;
 type ThumbnailStatus = ImageBitmap | 'loading' | 'error';
 
 interface ThumbnailCellProps {
@@ -21,10 +21,11 @@ interface ThumbnailCellProps {
   groupIndex: number;
 }
 
-const BORDER_COLORS: Record<Classification, string> = {
+const BORDER_COLORS: Record<string, string> = {
   keep: 'border-green-500',
   review: 'border-yellow-500',
   delete: 'border-red-500',
+  null: 'border-transparent',
 };
 
 export function ThumbnailCell({
@@ -111,7 +112,7 @@ export function ThumbnailCell({
     onOpenPreview(image.path);
   };
 
-  const borderColor = BORDER_COLORS[classification];
+  const borderColor = BORDER_COLORS[String(classification)] ?? 'border-transparent';
 
   return (
     <div

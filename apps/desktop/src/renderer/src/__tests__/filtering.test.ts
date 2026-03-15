@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ImageFileInfo } from '@photo-culler/types';
 
 // Test the filtering logic directly (same as used in usePhotoStore)
-type Classification = 'keep' | 'review' | 'delete';
+type Classification = 'keep' | 'review' | 'delete' | null;
 
 function filterImages(
   images: ImageFileInfo[],
@@ -19,7 +19,7 @@ function filterImages(
 
   if (filterClassification) {
     result = result.filter(
-      (img) => (classifications[img.name] ?? 'review') === filterClassification,
+      (img) => (classifications[img.name] ?? null) === filterClassification,
     );
   }
 

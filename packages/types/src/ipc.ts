@@ -32,12 +32,14 @@ export interface SessionConfig {
 }
 
 export interface ImageResult {
-  /** Classification assigned to the image */
-  classification: 'keep' | 'review' | 'delete';
+  /** Classification assigned to the image (null = unclassified) */
+  classification: 'keep' | 'review' | 'delete' | null;
   /** Whether the user manually overrode the auto-classification */
   userOverride: boolean;
-  /** Quality score from auto-classification (0-1) */
+  /** Quality score from auto-classification (0-100) */
   qualityScore?: number;
+  /** Star rating (1-5), auto-assigned from quality score or manually overridden */
+  starRating?: number;
 }
 
 export interface ResultsFile {

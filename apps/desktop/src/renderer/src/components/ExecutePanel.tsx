@@ -34,9 +34,13 @@ export function ExecutePanel({
   const [result, setResult] = useState<ExecuteResult | null>(null);
 
   const counts = useMemo(() => {
-    const summary = { keep: 0, review: 0, delete: 0 };
+    const summary = { keep: 0, review: 0, delete: 0, unclassified: 0 };
     for (const cls of Object.values(classifications)) {
-      summary[cls]++;
+      if (cls === null) {
+        summary.unclassified++;
+      } else {
+        summary[cls]++;
+      }
     }
     return summary;
   }, [classifications]);
@@ -183,6 +187,12 @@ export function ExecutePanel({
                 <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
                 <span>{counts.delete} image{counts.delete !== 1 ? 's' : ''} marked as Delete</span>
               </div>
+              {counts.unclassified > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full bg-gray-500 inline-block" />
+                  <span>{counts.unclassified} image{counts.unclassified !== 1 ? 's' : ''} unclassified</span>
+                </div>
+              )}
             </div>
 
             {/* Delete mode selection */}
