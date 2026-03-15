@@ -36,9 +36,11 @@ beforeEach(() => {
     },
   );
 
-  // Mock window.api.readFile — used by useThumbnailWorker to read image files via IPC
+  // Mock window.api — used by useThumbnailWorker to read image files and cache thumbnails via IPC
   (window as any).api = {
     readFile: vi.fn().mockResolvedValue(mockArrayBuffer),
+    loadThumbCache: vi.fn().mockResolvedValue(null),
+    saveThumbCache: vi.fn().mockResolvedValue(undefined),
   };
 });
 

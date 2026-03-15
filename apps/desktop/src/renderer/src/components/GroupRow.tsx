@@ -11,6 +11,7 @@ interface GroupRowProps {
   onImageClick: (filename: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
+  setLastModified?: (id: string, lastModified: number) => void;
   groupIndex: number;
 }
 
@@ -48,6 +49,7 @@ export function GroupRow({
   onImageClick,
   getThumbnail,
   requestThumbnail,
+  setLastModified,
   groupIndex,
 }: GroupRowProps): React.JSX.Element {
   const photoCount = group.images.length;
@@ -84,6 +86,7 @@ export function GroupRow({
             onClick={() => onImageClick(image.name)}
             getThumbnail={getThumbnail}
             requestThumbnail={requestThumbnail}
+            setLastModified={setLastModified}
             groupIndex={groupIndex}
           />
         ))}

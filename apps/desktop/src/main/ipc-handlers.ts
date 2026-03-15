@@ -1,5 +1,5 @@
 import { ipcMain, dialog, shell } from 'electron';
-import { writeFile, readFile, mkdir, rename, unlink } from 'node:fs/promises';
+import { writeFile, readFile, mkdir, rename, unlink, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { IPC_CHANNELS } from '@photo-culler/types';
 import type { SessionConfig, TrashResult } from '@photo-culler/types';
@@ -7,6 +7,13 @@ import { scanFolder } from '@photo-culler/image-utils';
 import { getSession, updateSession } from './store';
 
 const RESULTS_FILENAME = 'photo-culler-results.json';
+const THUMB_CACHE_DIR = '.photo-culler-thumbs';
+
+function getThumbCachePath(filePath: string): string {
+  const dir = path.dirname(filePath);
+  const name = path.basename(filePath);
+  return path.join(dir, THUMB_CACHE_DIR, `${name}.thumb.jpg`);
+}
 
 /**
  * Simple write queue to avoid concurrent writes to the same results file.
@@ -150,4 +157,31 @@ export function registerIpcHandlers(): void {
 
     return result;
   });
+
+  ipcMain.handle(
+    IPC_CHANNELS.LOAD_THUMB_CACHE,
+    async (_event, filePath: string, lastModified: number) => {
+      const thumbPath = getThumbCachePath(filePath);
+      try {
+        const thumbStat = await stat(thumbPath);
+        // Cache is valid if the thumbnail was created after the source file was modified
+        if (thumbStat.mtimeMs >= lastModified) {
+          const buffer = await readFile(thumbPath);
+          return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.SAVE_THUMB_CACHE,
+    async (_event, filePath: string, jpegBuffer: ArrayBuffer) => {
+      const thumbPath = getThumbCachePath(filePath);
+      await mkdir(path.dirname(thumbPath), { recursive: true });
+      await writeFile(thumbPath, Buffer.from(jpegBuffer));
+    },
+  );
 }

@@ -21,6 +21,7 @@ interface PhotoGridProps {
   onImageClick: (filename: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
+  setLastModified?: (id: string, lastModified: number) => void;
   updateVisibleRange: (first: number, last: number) => void;
 }
 
@@ -32,6 +33,7 @@ export function PhotoGrid({
   onImageClick,
   getThumbnail,
   requestThumbnail,
+  setLastModified,
   updateVisibleRange,
 }: PhotoGridProps): React.JSX.Element {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -124,6 +126,7 @@ export function PhotoGrid({
               onImageClick={onImageClick}
               getThumbnail={getThumbnail}
               requestThumbnail={requestThumbnail}
+              setLastModified={setLastModified}
               groupIndex={virtualItem.index}
             />
           </div>

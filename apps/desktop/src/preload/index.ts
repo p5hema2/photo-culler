@@ -15,6 +15,10 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.MOVE_TO_PICKS, folderPath, filePaths),
   deleteFiles: (filePaths) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_FILES, filePaths),
   readFile: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.READ_FILE, filePath),
+  loadThumbCache: (filePath, lastModified) =>
+    ipcRenderer.invoke(IPC_CHANNELS.LOAD_THUMB_CACHE, filePath, lastModified),
+  saveThumbCache: (filePath, jpegBuffer) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SAVE_THUMB_CACHE, filePath, jpegBuffer),
 };
 
 contextBridge.exposeInMainWorld('api', api);

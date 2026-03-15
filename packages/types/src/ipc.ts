@@ -11,6 +11,8 @@ export const IPC_CHANNELS = {
   MOVE_TO_PICKS: 'fs:move-to-picks',
   DELETE_FILES: 'fs:delete-files',
   READ_FILE: 'fs:read-file',
+  LOAD_THUMB_CACHE: 'fs:load-thumb-cache',
+  SAVE_THUMB_CACHE: 'fs:save-thumb-cache',
 } as const;
 
 export interface TrashResult {
@@ -63,4 +65,6 @@ export interface ElectronAPI {
   ) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
   deleteFiles: (filePaths: string[]) => Promise<TrashResult>;
   readFile: (filePath: string) => Promise<ArrayBuffer>;
+  loadThumbCache: (filePath: string, lastModified: number) => Promise<ArrayBuffer | null>;
+  saveThumbCache: (filePath: string, jpegBuffer: ArrayBuffer) => Promise<void>;
 }

@@ -15,6 +15,7 @@ interface ThumbnailWorkerAPI {
   getThumbnail: (id: string) => ThumbnailStatus;
   updateVisibleRange: (first: number, last: number) => void;
   clearAll: () => void;
+  setLastModified: (id: string, lastModified: number) => void;
 }
 
 function createWorker(): Worker {
@@ -30,6 +31,7 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
   const queueRef = useRef<PendingRequest[]>([]);
   const busyRef = useRef<Set<number>>(new Set());
   const visibleRangeRef = useRef<{ first: number; last: number }>({ first: 0, last: 10 });
+  const lastModifiedRef = useRef<Map<string, number>>(new Map());
   const [, setVersion] = useState(0);
 
   const dispatchNext = useCallback((workerIndex: number) => {
@@ -51,19 +53,34 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
 
     const item = queue.shift()!;
     busyRef.current.add(workerIndex);
-    fetchAndSendToWorker(workerIndex, item.id, item.url, item.size);
+    loadThumbnail(workerIndex, item.id, item.url, item.size);
   }, []);
 
   /**
-   * Read image file via IPC (main process has direct filesystem access),
-   * then transfer the ArrayBuffer to the worker for heavy processing.
-   * This bypasses all app:// protocol and CORS issues.
+   * Try loading from disk cache first, then fall back to reading the full file
+   * and dispatching to a worker for thumbnail generation.
    */
-  const fetchAndSendToWorker = useCallback(
+  const loadThumbnail = useCallback(
     async (workerIndex: number, id: string, _url: string, size: number) => {
       try {
-        // Read file via IPC — main process reads from disk, returns ArrayBuffer
-        const buffer = await window.api.readFile(id); // id is the file path
+        // Try disk cache first
+        const lastModified = lastModifiedRef.current.get(id);
+        if (lastModified !== undefined && window.api.loadThumbCache) {
+          const cached = await window.api.loadThumbCache(id, lastModified);
+          if (cached) {
+            // Cache hit — create ImageBitmap from JPEG buffer
+            const blob = new Blob([cached], { type: 'image/jpeg' });
+            const bitmap = await createImageBitmap(blob);
+            pendingRef.current.delete(id);
+            cacheRef.current.set(id, bitmap);
+            setVersion((v) => v + 1);
+            dispatchNext(workerIndex);
+            return;
+          }
+        }
+
+        // Cache miss — read full file and send to worker
+        const buffer = await window.api.readFile(id);
         const ext = id.split('.').pop()?.toLowerCase() ?? '';
         const mimeMap: Record<string, string> = {
           jpg: 'image/jpeg',
@@ -92,13 +109,20 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
 
   const handleWorkerMessage = useCallback(
     (workerIndex: number, event: MessageEvent<ThumbnailResponse>) => {
-      const { id, bitmap, error } = event.data;
+      const { id, bitmap, jpegBuffer, error } = event.data;
       pendingRef.current.delete(id);
 
       if (error || !bitmap) {
         cacheRef.current.set(id, 'error');
       } else {
         cacheRef.current.set(id, bitmap);
+
+        // Save to disk cache in the background (fire-and-forget)
+        if (jpegBuffer && window.api.saveThumbCache) {
+          window.api.saveThumbCache(id, jpegBuffer).catch(() => {
+            // Ignore cache save errors
+          });
+        }
       }
 
       setVersion((v) => v + 1);
@@ -150,7 +174,7 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
       for (let i = 0; i < workers.length; i++) {
         if (!busyRef.current.has(i)) {
           busyRef.current.add(i);
-          fetchAndSendToWorker(i, id, url, size);
+          loadThumbnail(i, id, url, size);
           return;
         }
       }
@@ -158,7 +182,7 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
       // All workers busy -- add to queue
       queueRef.current.push({ id, url, size, groupIndex });
     },
-    [fetchAndSendToWorker],
+    [loadThumbnail],
   );
 
   const getThumbnail = useCallback((id: string): ThumbnailStatus => {
@@ -170,6 +194,10 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
 
   const updateVisibleRange = useCallback((first: number, last: number) => {
     visibleRangeRef.current = { first, last };
+  }, []);
+
+  const setLastModified = useCallback((id: string, lastModified: number) => {
+    lastModifiedRef.current.set(id, lastModified);
   }, []);
 
   const clearAll = useCallback(() => {
@@ -189,11 +217,12 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
     pendingRef.current.clear();
     queueRef.current = [];
     busyRef.current.clear();
+    lastModifiedRef.current.clear();
 
     // Create fresh workers
     initWorkers();
     setVersion((v) => v + 1);
   }, [initWorkers]);
 
-  return { requestThumbnail, getThumbnail, updateVisibleRange, clearAll };
+  return { requestThumbnail, getThumbnail, updateVisibleRange, clearAll, setLastModified };
 }

@@ -17,6 +17,7 @@ export interface ThumbnailRequest {
 export interface ThumbnailResponse {
   id: string;
   bitmap?: ImageBitmap;
+  jpegBuffer?: ArrayBuffer;
   error?: boolean;
 }
 
@@ -45,11 +46,13 @@ self.onmessage = async (event: MessageEvent<ThumbnailRequest>) => {
     bitmap.close();
 
     const thumbnailBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+    const jpegBuffer = await thumbnailBlob.arrayBuffer();
     const thumbnailBitmap = await createImageBitmap(thumbnailBlob);
 
-    self.postMessage({ id, bitmap: thumbnailBitmap } as ThumbnailResponse, {
-      transfer: [thumbnailBitmap],
-    });
+    self.postMessage(
+      { id, bitmap: thumbnailBitmap, jpegBuffer } as ThumbnailResponse,
+      { transfer: [thumbnailBitmap, jpegBuffer] },
+    );
   } catch {
     self.postMessage({ id, error: true } as ThumbnailResponse);
   }

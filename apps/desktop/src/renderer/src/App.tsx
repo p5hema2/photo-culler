@@ -6,6 +6,7 @@ import { Toolbar } from './components/Toolbar';
 import { PhotoGrid } from './components/PhotoGrid';
 import { EmptyState } from './components/EmptyState';
 import { ExecutePanel } from './components/ExecutePanel';
+import { InfoPanel } from './components/InfoPanel';
 
 function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX.Element {
   return (
@@ -54,6 +55,7 @@ function App(): React.JSX.Element {
   const { state, groups, thumbnailWorker } = store;
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const [showExecutePanel, setShowExecutePanel] = useState(false);
+  const [infoPanelOpen, setInfoPanelOpen] = useState(true);
 
   useKeyboardNav({
     groups,
@@ -96,10 +98,25 @@ function App(): React.JSX.Element {
     setShowExecutePanel(false);
   }, []);
 
+  const handleToggleInfoPanel = useCallback(() => {
+    setInfoPanelOpen((prev) => !prev);
+  }, []);
+
   // Count delete-classified images for the Execute button
   const deleteCount = useMemo(() => {
     return Object.values(state.classifications).filter((c) => c === 'delete').length;
   }, [state.classifications]);
+
+  // Find the focused image object
+  const focusedImage = useMemo(() => {
+    if (!state.focusedImageId) return null;
+    return state.images.find((img) => img.path === state.focusedImageId) ?? null;
+  }, [state.focusedImageId, state.images]);
+
+  const focusedClassification = useMemo(() => {
+    if (!focusedImage) return 'review' as const;
+    return state.classifications[focusedImage.name] ?? ('review' as const);
+  }, [focusedImage, state.classifications]);
 
   const renderContent = (): React.JSX.Element => {
     if (state.isLoading) {
@@ -120,6 +137,7 @@ function App(): React.JSX.Element {
         onImageClick={handleImageClick}
         getThumbnail={thumbnailWorker.getThumbnail}
         requestThumbnail={thumbnailWorker.requestThumbnail}
+        setLastModified={thumbnailWorker.setLastModified}
         updateVisibleRange={thumbnailWorker.updateVisibleRange}
       />
     );
@@ -165,8 +183,16 @@ function App(): React.JSX.Element {
           </div>
         )}
 
-        <div className="flex-1 overflow-hidden">
-          {renderContent()}
+        <div className="flex-1 overflow-hidden relative flex">
+          <div className="flex-1 overflow-hidden">
+            {renderContent()}
+          </div>
+          <InfoPanel
+            image={focusedImage}
+            classification={focusedClassification}
+            isOpen={infoPanelOpen}
+            onToggle={handleToggleInfoPanel}
+          />
         </div>
       </div>
 

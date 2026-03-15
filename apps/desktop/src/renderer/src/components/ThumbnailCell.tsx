@@ -12,6 +12,7 @@ interface ThumbnailCellProps {
   onClick: () => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
+  setLastModified?: (id: string, lastModified: number) => void;
   groupIndex: number;
 }
 
@@ -29,10 +30,18 @@ export function ThumbnailCell({
   onClick,
   getThumbnail,
   requestThumbnail,
+  setLastModified,
   groupIndex,
 }: ThumbnailCellProps): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const thumbnail = getThumbnail(image.path);
+
+  // Register lastModified for disk cache validation
+  useEffect(() => {
+    if (setLastModified && image.lastModified) {
+      setLastModified(image.path, image.lastModified);
+    }
+  }, [image.path, image.lastModified, setLastModified]);
 
   // Request thumbnail if not yet requested
   useEffect(() => {
@@ -58,7 +67,8 @@ export function ThumbnailCell({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const displaySize = cellSize - 6; // Account for border
+    // Account for border (4px) + gap (2px) on each side = 12px total
+    const displaySize = cellSize - 12;
     canvas.width = displaySize;
     canvas.height = displaySize;
 
@@ -67,11 +77,10 @@ export function ThumbnailCell({
   }, [thumbnail, cellSize]);
 
   const borderColor = BORDER_COLORS[classification];
-  const focusRing = isFocused ? 'ring-2 ring-blue-400' : '';
 
   return (
     <div
-      className={`relative border-3 ${borderColor} ${focusRing} overflow-hidden bg-gray-800 cursor-pointer flex-shrink-0`}
+      className="relative cursor-pointer flex-shrink-0"
       style={{ width: cellSize, height: cellSize }}
       onClick={onClick}
       data-image-path={image.path}
@@ -79,30 +88,38 @@ export function ThumbnailCell({
       role="gridcell"
       tabIndex={isFocused ? 0 : -1}
     >
-      {thumbnail === 'loading' && (
-        <div className="absolute inset-0 bg-gray-700 animate-pulse" data-testid="thumbnail-loading" />
-      )}
-      {thumbnail === 'error' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-700" data-testid="thumbnail-error">
-          <svg
-            className="w-8 h-8 text-gray-500"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"
-            />
-            <line x1="4" y1="4" x2="20" y2="20" stroke="currentColor" strokeWidth={1.5} />
-          </svg>
+      {/* Focus ring as outline - outside everything */}
+      <div className={`absolute inset-0 ${isFocused ? 'outline-2 outline-blue-400 outline' : ''}`} />
+      {/* Classification border */}
+      <div className={`absolute inset-0 border-4 ${borderColor}`}>
+        {/* 2px gap with dark background for separation */}
+        <div className="absolute inset-[2px] bg-gray-900 overflow-hidden">
+          {thumbnail === 'loading' && (
+            <div className="absolute inset-0 bg-gray-700 animate-pulse" data-testid="thumbnail-loading" />
+          )}
+          {thumbnail === 'error' && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-700" data-testid="thumbnail-error">
+              <svg
+                className="w-8 h-8 text-gray-500"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"
+                />
+                <line x1="4" y1="4" x2="20" y2="20" stroke="currentColor" strokeWidth={1.5} />
+              </svg>
+            </div>
+          )}
+          {thumbnail !== 'loading' && thumbnail !== 'error' && (
+            <canvas ref={canvasRef} className="w-full h-full" />
+          )}
         </div>
-      )}
-      {thumbnail !== 'loading' && thumbnail !== 'error' && (
-        <canvas ref={canvasRef} className="w-full h-full" />
-      )}
+      </div>
     </div>
   );
 }
