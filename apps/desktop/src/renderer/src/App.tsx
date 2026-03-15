@@ -177,32 +177,50 @@ function App(): React.JSX.Element {
     setShowClipping((prev) => !prev);
   }, []);
 
-  // Trigger quality scoring after folder opens, with a 2-second delay to avoid IPC contention
+  // Reset scoring trigger when folder changes
   useEffect(() => {
-    if (
-      !state.folderPath ||
-      state.isLoading ||
-      state.images.length === 0 ||
-      scoringTriggeredRef.current === state.folderPath
-    ) {
+    scoringTriggeredRef.current = null;
+  }, [state.folderPath]);
+
+  // Trigger quality scoring after folder opens, with a 2-second delay
+  // Uses stateRef inside timeout to avoid dependency on state.images (which changes during EXIF extraction)
+  const storeRef = useRef(store);
+  storeRef.current = store;
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  useEffect(() => {
+    if (!state.folderPath || state.isLoading) {
       return;
     }
 
+    if (scoringTriggeredRef.current === state.folderPath) {
+      return;
+    }
+
+    scoringTriggeredRef.current = state.folderPath;
+
     const timer = setTimeout(() => {
-      scoringTriggeredRef.current = state.folderPath;
-      const files = state.images.map((img) => ({ path: img.path, name: img.name }));
-      scoringWorker.scoreAll(files, (filename, score) => {
-        store.setQualityScore(filename, score);
+      const currentState = stateRef.current;
+      const unscoredFiles = currentState.images
+        .filter((img) => currentState.qualityScores[img.name] == null)
+        .map((img) => ({ path: img.path, name: img.name }));
+
+      console.log(`[scoring] ${unscoredFiles.length}/${currentState.images.length} images need scoring`);
+
+      if (unscoredFiles.length === 0) return;
+
+      console.log(`[scoring] Starting scoring for ${unscoredFiles.length} images`);
+      scoringWorker.scoreAll(unscoredFiles, (filename, score) => {
+        storeRef.current.setQualityScore(filename, score);
       });
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [state.folderPath, state.isLoading, state.images, scoringWorker, store]);
+  }, [state.folderPath, state.isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync scoring progress to store
-  useEffect(() => {
-    store.setScoringProgress(scoringWorker.progress);
-  }, [scoringWorker.progress, store]);
+  // Scoring progress read directly from hook — no sync needed
+  const scoringProgress = scoringWorker.progress;
 
   const selectedCount = state.selectedImages.size;
   const totalCount = store.filteredImages.length;
@@ -302,7 +320,7 @@ function App(): React.JSX.Element {
           onThumbnailSizeChange={store.setThumbnailSize}
           onGroupingThresholdChange={store.setGroupingThresholdMs}
           filterStarRating={state.filterStarRating}
-          scoringProgress={state.scoringProgress}
+          scoringProgress={scoringProgress}
           onFilterStarRatingChange={store.setFilterStarRating}
           onExecute={handleOpenExecute}
           onDeleteSelected={handleTrashSelected}

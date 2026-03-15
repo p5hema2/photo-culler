@@ -169,13 +169,9 @@ export function usePhotoStore(): PhotoStoreAPI {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  // Update exif progress from hook
-  useEffect(() => {
-    setState((prev) => ({
-      ...prev,
-      exifProgress: exifExtractor.progress,
-    }));
-  }, [exifExtractor.progress]);
+  // Exif progress is read directly from the hook — no sync needed.
+  // Overwrite the state field at return time to avoid stale values without triggering re-renders.
+  const exifProgress = exifExtractor.progress;
 
   const openFolder = useCallback(
     async (folderPath: string) => {
@@ -742,7 +738,12 @@ export function usePhotoStore(): PhotoStoreAPI {
   }, []);
 
   const setScoringProgress = useCallback((progress: { completed: number; total: number }) => {
-    setState((prev) => ({ ...prev, scoringProgress: progress }));
+    setState((prev) => {
+      if (prev.scoringProgress.completed === progress.completed && prev.scoringProgress.total === progress.total) {
+        return prev; // No change — skip re-render
+      }
+      return { ...prev, scoringProgress: progress };
+    });
   }, []);
 
   // Derived state
@@ -825,8 +826,11 @@ export function usePhotoStore(): PhotoStoreAPI {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Override exifProgress from hook directly (avoids setState loop)
+  const stateWithProgress = { ...state, exifProgress };
+
   return {
-    state,
+    state: stateWithProgress,
     groups,
     filteredImages,
     thumbnailWorker,

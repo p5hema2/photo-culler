@@ -361,10 +361,11 @@ export function Toolbar({
         </span>
       )}
 
-      {/* Scoring progress */}
-      {showScoringProgress && (
+      {/* Scoring progress — always show when total > 0 */}
+      {scoringProgress.total > 0 && (
         <span className="text-xs text-gray-500" data-testid="scoring-progress">
           Scoring: {scoringProgress.completed}/{scoringProgress.total}
+          {scoringProgress.completed >= scoringProgress.total && ' ✓'}
         </span>
       )}
 
