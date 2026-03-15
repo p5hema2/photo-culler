@@ -3,7 +3,7 @@ import type { ExifResponse } from '../workers/exif.worker';
 
 interface ExifExtractorAPI {
   extractAll: (
-    files: Array<{ path: string; url: string }>,
+    files: Array<{ path: string }>,
     onResult: (path: string, dateTaken: number | null, width: number | null, height: number | null) => void,
   ) => void;
   isExtracting: boolean;
@@ -17,7 +17,7 @@ export function useExifExtractor(): ExifExtractorAPI {
 
   const extractAll = useCallback(
     (
-      files: Array<{ path: string; url: string }>,
+      files: Array<{ path: string }>,
       onResult: (
         path: string,
         dateTaken: number | null,
@@ -43,21 +43,46 @@ export function useExifExtractor(): ExifExtractorAPI {
       workerRef.current = worker;
 
       let completed = 0;
+      let fileIndex = 0;
+
+      // Send files one at a time: read via IPC, send buffer to worker
+      const sendNext = async (): Promise<void> => {
+        if (fileIndex >= files.length) return;
+        const file = files[fileIndex++];
+        try {
+          const buffer = await window.api.readFile(file.path);
+          worker.postMessage({ file: { path: file.path, buffer } }, [buffer]);
+        } catch {
+          // File read failed, report null values
+          onResult(file.path, null, null, null);
+          completed++;
+          setProgress({ completed, total: files.length });
+          if (completed >= files.length) {
+            setIsExtracting(false);
+            worker.terminate();
+            workerRef.current = null;
+          } else {
+            sendNext();
+          }
+        }
+      };
 
       worker.onmessage = (event: MessageEvent<ExifResponse>) => {
         const data = event.data;
-
-        if ('done' in data && data.done) {
-          setIsExtracting(false);
-          worker.terminate();
-          workerRef.current = null;
-          return;
-        }
 
         if ('path' in data) {
           completed++;
           setProgress({ completed, total: files.length });
           onResult(data.path, data.dateTaken, data.width, data.height);
+
+          if (completed >= files.length) {
+            setIsExtracting(false);
+            worker.terminate();
+            workerRef.current = null;
+          } else {
+            // Send next file
+            sendNext();
+          }
         }
       };
 
@@ -67,7 +92,11 @@ export function useExifExtractor(): ExifExtractorAPI {
         workerRef.current = null;
       };
 
-      worker.postMessage({ files });
+      // Start processing — send first few files in parallel
+      const concurrency = Math.min(files.length, 4);
+      for (let i = 0; i < concurrency; i++) {
+        sendNext();
+      }
     },
     [],
   );

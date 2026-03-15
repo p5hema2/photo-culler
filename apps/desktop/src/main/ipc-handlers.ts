@@ -128,6 +128,11 @@ export function registerIpcHandlers(): void {
     return result;
   });
 
+  ipcMain.handle(IPC_CHANNELS.READ_FILE, async (_event, filePath: string) => {
+    const buffer = await readFile(filePath);
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  });
+
   ipcMain.handle(IPC_CHANNELS.DELETE_FILES, async (_event, filePaths: string[]) => {
     const result: TrashResult = { succeeded: [], failed: [] };
 

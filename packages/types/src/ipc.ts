@@ -10,6 +10,7 @@ export const IPC_CHANNELS = {
   SET_SESSION: 'store:set-session',
   MOVE_TO_PICKS: 'fs:move-to-picks',
   DELETE_FILES: 'fs:delete-files',
+  READ_FILE: 'fs:read-file',
 } as const;
 
 export interface TrashResult {
@@ -61,4 +62,5 @@ export interface ElectronAPI {
     filePaths: string[],
   ) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
   deleteFiles: (filePaths: string[]) => Promise<TrashResult>;
+  readFile: (filePath: string) => Promise<ArrayBuffer>;
 }

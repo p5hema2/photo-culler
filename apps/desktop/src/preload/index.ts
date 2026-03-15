@@ -14,6 +14,7 @@ const api: ElectronAPI = {
   moveToPicks: (folderPath, filePaths) =>
     ipcRenderer.invoke(IPC_CHANNELS.MOVE_TO_PICKS, folderPath, filePaths),
   deleteFiles: (filePaths) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_FILES, filePaths),
+  readFile: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.READ_FILE, filePath),
 };
 
 contextBridge.exposeInMainWorld('api', api);

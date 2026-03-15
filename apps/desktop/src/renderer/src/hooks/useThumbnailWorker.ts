@@ -55,24 +55,31 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
   }, []);
 
   /**
-   * Fetch image blob in the main thread (which has app:// protocol access),
+   * Read image file via IPC (main process has direct filesystem access),
    * then transfer the ArrayBuffer to the worker for heavy processing.
+   * This bypasses all app:// protocol and CORS issues.
    */
   const fetchAndSendToWorker = useCallback(
-    async (workerIndex: number, id: string, url: string, size: number) => {
+    async (workerIndex: number, id: string, _url: string, size: number) => {
       try {
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error(`Fetch failed: ${response.status}`);
-        }
-        const blob = await response.blob();
-        const buffer = await blob.arrayBuffer();
+        // Read file via IPC — main process reads from disk, returns ArrayBuffer
+        const buffer = await window.api.readFile(id); // id is the file path
+        const ext = id.split('.').pop()?.toLowerCase() ?? '';
+        const mimeMap: Record<string, string> = {
+          jpg: 'image/jpeg',
+          jpeg: 'image/jpeg',
+          png: 'image/png',
+          webp: 'image/webp',
+          tiff: 'image/tiff',
+          tif: 'image/tiff',
+        };
+        const mimeType = mimeMap[ext] ?? 'image/jpeg';
         const worker = workersRef.current[workerIndex];
         if (worker) {
-          worker.postMessage({ id, buffer, mimeType: blob.type, size }, [buffer]);
+          worker.postMessage({ id, buffer, mimeType, size }, [buffer]);
         }
       } catch {
-        // Fetch failed in main thread — report error directly
+        // IPC read failed — report error directly
         pendingRef.current.delete(id);
         cacheRef.current.set(id, 'error');
         setVersion((v) => v + 1);

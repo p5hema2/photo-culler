@@ -201,10 +201,7 @@ export function usePhotoStore(): PhotoStoreAPI {
 
         // Trigger EXIF extraction
         exifExtractor.extractAll(
-          images.map((img) => ({
-            path: img.path,
-            url: `app://file${img.path.split('/').map(encodeURIComponent).join('/')}`,
-          })),
+          images.map((img) => ({ path: img.path })),
           (path, dateTaken, width, height) => {
             if (!mountedRef.current) return;
             setState((prev) => ({
