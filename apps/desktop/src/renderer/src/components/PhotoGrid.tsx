@@ -70,10 +70,13 @@ export function PhotoGrid({
     overscan: 3,
   });
 
-  // Force virtualizer to recalculate when cell size or container width changes
+  // Fingerprint that changes when any group's image count changes (not just group count)
+  const groupSizesKey = groups.map((g) => g.images.length).join(',');
+
+  // Force virtualizer to recalculate when cell size, container width, or group contents change
   useEffect(() => {
     virtualizer.measure();
-  }, [cellSize, containerWidth, groups.length, virtualizer]);
+  }, [cellSize, containerWidth, groups.length, groupSizesKey, virtualizer]);
 
   // Track container width via ResizeObserver
   useEffect(() => {
@@ -105,9 +108,11 @@ export function PhotoGrid({
   return (
     <div
       ref={parentRef}
-      className="h-full overflow-auto"
+      className="h-full overflow-auto outline-none"
       data-testid="photo-grid"
       role="grid"
+      tabIndex={0}
+      onMouseEnter={() => parentRef.current?.focus()}
     >
       <div
         style={{
