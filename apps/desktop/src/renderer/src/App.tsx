@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { usePhotoStore } from './hooks/usePhotoStore';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
+import { useScoringWorker } from './hooks/useScoringWorker';
 import { DropZone } from './components/DropZone';
 import { Toolbar } from './components/Toolbar';
 import { PhotoGrid } from './components/PhotoGrid';
@@ -54,7 +55,9 @@ function LoadingState({ progress }: { progress?: { completed: number; total: num
 function App(): React.JSX.Element {
   const store = usePhotoStore();
   const { state, groups, thumbnailWorker } = store;
+  const scoringWorker = useScoringWorker();
   const gridContainerRef = useRef<HTMLDivElement>(null);
+  const scoringTriggeredRef = useRef<string | null>(null);
   const [showExecutePanel, setShowExecutePanel] = useState(false);
   const [infoPanelOpen, setInfoPanelOpen] = useState(true);
 
@@ -161,6 +164,33 @@ function App(): React.JSX.Element {
   const handleToggleInfoPanel = useCallback(() => {
     setInfoPanelOpen((prev) => !prev);
   }, []);
+
+  // Trigger quality scoring after folder opens, with a 2-second delay to avoid IPC contention
+  useEffect(() => {
+    if (
+      !state.folderPath ||
+      state.isLoading ||
+      state.images.length === 0 ||
+      scoringTriggeredRef.current === state.folderPath
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      scoringTriggeredRef.current = state.folderPath;
+      const files = state.images.map((img) => ({ path: img.path, name: img.name }));
+      scoringWorker.scoreAll(files, (filename, score) => {
+        store.setQualityScore(filename, score);
+      });
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [state.folderPath, state.isLoading, state.images, scoringWorker, store]);
+
+  // Sync scoring progress to store
+  useEffect(() => {
+    store.setScoringProgress(scoringWorker.progress);
+  }, [scoringWorker.progress, store]);
 
   const selectedCount = state.selectedImages.size;
   const totalCount = store.filteredImages.length;
