@@ -202,7 +202,7 @@ export function usePhotoStore(): PhotoStoreAPI {
         // Trigger EXIF extraction
         exifExtractor.extractAll(
           images.map((img) => ({ path: img.path })),
-          (path, dateTaken, width, height) => {
+          (path, metadata) => {
             if (!mountedRef.current) return;
             setState((prev) => ({
               ...prev,
@@ -210,9 +210,22 @@ export function usePhotoStore(): PhotoStoreAPI {
                 img.path === path
                   ? {
                       ...img,
-                      dateTaken: dateTaken ?? undefined,
-                      width: width ?? undefined,
-                      height: height ?? undefined,
+                      dateTaken: metadata.dateTaken ?? undefined,
+                      width: metadata.width ?? undefined,
+                      height: metadata.height ?? undefined,
+                      cameraMake: metadata.cameraMake ?? undefined,
+                      cameraModel: metadata.cameraModel ?? undefined,
+                      lensModel: metadata.lensModel ?? undefined,
+                      focalLength: metadata.focalLength ?? undefined,
+                      aperture: metadata.aperture ?? undefined,
+                      shutterSpeed: metadata.shutterSpeed ?? undefined,
+                      iso: metadata.iso ?? undefined,
+                      exposureCompensation: metadata.exposureCompensation ?? undefined,
+                      flash: metadata.flash ?? undefined,
+                      whiteBalance: metadata.whiteBalance ?? undefined,
+                      meteringMode: metadata.meteringMode ?? undefined,
+                      exposureProgram: metadata.exposureProgram ?? undefined,
+                      colorSpace: metadata.colorSpace ?? undefined,
                     }
                   : img,
               ),

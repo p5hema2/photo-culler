@@ -135,6 +135,7 @@ function App(): React.JSX.Element {
         thumbnailSize={state.thumbnailSize}
         focusedImageId={state.focusedImageId}
         onImageClick={handleImageClick}
+        onImageHover={store.setFocusedImage}
         getThumbnail={thumbnailWorker.getThumbnail}
         requestThumbnail={thumbnailWorker.requestThumbnail}
         setLastModified={thumbnailWorker.setLastModified}

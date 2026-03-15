@@ -10,6 +10,7 @@ interface ThumbnailCellProps {
   classification: Classification;
   isFocused: boolean;
   onClick: () => void;
+  onHover: () => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   setLastModified?: (id: string, lastModified: number) => void;
@@ -28,13 +29,22 @@ export function ThumbnailCell({
   classification,
   isFocused,
   onClick,
+  onHover,
   getThumbnail,
   requestThumbnail,
   setLastModified,
   groupIndex,
 }: ThumbnailCellProps): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cellRef = useRef<HTMLDivElement>(null);
   const thumbnail = getThumbnail(image.path);
+
+  // Auto-scroll into view when focused via keyboard
+  useEffect(() => {
+    if (isFocused && cellRef.current) {
+      cellRef.current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }, [isFocused]);
 
   // Register lastModified for disk cache validation
   useEffect(() => {
@@ -80,9 +90,11 @@ export function ThumbnailCell({
 
   return (
     <div
+      ref={cellRef}
       className="relative cursor-pointer flex-shrink-0"
       style={{ width: cellSize, height: cellSize }}
       onClick={onClick}
+      onMouseEnter={onHover}
       data-image-path={image.path}
       data-testid="thumbnail-cell"
       role="gridcell"

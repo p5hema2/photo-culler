@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
 import type { Classification } from './ThumbnailCell';
 
@@ -33,22 +33,16 @@ export function InfoPanel({
 }: InfoPanelProps): React.JSX.Element {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
-  const prevPathRef = useRef<string | null>(null);
 
-  // Load large preview via IPC
+  // Load large preview via IPC — runs on every image change
   useEffect(() => {
     if (!isOpen || !image) {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-        setPreviewUrl(null);
-      }
-      prevPathRef.current = null;
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
       return;
     }
-
-    // Skip if same image
-    if (prevPathRef.current === image.path) return;
-    prevPathRef.current = image.path;
 
     let cancelled = false;
 
@@ -76,15 +70,16 @@ export function InfoPanel({
           return;
         }
 
-        // Revoke old URL
-        if (previewUrl) {
-          URL.revokeObjectURL(previewUrl);
-        }
-
-        setPreviewUrl(url);
+        setPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return url;
+        });
       } catch {
         if (!cancelled) {
-          setPreviewUrl(null);
+          setPreviewUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return null;
+          });
         }
       } finally {
         if (!cancelled) {
@@ -103,11 +98,12 @@ export function InfoPanel({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-      }
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const badge = CLASSIFICATION_BADGES[classification];
 
@@ -139,8 +135,8 @@ export function InfoPanel({
 
       {isOpen && (
         <div
-          className="w-80 flex-shrink-0 bg-gray-850 border-l border-gray-700 overflow-y-auto flex flex-col"
-          style={{ backgroundColor: '#1a1d23' }}
+          className="flex-shrink-0 bg-gray-850 border-l border-gray-700 overflow-y-auto flex flex-col"
+          style={{ backgroundColor: '#1a1d23', width: '50%', minWidth: '400px', maxWidth: '60%' }}
           data-testid="info-panel"
         >
           {!image ? (
@@ -150,7 +146,7 @@ export function InfoPanel({
           ) : (
             <div className="flex flex-col">
               {/* Large preview */}
-              <div className="relative w-full aspect-square bg-gray-800">
+              <div className="relative w-full bg-gray-800 flex-1 min-h-0" style={{ minHeight: '300px' }}>
                 {loadingPreview && (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="w-6 h-6 border-2 border-gray-600 border-t-blue-500 rounded-full animate-spin" />
@@ -167,71 +163,147 @@ export function InfoPanel({
               </div>
 
               {/* Info content */}
-              <div className="p-4 flex flex-col gap-3">
-                {/* Filename */}
-                <h2
-                  className="text-sm font-semibold text-white truncate"
-                  title={image.name}
-                  data-testid="info-panel-filename"
-                >
-                  {image.name}
-                </h2>
-
-                {/* Classification badge */}
-                <div>
+              <div className="p-5 flex flex-col gap-4">
+                {/* Header: filename + badge */}
+                <div className="flex items-center gap-3">
+                  <h2
+                    className="text-base font-semibold text-white truncate flex-1"
+                    title={image.name}
+                    data-testid="info-panel-filename"
+                  >
+                    {image.name}
+                  </h2>
                   <span
-                    className={`inline-block px-2 py-0.5 text-xs rounded border ${badge.className}`}
+                    className={`inline-block px-2 py-0.5 text-xs rounded border flex-shrink-0 ${badge.className}`}
                     data-testid="info-panel-classification"
                   >
                     {badge.label}
                   </span>
                 </div>
 
-                {/* File metadata */}
-                <div className="flex flex-col gap-1.5 text-xs text-gray-400">
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Size</span>
-                    <span>{formatFileSize(image.size)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Extension</span>
-                    <span className="uppercase">{image.extension}</span>
-                  </div>
-                  {image.width && image.height && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Dimensions</span>
-                      <span>{image.width} x {image.height}</span>
-                    </div>
-                  )}
-                  {image.dateTaken && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Date Taken</span>
-                      <span>{formatDate(image.dateTaken)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Modified</span>
-                    <span>{formatDate(image.lastModified)}</span>
-                  </div>
-                </div>
-
-                {/* Quick stats */}
-                {(megapixels || aspectRatio) && (
-                  <div className="border-t border-gray-700 pt-2 flex flex-col gap-1.5 text-xs text-gray-400">
-                    {megapixels && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Megapixels</span>
-                        <span>{megapixels} MP</span>
-                      </div>
-                    )}
-                    {aspectRatio && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Aspect Ratio</span>
-                        <span>{aspectRatio}</span>
-                      </div>
+                {/* Exposure summary bar — full width */}
+                {(image.aperture || image.shutterSpeed || image.iso || image.focalLength) && (
+                  <div className="flex gap-4 text-sm text-white font-mono py-1.5 px-3 bg-gray-800 rounded">
+                    {image.aperture && <span>f/{image.aperture}</span>}
+                    {image.shutterSpeed && <span>{image.shutterSpeed}</span>}
+                    {image.iso && <span>ISO {image.iso}</span>}
+                    {image.focalLength && <span>{image.focalLength}mm</span>}
+                    {image.exposureCompensation != null && image.exposureCompensation !== 0 && (
+                      <span>{image.exposureCompensation > 0 ? '+' : ''}{image.exposureCompensation.toFixed(1)} EV</span>
                     )}
                   </div>
                 )}
+
+                {/* Two-column layout */}
+                <div className="grid grid-cols-2 gap-5 text-xs text-gray-400">
+
+                  {/* LEFT COLUMN: Camera & Exposure */}
+                  <div className="flex flex-col gap-3">
+                    {/* Camera & Lens */}
+                    {(image.cameraMake || image.cameraModel || image.lensModel) && (
+                      <div className="flex flex-col gap-1.5">
+                        <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">Camera</div>
+                        {(image.cameraMake || image.cameraModel) && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Body</span>
+                            <span className="text-right">{[image.cameraMake, image.cameraModel].filter(Boolean).join(' ')}</span>
+                          </div>
+                        )}
+                        {image.lensModel && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Lens</span>
+                            <span className="text-right max-w-[70%] truncate" title={image.lensModel}>{image.lensModel}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Exposure Details */}
+                    {(image.exposureProgram || image.meteringMode || image.flash || image.whiteBalance) && (
+                      <div className="flex flex-col gap-1.5">
+                        <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">Settings</div>
+                        {image.exposureProgram && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Program</span>
+                            <span>{image.exposureProgram}</span>
+                          </div>
+                        )}
+                        {image.meteringMode && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Metering</span>
+                            <span>{image.meteringMode}</span>
+                          </div>
+                        )}
+                        {image.flash && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Flash</span>
+                            <span>{image.flash}</span>
+                          </div>
+                        )}
+                        {image.whiteBalance && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">WB</span>
+                            <span>{image.whiteBalance}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* RIGHT COLUMN: File Info */}
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">File</div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Size</span>
+                        <span>{formatFileSize(image.size)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Format</span>
+                        <span className="uppercase">{image.extension}</span>
+                      </div>
+                      {image.width && image.height && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Dimensions</span>
+                          <span>{image.width} x {image.height}</span>
+                        </div>
+                      )}
+                      {megapixels && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Megapixels</span>
+                          <span>{megapixels} MP</span>
+                        </div>
+                      )}
+                      {aspectRatio && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Ratio</span>
+                          <span>{aspectRatio}</span>
+                        </div>
+                      )}
+                      {image.colorSpace && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Color</span>
+                          <span>{image.colorSpace}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">Dates</div>
+                      {image.dateTaken && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Taken</span>
+                          <span>{formatDate(image.dateTaken)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Modified</span>
+                        <span>{formatDate(image.lastModified)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
               </div>
             </div>
           )}

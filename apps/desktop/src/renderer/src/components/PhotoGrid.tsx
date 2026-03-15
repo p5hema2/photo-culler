@@ -19,6 +19,7 @@ interface PhotoGridProps {
   thumbnailSize: 'small' | 'medium' | 'large';
   focusedImageId: string | null;
   onImageClick: (filename: string) => void;
+  onImageHover: (path: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   setLastModified?: (id: string, lastModified: number) => void;
@@ -31,6 +32,7 @@ export function PhotoGrid({
   thumbnailSize,
   focusedImageId,
   onImageClick,
+  onImageHover,
   getThumbnail,
   requestThumbnail,
   setLastModified,
@@ -40,14 +42,15 @@ export function PhotoGrid({
   const [containerWidth, setContainerWidth] = useState(800);
 
   const cellSize = THUMBNAIL_SIZE_MAP[thumbnailSize] ?? 200;
-  const imagesPerRow = Math.max(1, Math.floor(containerWidth / cellSize));
+  const GAP = 8; // matches gap-2 (0.5rem = 8px)
+  const imagesPerRow = Math.max(1, Math.floor((containerWidth + GAP) / (cellSize + GAP)));
 
   const getGroupHeight = useCallback(
     (index: number): number => {
       const group = groups[index];
       if (!group) return HEADER_HEIGHT + cellSize + DIVIDER_HEIGHT;
       const rows = Math.ceil(group.images.length / imagesPerRow);
-      return HEADER_HEIGHT + rows * cellSize + DIVIDER_HEIGHT;
+      return HEADER_HEIGHT + rows * (cellSize + GAP) - GAP + DIVIDER_HEIGHT;
     },
     [groups, cellSize, imagesPerRow],
   );
@@ -124,6 +127,7 @@ export function PhotoGrid({
               classifications={classifications}
               focusedImageId={focusedImageId}
               onImageClick={onImageClick}
+              onImageHover={onImageHover}
               getThumbnail={getThumbnail}
               requestThumbnail={requestThumbnail}
               setLastModified={setLastModified}

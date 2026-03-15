@@ -1,14 +1,25 @@
 import { useRef, useState, useCallback } from 'react';
-import type { ExifResponse } from '../workers/exif.worker';
+import type { ExifResponse, ExifResult } from '../workers/exif.worker';
+
+/** Partial image metadata returned by EXIF extraction */
+export type ExifMetadata = Omit<ExifResult, 'path'>;
 
 interface ExifExtractorAPI {
   extractAll: (
     files: Array<{ path: string }>,
-    onResult: (path: string, dateTaken: number | null, width: number | null, height: number | null) => void,
+    onResult: (path: string, metadata: ExifMetadata) => void,
   ) => void;
   isExtracting: boolean;
   progress: { completed: number; total: number };
 }
+
+const NULL_METADATA: ExifMetadata = {
+  dateTaken: null, width: null, height: null,
+  cameraMake: null, cameraModel: null, lensModel: null,
+  focalLength: null, aperture: null, shutterSpeed: null, iso: null,
+  exposureCompensation: null, flash: null, whiteBalance: null,
+  meteringMode: null, exposureProgram: null, colorSpace: null,
+};
 
 export function useExifExtractor(): ExifExtractorAPI {
   const workerRef = useRef<Worker | null>(null);
@@ -18,14 +29,8 @@ export function useExifExtractor(): ExifExtractorAPI {
   const extractAll = useCallback(
     (
       files: Array<{ path: string }>,
-      onResult: (
-        path: string,
-        dateTaken: number | null,
-        width: number | null,
-        height: number | null,
-      ) => void,
+      onResult: (path: string, metadata: ExifMetadata) => void,
     ) => {
-      // Terminate any existing worker
       if (workerRef.current) {
         workerRef.current.terminate();
       }
@@ -45,7 +50,6 @@ export function useExifExtractor(): ExifExtractorAPI {
       let completed = 0;
       let fileIndex = 0;
 
-      // Send files one at a time: read via IPC, send buffer to worker
       const sendNext = async (): Promise<void> => {
         if (fileIndex >= files.length) return;
         const file = files[fileIndex++];
@@ -53,8 +57,7 @@ export function useExifExtractor(): ExifExtractorAPI {
           const buffer = await window.api.readFile(file.path);
           worker.postMessage({ file: { path: file.path, buffer } }, [buffer]);
         } catch {
-          // File read failed, report null values
-          onResult(file.path, null, null, null);
+          onResult(file.path, NULL_METADATA);
           completed++;
           setProgress({ completed, total: files.length });
           if (completed >= files.length) {
@@ -73,14 +76,14 @@ export function useExifExtractor(): ExifExtractorAPI {
         if ('path' in data) {
           completed++;
           setProgress({ completed, total: files.length });
-          onResult(data.path, data.dateTaken, data.width, data.height);
+          const { path, ...metadata } = data;
+          onResult(path, metadata);
 
           if (completed >= files.length) {
             setIsExtracting(false);
             worker.terminate();
             workerRef.current = null;
           } else {
-            // Send next file
             sendNext();
           }
         }
@@ -92,7 +95,6 @@ export function useExifExtractor(): ExifExtractorAPI {
         workerRef.current = null;
       };
 
-      // Start processing — send first few files in parallel
       const concurrency = Math.min(files.length, 4);
       for (let i = 0; i < concurrency; i++) {
         sendNext();

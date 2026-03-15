@@ -9,6 +9,7 @@ interface GroupRowProps {
   classifications: Record<string, Classification>;
   focusedImageId: string | null;
   onImageClick: (filename: string) => void;
+  onImageHover: (path: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   setLastModified?: (id: string, lastModified: number) => void;
@@ -47,6 +48,7 @@ export function GroupRow({
   classifications,
   focusedImageId,
   onImageClick,
+  onImageHover,
   getThumbnail,
   requestThumbnail,
   setLastModified,
@@ -75,7 +77,7 @@ export function GroupRow({
       </div>
 
       {/* Thumbnail grid */}
-      <div className="flex flex-wrap px-1" role="row">
+      <div className="flex flex-wrap gap-2 px-1" role="row">
         {group.images.map((image) => (
           <ThumbnailCell
             key={image.path}
@@ -84,6 +86,7 @@ export function GroupRow({
             classification={classifications[image.name] ?? 'review'}
             isFocused={focusedImageId === image.path}
             onClick={() => onImageClick(image.name)}
+            onHover={() => onImageHover(image.path)}
             getThumbnail={getThumbnail}
             requestThumbnail={requestThumbnail}
             setLastModified={setLastModified}
