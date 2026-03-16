@@ -16,7 +16,7 @@ interface ToolbarProps {
   deleteCount: number;
   selectedCount: number;
   totalCount: number;
-  filterMinScore: number | null;
+  filterScoreRange: { min: number; max: number } | null;
   scoringProgress: { completed: number; total: number };
   onSelectFolder: () => void;
   onSortFieldChange: (field: SortField) => void;
@@ -26,7 +26,7 @@ interface ToolbarProps {
   onSearchQueryChange: (query: string) => void;
   onThumbnailSizeChange: (size: 'small' | 'medium' | 'large') => void;
   onGroupingThresholdChange: (ms: number) => void;
-  onFilterMinScoreChange: (score: number | null) => void;
+  onFilterScoreRangeChange: (range: { min: number; max: number } | null) => void;
   onExecute: () => void;
   onDeleteSelected: () => void;
 }
@@ -86,7 +86,7 @@ export function Toolbar({
   deleteCount,
   selectedCount,
   totalCount,
-  filterMinScore,
+  filterScoreRange,
   scoringProgress,
   onSelectFolder,
   onSortFieldChange,
@@ -96,7 +96,7 @@ export function Toolbar({
   onSearchQueryChange,
   onThumbnailSizeChange,
   onGroupingThresholdChange,
-  onFilterMinScoreChange,
+  onFilterScoreRangeChange,
   onExecute,
   onDeleteSelected,
 }: ToolbarProps): React.JSX.Element {
@@ -160,11 +160,28 @@ export function Toolbar({
     [filterClassification, onFilterClassificationChange],
   );
 
-  const handleMinScoreChange = useCallback(
+  const handleScoreMinChange = useCallback(
     (value: number) => {
-      onFilterMinScoreChange(value === 0 ? null : value);
+      const max = filterScoreRange?.max ?? 100;
+      if (value === 0 && max === 100) {
+        onFilterScoreRangeChange(null);
+      } else {
+        onFilterScoreRangeChange({ min: value, max: Math.max(value, max) });
+      }
     },
-    [onFilterMinScoreChange],
+    [filterScoreRange, onFilterScoreRangeChange],
+  );
+
+  const handleScoreMaxChange = useCallback(
+    (value: number) => {
+      const min = filterScoreRange?.min ?? 0;
+      if (min === 0 && value === 100) {
+        onFilterScoreRangeChange(null);
+      } else {
+        onFilterScoreRangeChange({ min: Math.min(min, value), max: value });
+      }
+    },
+    [filterScoreRange, onFilterScoreRangeChange],
   );
 
   const handleSliderChange = useCallback(
@@ -268,24 +285,36 @@ export function Toolbar({
         ))}
       </div>
 
-      <div className="flex items-center gap-2" data-testid="min-score-filter">
+      <div className="flex items-center gap-1.5" data-testid="score-range-filter">
         <button
           className="text-xs text-gray-400 hover:text-white transition-colors"
-          onClick={() => onFilterMinScoreChange(null)}
+          onClick={() => onFilterScoreRangeChange(null)}
           title="Clear score filter"
         >
-          Min Score: {filterMinScore != null ? `${filterMinScore}` : 'Off'}
-          {filterMinScore != null && <span className="ml-1 text-gray-500">&times;</span>}
+          Score: {filterScoreRange ? `${filterScoreRange.min}–${filterScoreRange.max}` : 'All'}
+          {filterScoreRange && <span className="ml-1 text-gray-500">&times;</span>}
         </button>
         <input
           type="range"
           min={0}
           max={100}
           step={5}
-          value={filterMinScore ?? 0}
-          onChange={(e) => handleMinScoreChange(Number(e.target.value))}
-          className="w-20 accent-blue-500"
-          data-testid="min-score-range"
+          value={filterScoreRange?.min ?? 0}
+          onChange={(e) => handleScoreMinChange(Number(e.target.value))}
+          className="w-16 accent-blue-500"
+          data-testid="score-min-range"
+          title="Min score"
+        />
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={filterScoreRange?.max ?? 100}
+          onChange={(e) => handleScoreMaxChange(Number(e.target.value))}
+          className="w-16 accent-blue-500"
+          data-testid="score-max-range"
+          title="Max score"
         />
       </div>
 

@@ -29,7 +29,7 @@ export interface PhotoState {
   isPreviewMode: boolean;
   previewImageId: string | null;
   qualityScores: Record<string, number>;
-  filterMinScore: number | null;
+  filterScoreRange: { min: number; max: number } | null;
   scoringProgress: { completed: number; total: number };
 }
 
@@ -61,7 +61,7 @@ const initialState: PhotoState = {
   isPreviewMode: false,
   previewImageId: null,
   qualityScores: {},
-  filterMinScore: null,
+  filterScoreRange: null,
   scoringProgress: { completed: 0, total: 0 },
 };
 
@@ -91,7 +91,7 @@ export interface PhotoStoreAPI {
   enterPreview: (path: string) => void;
   exitPreview: () => void;
   setQualityScore: (filename: string, score: number) => void;
-  setFilterMinScore: (score: number | null) => void;
+  setFilterScoreRange: (range: { min: number; max: number } | null) => void;
   setScoringProgress: (progress: { completed: number; total: number }) => void;
 }
 
@@ -184,7 +184,7 @@ export function usePhotoStore(): PhotoStoreAPI {
         isPreviewMode: false,
         previewImageId: null,
         qualityScores: {},
-        filterMinScore: null,
+        filterScoreRange: null,
         scoringProgress: { completed: 0, total: 0 },
       }));
 
@@ -687,8 +687,8 @@ export function usePhotoStore(): PhotoStoreAPI {
     [scheduleSave],
   );
 
-  const setFilterMinScore = useCallback((score: number | null) => {
-    setState((prev) => ({ ...prev, filterMinScore: score }));
+  const setFilterScoreRange = useCallback((range: { min: number; max: number } | null) => {
+    setState((prev) => ({ ...prev, filterScoreRange: range }));
   }, []);
 
   const setScoringProgress = useCallback((progress: { completed: number; total: number }) => {
@@ -720,9 +720,14 @@ export function usePhotoStore(): PhotoStoreAPI {
       }
     }
 
-    // Min score filter
-    if (state.filterMinScore != null) {
-      result = result.filter((img) => (state.qualityScores[img.name] ?? -1) >= state.filterMinScore!);
+    // Score range filter
+    if (state.filterScoreRange != null) {
+      const { min, max } = state.filterScoreRange;
+      result = result.filter((img) => {
+        const score = state.qualityScores[img.name];
+        if (score == null) return false;
+        return score >= min && score <= max;
+      });
     }
 
     // Search query
@@ -732,7 +737,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     }
 
     return result;
-  }, [state.images, state.filterExtensions, state.filterClassification, state.filterMinScore, state.qualityScores, state.searchQuery, state.classifications]);
+  }, [state.images, state.filterExtensions, state.filterClassification, state.filterScoreRange, state.qualityScores, state.searchQuery, state.classifications]);
 
   const sortedImages = useMemo(() => {
     // When sorting by qualityScore, sort by timestamp first so grouping works correctly
@@ -833,7 +838,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     enterPreview,
     exitPreview,
     setQualityScore,
-    setFilterMinScore,
+    setFilterScoreRange,
     setScoringProgress,
   };
 }

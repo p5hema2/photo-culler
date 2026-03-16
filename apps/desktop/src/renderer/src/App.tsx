@@ -314,9 +314,9 @@ function App(): React.JSX.Element {
           onSearchQueryChange={store.setSearchQuery}
           onThumbnailSizeChange={store.setThumbnailSize}
           onGroupingThresholdChange={store.setGroupingThresholdMs}
-          filterMinScore={state.filterMinScore}
+          filterScoreRange={state.filterScoreRange}
           scoringProgress={scoringProgress}
-          onFilterMinScoreChange={store.setFilterMinScore}
+          onFilterScoreRangeChange={store.setFilterScoreRange}
           onExecute={handleOpenExecute}
           onDeleteSelected={handleTrashSelected}
         />
