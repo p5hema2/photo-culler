@@ -871,7 +871,7 @@ export function usePhotoStore(): PhotoStoreAPI {
             groupingThresholdMs: session.groupingThresholdMs ?? 5000,
           }));
         }
-        if (session.lastFolderPath) {
+        if (false && session.lastFolderPath) { // Disabled: always start blank
           openFolder(session.lastFolderPath);
         }
       } catch {
