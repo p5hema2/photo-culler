@@ -292,7 +292,6 @@ function App(): React.JSX.Element {
         onImageHover={store.setFocusedImage}
         onToggleSelect={handleToggleSelect}
         onRangeSelect={handleRangeSelect}
-        onOpenPreview={handleEnterPreview}
         getThumbnail={thumbnailWorker.getThumbnail}
         requestThumbnail={thumbnailWorker.requestThumbnail}
         setLastModified={thumbnailWorker.setLastModified}

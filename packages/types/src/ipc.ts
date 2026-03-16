@@ -40,6 +40,25 @@ export interface ImageResult {
   qualityScore?: number;
   /** Star rating (1-5), auto-assigned from quality score or manually overridden */
   starRating?: number;
+  /** Cached EXIF metadata extracted from the image */
+  exif?: {
+    dateTaken?: number;
+    width?: number;
+    height?: number;
+    cameraMake?: string;
+    cameraModel?: string;
+    lensModel?: string;
+    focalLength?: number;
+    aperture?: number;
+    shutterSpeed?: string;
+    iso?: number;
+    exposureCompensation?: number;
+    flash?: string;
+    whiteBalance?: string;
+    meteringMode?: string;
+    exposureProgram?: string;
+    colorSpace?: string;
+  };
 }
 
 export interface ResultsFile {

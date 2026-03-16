@@ -14,7 +14,6 @@ interface GroupRowProps {
   onImageHover: (path: string) => void;
   onToggleSelect: (path: string) => void;
   onRangeSelect: (path: string) => void;
-  onOpenPreview: (path: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   setLastModified?: (id: string, lastModified: number) => void;
@@ -62,7 +61,6 @@ export function GroupRow({
   onImageHover,
   onToggleSelect,
   onRangeSelect,
-  onOpenPreview,
   getThumbnail,
   requestThumbnail,
   setLastModified,
@@ -105,7 +103,6 @@ export function GroupRow({
             onHover={() => onImageHover(image.path)}
             onToggleSelect={onToggleSelect}
             onRangeSelect={onRangeSelect}
-            onOpenPreview={onOpenPreview}
             getThumbnail={getThumbnail}
             requestThumbnail={requestThumbnail}
             setLastModified={setLastModified}

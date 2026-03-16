@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
 import type { Classification } from './ThumbnailCell';
 import { Histogram } from './Histogram';
+import { useZoomPan } from '../hooks/useZoomPan';
+import { FocusPeakingOverlay } from './FocusPeakingOverlay';
+import { ExposureClippingOverlay } from './ExposureClippingOverlay';
 
 interface InfoPanelProps {
   image: ImageFileInfo | null;
@@ -49,6 +52,19 @@ export function InfoPanel({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const previewImgRef = useRef<HTMLImageElement | null>(null);
   const [previewImgElement, setPreviewImgElement] = useState<HTMLImageElement | null>(null);
+  const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const zoomPan = useZoomPan({
+    imageWidth: imageDimensions.width,
+    imageHeight: imageDimensions.height,
+    containerRef,
+  });
+
+  // Reset zoom when image changes
+  useEffect(() => {
+    zoomPan.resetZoom();
+  }, [image?.path]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load large preview via IPC — runs on every image change
   useEffect(() => {
@@ -163,28 +179,78 @@ export function InfoPanel({
             </div>
           ) : (
             <div className="flex flex-col">
-              {/* Large preview */}
-              <div className="relative w-full bg-gray-800 flex-1 min-h-0" style={{ minHeight: '300px' }}>
+              {/* Large preview with zoom/pan */}
+              <div
+                ref={containerRef}
+                className="relative w-full bg-gray-800 overflow-hidden"
+                style={{ minHeight: '300px' }}
+                onWheel={zoomPan.handlers.onWheel}
+                onMouseDown={zoomPan.handlers.onMouseDown}
+              >
                 {loadingPreview && (
-                  <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="absolute inset-0 flex items-center justify-center z-10">
                     <div className="w-6 h-6 border-2 border-gray-600 border-t-blue-500 rounded-full animate-spin" />
                   </div>
                 )}
                 {previewUrl && (
-                  <img
-                    ref={(el) => {
-                      previewImgRef.current = el;
+                  <div
+                    style={{
+                      transform: `scale(${zoomPan.zoom}) translate(${zoomPan.panX}px, ${zoomPan.panY}px)`,
+                      transformOrigin: '0 0',
+                      willChange: 'transform',
+                      position: 'relative',
+                      display: 'inline-block',
                     }}
-                    src={previewUrl}
-                    alt={image.name}
-                    className="w-full h-full object-contain"
-                    crossOrigin="anonymous"
-                    data-testid="info-panel-preview"
-                    onLoad={() => {
-                      setPreviewImgElement(previewImgRef.current);
-                    }}
-                  />
+                  >
+                    <img
+                      ref={(el) => {
+                        previewImgRef.current = el;
+                      }}
+                      src={previewUrl}
+                      alt={image.name}
+                      className="max-w-none select-none"
+                      crossOrigin="anonymous"
+                      draggable={false}
+                      data-testid="info-panel-preview"
+                      onLoad={() => {
+                        const el = previewImgRef.current;
+                        if (el) {
+                          setImageDimensions({ width: el.naturalWidth, height: el.naturalHeight });
+                        }
+                        setPreviewImgElement(previewImgRef.current);
+                      }}
+                    />
+                    {showFocusPeaking && (
+                      <FocusPeakingOverlay
+                        imageUrl={previewUrl}
+                        imageDimensions={imageDimensions}
+                        visible={showFocusPeaking}
+                      />
+                    )}
+                    {showClipping && (
+                      <ExposureClippingOverlay
+                        imageUrl={previewUrl}
+                        imageDimensions={imageDimensions}
+                        visible={showClipping}
+                      />
+                    )}
+                  </div>
                 )}
+                {/* Zoom controls */}
+                <div className="absolute top-2 left-2 flex gap-1 z-20">
+                  <button
+                    onClick={zoomPan.fitToWindow}
+                    className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 rounded text-xs text-white"
+                  >
+                    Fit
+                  </button>
+                  <button
+                    onClick={zoomPan.zoomTo100}
+                    className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 rounded text-xs text-white"
+                  >
+                    100%
+                  </button>
+                </div>
               </div>
 
               {/* RGB Histogram */}
@@ -192,8 +258,8 @@ export function InfoPanel({
                 <Histogram imageElement={previewImgElement} />
               </div>
 
-              {/* Overlay toggle buttons (preview mode only) */}
-              {isPreviewMode && onToggleFocusPeaking && onToggleClipping && (
+              {/* Overlay toggle buttons */}
+              {previewUrl && onToggleFocusPeaking && onToggleClipping && (
                 <div className="px-5 pt-3 flex gap-2">
                   <button
                     onClick={onToggleFocusPeaking}

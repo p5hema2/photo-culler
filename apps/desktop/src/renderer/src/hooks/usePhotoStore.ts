@@ -132,6 +132,7 @@ export function usePhotoStore(): PhotoStoreAPI {
                 classification: v,
                 userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
                 qualityScore: currentState.qualityScores[k] ?? resultsRef.current?.images[k]?.qualityScore,
+                exif: resultsRef.current?.images[k]?.exif,
               },
             ]),
           ),
@@ -198,14 +199,38 @@ export function usePhotoStore(): PhotoStoreAPI {
         const classifications: Record<string, Classification> = {};
         const qualityScores: Record<string, number> = {};
 
+        const imagesNeedingExif: typeof images = [];
         for (const img of images) {
           if (results?.images[img.name]) {
             classifications[img.name] = results.images[img.name].classification;
             if (results.images[img.name].qualityScore != null) {
               qualityScores[img.name] = results.images[img.name].qualityScore!;
             }
+            // Apply cached EXIF data if available
+            const cachedExif = results.images[img.name].exif;
+            if (cachedExif) {
+              if (cachedExif.dateTaken != null) img.dateTaken = cachedExif.dateTaken;
+              if (cachedExif.width != null) img.width = cachedExif.width;
+              if (cachedExif.height != null) img.height = cachedExif.height;
+              if (cachedExif.cameraMake != null) img.cameraMake = cachedExif.cameraMake;
+              if (cachedExif.cameraModel != null) img.cameraModel = cachedExif.cameraModel;
+              if (cachedExif.lensModel != null) img.lensModel = cachedExif.lensModel;
+              if (cachedExif.focalLength != null) img.focalLength = cachedExif.focalLength;
+              if (cachedExif.aperture != null) img.aperture = cachedExif.aperture;
+              if (cachedExif.shutterSpeed != null) img.shutterSpeed = cachedExif.shutterSpeed;
+              if (cachedExif.iso != null) img.iso = cachedExif.iso;
+              if (cachedExif.exposureCompensation != null) img.exposureCompensation = cachedExif.exposureCompensation;
+              if (cachedExif.flash != null) img.flash = cachedExif.flash;
+              if (cachedExif.whiteBalance != null) img.whiteBalance = cachedExif.whiteBalance;
+              if (cachedExif.meteringMode != null) img.meteringMode = cachedExif.meteringMode;
+              if (cachedExif.exposureProgram != null) img.exposureProgram = cachedExif.exposureProgram;
+              if (cachedExif.colorSpace != null) img.colorSpace = cachedExif.colorSpace;
+            } else {
+              imagesNeedingExif.push(img);
+            }
           } else {
             classifications[img.name] = null;
+            imagesNeedingExif.push(img);
           }
         }
 
@@ -232,11 +257,49 @@ export function usePhotoStore(): PhotoStoreAPI {
           isLoading: false,
         }));
 
-        // Trigger EXIF extraction
+        // Trigger EXIF extraction only for images without cached EXIF data
         exifExtractor.extractAll(
-          images.map((img) => ({ path: img.path })),
+          imagesNeedingExif.map((img) => ({ path: img.path })),
           (path, metadata) => {
             if (!mountedRef.current) return;
+
+            // Cache EXIF data in the results ref for persistence
+            const filename = images.find((img) => img.path === path)?.name;
+            if (filename && resultsRef.current) {
+              const exifData = {
+                dateTaken: metadata.dateTaken ?? undefined,
+                width: metadata.width ?? undefined,
+                height: metadata.height ?? undefined,
+                cameraMake: metadata.cameraMake ?? undefined,
+                cameraModel: metadata.cameraModel ?? undefined,
+                lensModel: metadata.lensModel ?? undefined,
+                focalLength: metadata.focalLength ?? undefined,
+                aperture: metadata.aperture ?? undefined,
+                shutterSpeed: metadata.shutterSpeed ?? undefined,
+                iso: metadata.iso ?? undefined,
+                exposureCompensation: metadata.exposureCompensation ?? undefined,
+                flash: metadata.flash ?? undefined,
+                whiteBalance: metadata.whiteBalance ?? undefined,
+                meteringMode: metadata.meteringMode ?? undefined,
+                exposureProgram: metadata.exposureProgram ?? undefined,
+                colorSpace: metadata.colorSpace ?? undefined,
+              };
+              resultsRef.current = {
+                ...resultsRef.current,
+                images: {
+                  ...resultsRef.current.images,
+                  [filename]: {
+                    ...resultsRef.current.images[filename],
+                    exif: exifData,
+                  },
+                },
+              };
+              // Trigger debounced save so EXIF cache persists
+              if (stateRef.current.folderPath) {
+                scheduleSave(stateRef.current.folderPath, stateRef.current.classifications);
+              }
+            }
+
             setState((prev) => ({
               ...prev,
               images: prev.images.map((img) =>
@@ -277,7 +340,7 @@ export function usePhotoStore(): PhotoStoreAPI {
         }));
       }
     },
-    [thumbnailWorker, exifExtractor],
+    [thumbnailWorker, exifExtractor, scheduleSave],
   );
 
   const setClassification = useCallback(
@@ -298,6 +361,7 @@ export function usePhotoStore(): PhotoStoreAPI {
                   classification,
                   userOverride: true,
                   qualityScore: resultsRef.current.images[filename]?.qualityScore,
+                  exif: resultsRef.current.images[filename]?.exif,
                 },
               },
             };
@@ -330,6 +394,7 @@ export function usePhotoStore(): PhotoStoreAPI {
                   classification: next,
                   userOverride: true,
                   qualityScore: resultsRef.current.images[filename]?.qualityScore,
+                  exif: resultsRef.current.images[filename]?.exif,
                 },
               },
             };
@@ -468,6 +533,7 @@ export function usePhotoStore(): PhotoStoreAPI {
                 classification: v,
                 userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
                 qualityScore: resultsRef.current?.images[k]?.qualityScore,
+                exif: resultsRef.current?.images[k]?.exif,
               },
             ]),
           ),
@@ -623,6 +689,7 @@ export function usePhotoStore(): PhotoStoreAPI {
               classification: v,
               userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
               qualityScore: resultsRef.current?.images[k]?.qualityScore,
+              exif: resultsRef.current?.images[k]?.exif,
             },
           ]),
         ),
@@ -671,6 +738,7 @@ export function usePhotoStore(): PhotoStoreAPI {
                 classification: newClassification,
                 userOverride: isManualOverride,
                 qualityScore: score,
+                exif: resultsRef.current.images[filename]?.exif,
               },
             },
           };

@@ -15,7 +15,6 @@ interface ThumbnailCellProps {
   onHover: () => void;
   onToggleSelect: (path: string) => void;
   onRangeSelect: (path: string) => void;
-  onOpenPreview: (path: string) => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   setLastModified?: (id: string, lastModified: number) => void;
@@ -40,7 +39,6 @@ export function ThumbnailCell({
   onHover,
   onToggleSelect,
   onRangeSelect,
-  onOpenPreview,
   getThumbnail,
   requestThumbnail,
   setLastModified,
@@ -109,11 +107,6 @@ export function ThumbnailCell({
     }
   };
 
-  const handleDoubleClick = (e: React.MouseEvent): void => {
-    e.preventDefault();
-    onOpenPreview(image.path);
-  };
-
   const borderColor = BORDER_COLORS[String(classification)] ?? 'border-transparent';
 
   return (
@@ -122,7 +115,6 @@ export function ThumbnailCell({
       className="relative cursor-pointer flex-shrink-0"
       style={{ width: cellSize, height: cellSize }}
       onClick={handleClick}
-      onDoubleClick={handleDoubleClick}
       onMouseEnter={onHover}
       data-image-path={image.path}
       data-testid="thumbnail-cell"
