@@ -1,6 +1,5 @@
 import { useRef, useEffect } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
-import { StarRating } from './StarRating';
 
 export type Classification = 'keep' | 'review' | 'delete' | null;
 type ThumbnailStatus = ImageBitmap | 'loading' | 'error';
@@ -9,7 +8,7 @@ interface ThumbnailCellProps {
   image: ImageFileInfo;
   cellSize: number;
   classification: Classification;
-  starRating?: number;
+  qualityScore?: number;
   isFocused: boolean;
   isSelected: boolean;
   onClick: () => void;
@@ -34,7 +33,7 @@ export function ThumbnailCell({
   image,
   cellSize,
   classification,
-  starRating,
+  qualityScore,
   isFocused,
   isSelected,
   onClick,
@@ -140,10 +139,12 @@ export function ThumbnailCell({
           </div>
         </div>
       )}
-      {/* Star rating badge */}
-      {starRating != null && (
-        <div className="absolute bottom-1 left-1 z-10 bg-black/60 rounded px-0.5 py-0.5">
-          <StarRating rating={starRating} size="sm" readonly />
+      {/* Quality score badge */}
+      {qualityScore != null && (
+        <div className={`absolute bottom-1 left-1 z-10 bg-black/60 px-1 rounded text-[10px] font-mono ${
+          qualityScore >= 60 ? 'text-green-400' : qualityScore >= 35 ? 'text-yellow-400' : 'text-red-400'
+        }`}>
+          {qualityScore}%
         </div>
       )}
       {/* Focus ring as outline - outside everything */}

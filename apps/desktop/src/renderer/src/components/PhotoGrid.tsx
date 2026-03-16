@@ -16,7 +16,7 @@ export const THUMBNAIL_SIZE_MAP: Record<string, number> = {
 interface PhotoGridProps {
   groups: PhotoGroup[];
   classifications: Record<string, Classification>;
-  starRatings: Record<string, number>;
+  qualityScores: Record<string, number>;
   thumbnailSize: 'small' | 'medium' | 'large';
   focusedImageId: string | null;
   selectedImages: Set<string>;
@@ -34,7 +34,7 @@ interface PhotoGridProps {
 export function PhotoGrid({
   groups,
   classifications,
-  starRatings,
+  qualityScores,
   thumbnailSize,
   focusedImageId,
   selectedImages,
@@ -140,7 +140,7 @@ export function PhotoGrid({
               group={groups[virtualItem.index]!}
               cellSize={cellSize}
               classifications={classifications}
-              starRatings={starRatings}
+              qualityScores={qualityScores}
               focusedImageId={focusedImageId}
               selectedImages={selectedImages}
               onImageClick={onImageClick}

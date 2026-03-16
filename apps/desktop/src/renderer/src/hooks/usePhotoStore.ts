@@ -29,8 +29,7 @@ export interface PhotoState {
   isPreviewMode: boolean;
   previewImageId: string | null;
   qualityScores: Record<string, number>;
-  starRatings: Record<string, number>;
-  filterStarRating: number | null;
+  filterMinScore: number | null;
   scoringProgress: { completed: number; total: number };
 }
 
@@ -62,8 +61,7 @@ const initialState: PhotoState = {
   isPreviewMode: false,
   previewImageId: null,
   qualityScores: {},
-  starRatings: {},
-  filterStarRating: null,
+  filterMinScore: null,
   scoringProgress: { completed: 0, total: 0 },
 };
 
@@ -93,8 +91,7 @@ export interface PhotoStoreAPI {
   enterPreview: (path: string) => void;
   exitPreview: () => void;
   setQualityScore: (filename: string, score: number) => void;
-  setStarRating: (filename: string, rating: number) => void;
-  setFilterStarRating: (rating: number | null) => void;
+  setFilterMinScore: (score: number | null) => void;
   setScoringProgress: (progress: { completed: number; total: number }) => void;
 }
 
@@ -135,7 +132,6 @@ export function usePhotoStore(): PhotoStoreAPI {
                 classification: v,
                 userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
                 qualityScore: currentState.qualityScores[k] ?? resultsRef.current?.images[k]?.qualityScore,
-                starRating: currentState.starRatings[k] ?? resultsRef.current?.images[k]?.starRating,
               },
             ]),
           ),
@@ -188,8 +184,7 @@ export function usePhotoStore(): PhotoStoreAPI {
         isPreviewMode: false,
         previewImageId: null,
         qualityScores: {},
-        starRatings: {},
-        filterStarRating: null,
+        filterMinScore: null,
         scoringProgress: { completed: 0, total: 0 },
       }));
 
@@ -202,16 +197,12 @@ export function usePhotoStore(): PhotoStoreAPI {
         const results = await loadResults(folderPath);
         const classifications: Record<string, Classification> = {};
         const qualityScores: Record<string, number> = {};
-        const starRatings: Record<string, number> = {};
 
         for (const img of images) {
           if (results?.images[img.name]) {
             classifications[img.name] = results.images[img.name].classification;
             if (results.images[img.name].qualityScore != null) {
               qualityScores[img.name] = results.images[img.name].qualityScore!;
-            }
-            if (results.images[img.name].starRating != null) {
-              starRatings[img.name] = results.images[img.name].starRating!;
             }
           } else {
             classifications[img.name] = null;
@@ -238,7 +229,6 @@ export function usePhotoStore(): PhotoStoreAPI {
           images,
           classifications,
           qualityScores,
-          starRatings,
           isLoading: false,
         }));
 
@@ -658,9 +648,6 @@ export function usePhotoStore(): PhotoStoreAPI {
   const setQualityScore = useCallback(
     (filename: string, score: number) => {
       setState((prev) => {
-        // Auto-assign star rating: 0-20=1, 21-40=2, 41-60=3, 61-80=4, 81-100=5
-        const star = score <= 20 ? 1 : score <= 40 ? 2 : score <= 60 ? 3 : score <= 80 ? 4 : 5;
-
         // Auto-assign classification only if user hasn't manually overridden
         const isManualOverride = resultsRef.current?.images[filename]?.userOverride ?? false;
         let newClassification = prev.classifications[filename];
@@ -670,7 +657,6 @@ export function usePhotoStore(): PhotoStoreAPI {
 
         const newClassifications = { ...prev.classifications, [filename]: newClassification };
         const newQualityScores = { ...prev.qualityScores, [filename]: score };
-        const newStarRatings = { ...prev.starRatings, [filename]: star };
 
         // Update results ref
         if (resultsRef.current) {
@@ -682,7 +668,6 @@ export function usePhotoStore(): PhotoStoreAPI {
                 classification: newClassification,
                 userOverride: isManualOverride,
                 qualityScore: score,
-                starRating: star,
               },
             },
           };
@@ -696,45 +681,14 @@ export function usePhotoStore(): PhotoStoreAPI {
           ...prev,
           classifications: newClassifications,
           qualityScores: newQualityScores,
-          starRatings: newStarRatings,
         };
       });
     },
     [scheduleSave],
   );
 
-  const setStarRating = useCallback(
-    (filename: string, rating: number) => {
-      setState((prev) => {
-        const newStarRatings = { ...prev.starRatings, [filename]: rating };
-
-        if (resultsRef.current) {
-          resultsRef.current = {
-            ...resultsRef.current,
-            images: {
-              ...resultsRef.current.images,
-              [filename]: {
-                ...resultsRef.current.images[filename],
-                classification: prev.classifications[filename] ?? null,
-                userOverride: resultsRef.current.images[filename]?.userOverride ?? false,
-                starRating: rating,
-              },
-            },
-          };
-        }
-
-        if (prev.folderPath) {
-          scheduleSave(prev.folderPath, prev.classifications);
-        }
-
-        return { ...prev, starRatings: newStarRatings };
-      });
-    },
-    [scheduleSave],
-  );
-
-  const setFilterStarRating = useCallback((rating: number | null) => {
-    setState((prev) => ({ ...prev, filterStarRating: rating }));
+  const setFilterMinScore = useCallback((score: number | null) => {
+    setState((prev) => ({ ...prev, filterMinScore: score }));
   }, []);
 
   const setScoringProgress = useCallback((progress: { completed: number; total: number }) => {
@@ -766,15 +720,9 @@ export function usePhotoStore(): PhotoStoreAPI {
       }
     }
 
-    // Star rating filter
-    if (state.filterStarRating != null) {
-      if (state.filterStarRating === 0) {
-        // 0 = show unrated only
-        result = result.filter((img) => state.starRatings[img.name] == null);
-      } else {
-        // N = show images with star rating >= N
-        result = result.filter((img) => (state.starRatings[img.name] ?? 0) >= state.filterStarRating!);
-      }
+    // Min score filter
+    if (state.filterMinScore != null) {
+      result = result.filter((img) => (state.qualityScores[img.name] ?? -1) >= state.filterMinScore!);
     }
 
     // Search query
@@ -784,17 +732,47 @@ export function usePhotoStore(): PhotoStoreAPI {
     }
 
     return result;
-  }, [state.images, state.filterExtensions, state.filterClassification, state.filterStarRating, state.starRatings, state.searchQuery, state.classifications]);
+  }, [state.images, state.filterExtensions, state.filterClassification, state.filterMinScore, state.qualityScores, state.searchQuery, state.classifications]);
 
   const sortedImages = useMemo(() => {
+    // When sorting by qualityScore, sort by timestamp first so grouping works correctly
+    if (state.sortField === 'qualityScore') {
+      return sortImages(filteredImages, 'dateTaken', 'asc', {
+        qualityScores: state.qualityScores,
+      });
+    }
     return sortImages(filteredImages, state.sortField, state.sortDirection, {
       qualityScores: state.qualityScores,
     });
   }, [filteredImages, state.sortField, state.sortDirection, state.qualityScores]);
 
   const groups = useMemo(() => {
-    return groupByTimestamp(sortedImages, state.groupingThresholdMs);
-  }, [sortedImages, state.groupingThresholdMs]);
+    const baseGroups = groupByTimestamp(sortedImages, state.groupingThresholdMs);
+
+    // When sorting by qualityScore, sort groups by best score and images within groups by score
+    if (state.sortField === 'qualityScore') {
+      const qualityScores = state.qualityScores;
+      const direction = state.sortDirection;
+
+      // Sort images within each group by score
+      for (const group of baseGroups) {
+        group.images.sort((a, b) => {
+          const scoreA = qualityScores[a.name] ?? -1;
+          const scoreB = qualityScores[b.name] ?? -1;
+          return direction === 'desc' ? scoreB - scoreA : scoreA - scoreB;
+        });
+      }
+
+      // Sort groups by best (max) score within group
+      baseGroups.sort((a, b) => {
+        const maxA = Math.max(...a.images.map((img) => qualityScores[img.name] ?? -1));
+        const maxB = Math.max(...b.images.map((img) => qualityScores[img.name] ?? -1));
+        return direction === 'desc' ? maxB - maxA : maxA - maxB;
+      });
+    }
+
+    return baseGroups;
+  }, [sortedImages, state.groupingThresholdMs, state.sortField, state.sortDirection, state.qualityScores]);
 
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
@@ -855,8 +833,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     enterPreview,
     exitPreview,
     setQualityScore,
-    setStarRating,
-    setFilterStarRating,
+    setFilterMinScore,
     setScoringProgress,
   };
 }

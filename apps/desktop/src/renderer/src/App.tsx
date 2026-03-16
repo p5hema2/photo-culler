@@ -241,11 +241,6 @@ function App(): React.JSX.Element {
     return state.classifications[focusedImage.name] ?? null;
   }, [focusedImage, state.classifications]);
 
-  const focusedStarRating = useMemo(() => {
-    if (!focusedImage) return undefined;
-    return state.starRatings[focusedImage.name];
-  }, [focusedImage, state.starRatings]);
-
   const focusedQualityScore = useMemo(() => {
     if (!focusedImage) return undefined;
     return state.qualityScores[focusedImage.name];
@@ -279,7 +274,7 @@ function App(): React.JSX.Element {
       <PhotoGrid
         groups={groups}
         classifications={state.classifications}
-        starRatings={state.starRatings}
+        qualityScores={state.qualityScores}
         thumbnailSize={state.thumbnailSize}
         focusedImageId={state.focusedImageId}
         selectedImages={state.selectedImages}
@@ -319,9 +314,9 @@ function App(): React.JSX.Element {
           onSearchQueryChange={store.setSearchQuery}
           onThumbnailSizeChange={store.setThumbnailSize}
           onGroupingThresholdChange={store.setGroupingThresholdMs}
-          filterStarRating={state.filterStarRating}
+          filterMinScore={state.filterMinScore}
           scoringProgress={scoringProgress}
-          onFilterStarRatingChange={store.setFilterStarRating}
+          onFilterMinScoreChange={store.setFilterMinScore}
           onExecute={handleOpenExecute}
           onDeleteSelected={handleTrashSelected}
         />
@@ -349,9 +344,7 @@ function App(): React.JSX.Element {
           <InfoPanel
             image={focusedImage}
             classification={focusedClassification}
-            starRating={focusedStarRating}
             qualityScore={focusedQualityScore}
-            onStarRatingChange={focusedImage ? (rating) => store.setStarRating(focusedImage.name, rating) : undefined}
             isOpen={infoPanelOpen}
             onToggle={handleToggleInfoPanel}
             showFocusPeaking={showFocusPeaking}

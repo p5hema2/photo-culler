@@ -16,7 +16,7 @@ interface ToolbarProps {
   deleteCount: number;
   selectedCount: number;
   totalCount: number;
-  filterStarRating: number | null;
+  filterMinScore: number | null;
   scoringProgress: { completed: number; total: number };
   onSelectFolder: () => void;
   onSortFieldChange: (field: SortField) => void;
@@ -26,7 +26,7 @@ interface ToolbarProps {
   onSearchQueryChange: (query: string) => void;
   onThumbnailSizeChange: (size: 'small' | 'medium' | 'large') => void;
   onGroupingThresholdChange: (ms: number) => void;
-  onFilterStarRatingChange: (rating: number | null) => void;
+  onFilterMinScoreChange: (score: number | null) => void;
   onExecute: () => void;
   onDeleteSelected: () => void;
 }
@@ -48,15 +48,6 @@ const CLASSIFICATION_CHIPS: Array<{ value: ClassificationFilter; label: string; 
   { value: 'keep', label: 'Keep', color: 'text-green-400', activeColor: 'bg-green-900 text-green-300 border-green-500' },
   { value: 'review', label: 'Review', color: 'text-yellow-400', activeColor: 'bg-yellow-900 text-yellow-300 border-yellow-500' },
   { value: 'delete', label: 'Delete', color: 'text-red-400', activeColor: 'bg-red-900 text-red-300 border-red-500' },
-];
-
-const STAR_FILTER_CHIPS: Array<{ value: number; label: string }> = [
-  { value: 0, label: 'Unrated' },
-  { value: 1, label: '1+' },
-  { value: 2, label: '2+' },
-  { value: 3, label: '3+' },
-  { value: 4, label: '4+' },
-  { value: 5, label: '5' },
 ];
 
 const SIZE_OPTIONS: Array<{ value: 'small' | 'medium' | 'large'; label: string }> = [
@@ -95,7 +86,7 @@ export function Toolbar({
   deleteCount,
   selectedCount,
   totalCount,
-  filterStarRating,
+  filterMinScore,
   scoringProgress,
   onSelectFolder,
   onSortFieldChange,
@@ -105,7 +96,7 @@ export function Toolbar({
   onSearchQueryChange,
   onThumbnailSizeChange,
   onGroupingThresholdChange,
-  onFilterStarRatingChange,
+  onFilterMinScoreChange,
   onExecute,
   onDeleteSelected,
 }: ToolbarProps): React.JSX.Element {
@@ -169,11 +160,11 @@ export function Toolbar({
     [filterClassification, onFilterClassificationChange],
   );
 
-  const handleStarFilterToggle = useCallback(
+  const handleMinScoreChange = useCallback(
     (value: number) => {
-      onFilterStarRatingChange(filterStarRating === value ? null : value);
+      onFilterMinScoreChange(value === 0 ? null : value);
     },
-    [filterStarRating, onFilterStarRatingChange],
+    [onFilterMinScoreChange],
   );
 
   const handleSliderChange = useCallback(
@@ -277,21 +268,25 @@ export function Toolbar({
         ))}
       </div>
 
-      <div className="flex items-center gap-1" data-testid="star-filters">
-        {STAR_FILTER_CHIPS.map((chip) => (
-          <button
-            key={chip.value}
-            onClick={() => handleStarFilterToggle(chip.value)}
-            className={`px-2 py-0.5 text-xs rounded border transition-colors ${
-              filterStarRating === chip.value
-                ? 'bg-yellow-900 text-yellow-300 border-yellow-500'
-                : 'text-yellow-600 border-gray-700 hover:border-gray-500'
-            }`}
-            data-testid={`filter-star-${chip.value}`}
-          >
-            {chip.value > 0 ? '\u2605'.repeat(Math.min(chip.value, 3)) : ''} {chip.label}
-          </button>
-        ))}
+      <div className="flex items-center gap-2" data-testid="min-score-filter">
+        <button
+          className="text-xs text-gray-400 hover:text-white transition-colors"
+          onClick={() => onFilterMinScoreChange(null)}
+          title="Clear score filter"
+        >
+          Min Score: {filterMinScore != null ? `${filterMinScore}` : 'Off'}
+          {filterMinScore != null && <span className="ml-1 text-gray-500">&times;</span>}
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={filterMinScore ?? 0}
+          onChange={(e) => handleMinScoreChange(Number(e.target.value))}
+          className="w-20 accent-blue-500"
+          data-testid="min-score-range"
+        />
       </div>
 
       <div className="relative" data-testid="search-container">

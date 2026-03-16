@@ -1,15 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
 import type { Classification } from './ThumbnailCell';
-import { StarRating } from './StarRating';
 import { Histogram } from './Histogram';
 
 interface InfoPanelProps {
   image: ImageFileInfo | null;
   classification: Classification;
-  starRating?: number;
   qualityScore?: number;
-  onStarRatingChange?: (rating: number) => void;
   isOpen: boolean;
   onToggle: () => void;
   showFocusPeaking?: boolean;
@@ -39,9 +36,7 @@ function formatDate(ms: number): string {
 export function InfoPanel({
   image,
   classification,
-  starRating,
   qualityScore,
-  onStarRatingChange,
   isOpen,
   onToggle,
   showFocusPeaking,
@@ -244,20 +239,14 @@ export function InfoPanel({
                   </span>
                 </div>
 
-                {/* Star rating and quality score */}
-                <div className="flex items-center gap-3">
-                  <StarRating
-                    rating={starRating}
-                    size="md"
-                    onChange={onStarRatingChange}
-                    readonly={!onStarRatingChange}
-                  />
-                  {qualityScore != null && (
-                    <span className="text-xs text-gray-500" data-testid="info-panel-score">
-                      Score: {qualityScore}/100
-                    </span>
-                  )}
-                </div>
+                {/* Quality score */}
+                {qualityScore != null && (
+                  <span className={`text-sm font-mono ${
+                    qualityScore >= 60 ? 'text-green-400' : qualityScore >= 35 ? 'text-yellow-400' : 'text-red-400'
+                  }`} data-testid="info-panel-score">
+                    Score: {qualityScore}%
+                  </span>
+                )}
 
                 {/* Exposure summary bar — full width */}
                 {(image.aperture || image.shutterSpeed || image.iso || image.focalLength) && (
