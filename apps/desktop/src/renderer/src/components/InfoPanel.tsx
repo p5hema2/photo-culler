@@ -254,8 +254,8 @@ export function InfoPanel({
 
               {/* Info section — fixed height, no shrink */}
               <div className="flex-shrink-0 overflow-y-auto">
-              {/* RGB Histogram */}
-              <div className="px-5 pt-3">
+              {/* RGB Histogram — fixed height to prevent layout shift */}
+              <div className="px-5 pt-3" style={{ height: '92px' }}>
                 <Histogram imageElement={previewImgElement} />
               </div>
 

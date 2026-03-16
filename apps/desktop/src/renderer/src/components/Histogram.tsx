@@ -139,8 +139,6 @@ export function Histogram({ imageElement }: HistogramProps): React.JSX.Element |
     }
   }, [imageElement, render]);
 
-  if (!imageElement) return null;
-
   return (
     <canvas
       ref={canvasRef}
