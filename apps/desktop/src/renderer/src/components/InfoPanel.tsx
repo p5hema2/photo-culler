@@ -169,7 +169,7 @@ export function InfoPanel({
 
       {isOpen && (
         <div
-          className="flex-shrink-0 bg-gray-850 border-l border-gray-700 overflow-y-auto flex flex-col"
+          className="flex-shrink-0 bg-gray-850 border-l border-gray-700 flex flex-col h-full overflow-hidden"
           style={{ backgroundColor: '#1a1d23', width: '50%', minWidth: '400px', maxWidth: '60%' }}
           data-testid="info-panel"
         >
@@ -178,12 +178,11 @@ export function InfoPanel({
               Select an image to see details
             </div>
           ) : (
-            <div className="flex flex-col">
-              {/* Large preview with zoom/pan */}
+            <div className="flex flex-col h-full overflow-hidden">
+              {/* Large preview with zoom/pan — takes remaining space */}
               <div
                 ref={containerRef}
-                className="relative w-full bg-gray-800 overflow-hidden"
-                style={{ minHeight: '300px' }}
+                className="relative w-full bg-black overflow-hidden flex-1 min-h-0"
                 onWheel={zoomPan.handlers.onWheel}
                 onMouseDown={zoomPan.handlers.onMouseDown}
               >
@@ -253,6 +252,8 @@ export function InfoPanel({
                 </div>
               </div>
 
+              {/* Info section — fixed height, no shrink */}
+              <div className="flex-shrink-0 overflow-y-auto">
               {/* RGB Histogram */}
               <div className="px-5 pt-3">
                 <Histogram imageElement={previewImgElement} />
@@ -438,6 +439,7 @@ export function InfoPanel({
 
                 </div>
               </div>
+              </div>{/* end flex-shrink-0 info section */}
             </div>
           )}
         </div>
