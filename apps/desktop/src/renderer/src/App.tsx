@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { usePhotoStore } from './hooks/usePhotoStore';
+import type { Classification } from './hooks/usePhotoStore';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useScoringWorker } from './hooks/useScoringWorker';
 import { DropZone } from './components/DropZone';
@@ -225,10 +226,19 @@ function App(): React.JSX.Element {
   const selectedCount = state.selectedImages.size;
   const totalCount = store.filteredImages.length;
 
-  // Count delete-classified images for the Execute button
+  // Filtered classifications — only for visible (filtered) images
+  const filteredClassifications = useMemo(() => {
+    const result: Record<string, Classification> = {};
+    for (const img of store.filteredImages) {
+      result[img.name] = state.classifications[img.name] ?? null;
+    }
+    return result;
+  }, [store.filteredImages, state.classifications]);
+
+  // Count delete-classified images for the Execute button (filtered only)
   const deleteCount = useMemo(() => {
-    return Object.values(state.classifications).filter((c) => c === 'delete').length;
-  }, [state.classifications]);
+    return Object.values(filteredClassifications).filter((c) => c === 'delete').length;
+  }, [filteredClassifications]);
 
   // Find the focused image object
   const focusedImage = useMemo(() => {
@@ -357,7 +367,7 @@ function App(): React.JSX.Element {
       </div>
 
       <ExecutePanel
-        classifications={state.classifications}
+        classifications={filteredClassifications}
         isOpen={showExecutePanel}
         onClose={handleCloseExecute}
         onExecute={store.executeActions}

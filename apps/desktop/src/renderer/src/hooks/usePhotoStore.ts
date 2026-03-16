@@ -390,8 +390,11 @@ export function usePhotoStore(): PhotoStoreAPI {
       const folderPath = current.folderPath;
       const executeResult: ExecuteResult = { trashedCount: 0, movedCount: 0, failedPaths: [] };
 
-      // Get paths of delete-classified images
-      const deletePaths = current.images
+      // Only operate on currently visible (filtered) images
+      const visibleImages = filteredImagesRef.current;
+
+      // Get paths of delete-classified images (within visible set only)
+      const deletePaths = visibleImages
         .filter((img) => (current.classifications[img.name] ?? null) === 'delete')
         .map((img) => img.path);
 
@@ -406,10 +409,10 @@ export function usePhotoStore(): PhotoStoreAPI {
         executeResult.failedPaths.push(...deleteResult.failed);
       }
 
-      // Move keep images to picks/ if requested
+      // Move keep images to picks/ if requested (within visible set only)
       let moveSucceeded: string[] = [];
       if (options.movePicks) {
-        const keepPaths = current.images
+        const keepPaths = visibleImages
           .filter((img) => (current.classifications[img.name] ?? null) === 'keep')
           .map((img) => img.path);
 
@@ -738,6 +741,10 @@ export function usePhotoStore(): PhotoStoreAPI {
 
     return result;
   }, [state.images, state.filterExtensions, state.filterClassification, state.filterScoreRange, state.qualityScores, state.searchQuery, state.classifications]);
+
+  // Keep a ref to filteredImages for use in callbacks (e.g., executeActions)
+  const filteredImagesRef = useRef(filteredImages);
+  filteredImagesRef.current = filteredImages;
 
   const sortedImages = useMemo(() => {
     // When sorting by qualityScore, sort by timestamp first so grouping works correctly
