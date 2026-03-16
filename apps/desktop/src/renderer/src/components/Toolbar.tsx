@@ -71,7 +71,7 @@ function findClosestStep(ms: number): number {
 }
 
 // Dropdown menu wrapper
-function DropdownMenu({ label, children, testId }: { label: string; children: React.ReactNode; testId?: string }): React.JSX.Element {
+function DropdownMenu({ label, children, testId, tooltip }: { label: string; children: React.ReactNode; testId?: string; tooltip?: string }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -93,6 +93,7 @@ function DropdownMenu({ label, children, testId }: { label: string; children: Re
         className={`px-2 py-1 text-xs rounded transition-colors ${
           open ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
         }`}
+        title={tooltip}
       >
         {label} <span className="text-[10px]">{open ? '\u25B2' : '\u25BC'}</span>
       </button>
@@ -244,12 +245,13 @@ export function Toolbar({
         onClick={onSelectFolder}
         className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs font-medium transition-colors"
         data-testid="open-folder-btn"
+        title="Open a folder to browse images (Cmd+O)"
       >
         Open
       </button>
 
       {/* Sort dropdown */}
-      <DropdownMenu label={`Sort: ${SORT_OPTIONS.find(o => o.value === sortField)?.label ?? ''}`} testId="sort-menu">
+      <DropdownMenu label={`Sort: ${SORT_OPTIONS.find(o => o.value === sortField)?.label ?? ''}`} testId="sort-menu" tooltip="Change image sort order">
         <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">Sort by</div>
         {SORT_OPTIONS.map((opt) => (
           <button
@@ -272,6 +274,7 @@ export function Toolbar({
       <DropdownMenu
         label={`Filter${activeFilters.length > 0 ? ` (${activeFilters.length})` : ''}`}
         testId="filter-menu"
+        tooltip="Filter images by type, classification, or quality score"
       >
         {/* File type */}
         <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">File type</div>
@@ -344,7 +347,7 @@ export function Toolbar({
       </DropdownMenu>
 
       {/* View dropdown */}
-      <DropdownMenu label="View" testId="view-menu">
+      <DropdownMenu label="View" testId="view-menu" tooltip="Thumbnail size, grouping, and selection mode">
         <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">Thumbnail size</div>
         <div className="flex gap-1">
           {(['small', 'medium', 'large'] as const).map((s) => (
@@ -382,6 +385,11 @@ export function Toolbar({
         >
           {selectOnHover ? 'Hover to select' : 'Click to select'}
         </button>
+        <div className="text-[10px] text-gray-600 px-1">
+          {selectOnHover
+            ? 'Move mouse over thumbnail to focus it. Right-click to classify.'
+            : 'Left-click to focus. Right-click to classify.'}
+        </div>
       </DropdownMenu>
 
       {/* Search */}
@@ -399,6 +407,7 @@ export function Toolbar({
           placeholder="Search..."
           className="pl-6 pr-2 py-1 text-xs bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-500 w-28 focus:outline-none focus:border-blue-500 focus:w-40 transition-all"
           data-testid="search-input"
+          title="Filter images by filename"
         />
       </div>
 
@@ -428,12 +437,13 @@ export function Toolbar({
           onClick={onDeleteSelected}
           className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-medium transition-colors"
           data-testid="delete-selected-btn"
+          title="Move selected images to OS trash (recoverable)"
         >
           Trash ({selectedCount})
         </button>
       )}
 
-      {/* Execute */}
+      {/* Delete — batch delete all images classified as 'delete' */}
       <button
         onClick={onExecute}
         disabled={deleteCount === 0}
@@ -443,8 +453,9 @@ export function Toolbar({
             : 'bg-gray-600 cursor-not-allowed text-gray-400'
         }`}
         data-testid="execute-btn"
+        title="Batch delete all images classified as 'delete' (moves to OS trash)"
       >
-        Execute{deleteCount > 0 ? ` (${deleteCount})` : ''}
+        Delete{deleteCount > 0 ? ` (${deleteCount})` : ''}
       </button>
     </div>
   );
