@@ -9,6 +9,7 @@ interface ThumbnailCellProps {
   cellSize: number;
   classification: Classification;
   qualityScore?: number;
+  rotation?: number;
   isFocused: boolean;
   isSelected: boolean;
   selectOnHover: boolean;
@@ -35,6 +36,7 @@ export function ThumbnailCell({
   cellSize,
   classification,
   qualityScore,
+  rotation = 0,
   isFocused,
   isSelected,
   selectOnHover,
@@ -90,14 +92,23 @@ export function ThumbnailCell({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Account for border (4px) + gap (2px) on each side = 12px total
-    const displaySize = cellSize - 12;
+    // Account for border (2px) + gap (2px) on each side = 8px total
+    const displaySize = cellSize - 8;
     canvas.width = displaySize;
     canvas.height = displaySize;
 
     ctx.clearRect(0, 0, displaySize, displaySize);
-    ctx.drawImage(thumbnail, 0, 0, displaySize, displaySize);
-  }, [thumbnail, cellSize]);
+
+    if (rotation !== 0) {
+      ctx.save();
+      ctx.translate(displaySize / 2, displaySize / 2);
+      ctx.rotate((rotation * Math.PI) / 180);
+      ctx.drawImage(thumbnail, -displaySize / 2, -displaySize / 2, displaySize, displaySize);
+      ctx.restore();
+    } else {
+      ctx.drawImage(thumbnail, 0, 0, displaySize, displaySize);
+    }
+  }, [thumbnail, cellSize, rotation]);
 
   const handleClick = (e: React.MouseEvent): void => {
     if (e.ctrlKey || e.metaKey) {
@@ -156,10 +167,10 @@ export function ThumbnailCell({
           {qualityScore}%
         </div>
       )}
-      {/* Focus ring as outline - outside everything */}
-      <div className={`absolute inset-0 ${isFocused ? 'outline-2 outline-blue-400 outline' : ''}`} />
+      {/* Focus ring as outline - outside everything, 2px gap from classification border */}
+      <div className={`absolute inset-0 ${isFocused ? 'outline-3 outline-blue-400 outline outline-offset-2' : ''}`} />
       {/* Classification border */}
-      <div className={`absolute inset-0 border-4 ${borderColor}`}>
+      <div className={`absolute inset-0 border-2 ${borderColor}`}>
         {/* 2px gap with dark background for separation */}
         <div className="absolute inset-[2px] bg-gray-900 overflow-hidden">
           {thumbnail === 'loading' && (

@@ -17,6 +17,7 @@ interface PhotoGridProps {
   groups: PhotoGroup[];
   classifications: Record<string, Classification>;
   qualityScores: Record<string, number>;
+  rotations: Record<string, number>;
   thumbnailSize: 'small' | 'medium' | 'large';
   focusedImageId: string | null;
   selectedImages: Set<string>;
@@ -36,6 +37,7 @@ export function PhotoGrid({
   groups,
   classifications,
   qualityScores,
+  rotations,
   thumbnailSize,
   focusedImageId,
   selectedImages,
@@ -143,6 +145,7 @@ export function PhotoGrid({
               cellSize={cellSize}
               classifications={classifications}
               qualityScores={qualityScores}
+              rotations={rotations}
               focusedImageId={focusedImageId}
               selectedImages={selectedImages}
               selectOnHover={selectOnHover}

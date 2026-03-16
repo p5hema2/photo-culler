@@ -19,6 +19,8 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.LOAD_THUMB_CACHE, filePath, lastModified),
   saveThumbCache: (filePath, jpegBuffer) =>
     ipcRenderer.invoke(IPC_CHANNELS.SAVE_THUMB_CACHE, filePath, jpegBuffer),
+  rotateFiles: (files) =>
+    ipcRenderer.invoke(IPC_CHANNELS.ROTATE_FILES, files),
 };
 
 contextBridge.exposeInMainWorld('api', api);

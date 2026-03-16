@@ -8,6 +8,7 @@ interface GroupRowProps {
   cellSize: number;
   classifications: Record<string, Classification>;
   qualityScores: Record<string, number>;
+  rotations: Record<string, number>;
   focusedImageId: string | null;
   selectedImages: Set<string>;
   selectOnHover: boolean;
@@ -57,6 +58,7 @@ export function GroupRow({
   cellSize,
   classifications,
   qualityScores,
+  rotations,
   focusedImageId,
   selectedImages,
   selectOnHover,
@@ -101,6 +103,7 @@ export function GroupRow({
             cellSize={cellSize}
             classification={classifications[image.name] ?? null}
             qualityScore={qualityScores[image.name]}
+            rotation={rotations[image.name]}
             isFocused={focusedImageId === image.path}
             isSelected={selectedImages.has(image.path)}
             selectOnHover={selectOnHover}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { ImageFileInfo } from '@photo-culler/types';
+import type { ImageFileInfo, QualitySubscores } from '@photo-culler/types';
 import type { Classification } from './ThumbnailCell';
 import { Histogram } from './Histogram';
 import { useZoomPan } from '../hooks/useZoomPan';
@@ -10,6 +10,8 @@ interface InfoPanelProps {
   image: ImageFileInfo | null;
   classification: Classification;
   qualityScore?: number;
+  qualitySubscores?: QualitySubscores;
+  rotation?: number;
   isOpen: boolean;
   onToggle: () => void;
   showFocusPeaking?: boolean;
@@ -36,10 +38,45 @@ function formatDate(ms: number): string {
   return new Date(ms).toLocaleString();
 }
 
+const SUBSCORE_TOOLTIPS: Record<keyof QualitySubscores, string> = {
+  sharpness: 'Laplacian variance — measures edge detail and focus quality (weight: 40%)',
+  exposure: 'Luminance analysis — penalizes over/underexposure and clipped pixels (weight: 25%)',
+  contrast: 'Luminance std deviation — optimal range is 40–80 stddev (weight: 20%)',
+  noise: 'Flat-region variance — lower noise in smooth areas = higher score (weight: 15%)',
+};
+
+const SUBSCORE_LABELS: Record<keyof QualitySubscores, string> = {
+  sharpness: 'Sharpness',
+  exposure: 'Exposure',
+  contrast: 'Contrast',
+  noise: 'Noise',
+};
+
+const SUBSCORE_WEIGHTS: Record<keyof QualitySubscores, number> = {
+  sharpness: 0.40,
+  exposure: 0.25,
+  contrast: 0.20,
+  noise: 0.15,
+};
+
+function scoreColor(score: number): string {
+  if (score >= 60) return 'bg-green-500';
+  if (score >= 35) return 'bg-yellow-500';
+  return 'bg-red-500';
+}
+
+function scoreTextColor(score: number): string {
+  if (score >= 60) return 'text-green-400';
+  if (score >= 35) return 'text-yellow-400';
+  return 'text-red-400';
+}
+
 export function InfoPanel({
   image,
   classification,
   qualityScore,
+  qualitySubscores,
+  rotation = 0,
   isOpen,
   onToggle,
   showFocusPeaking,
@@ -208,6 +245,7 @@ export function InfoPanel({
                       src={previewUrl}
                       alt={image.name}
                       className="max-w-none select-none"
+                      style={rotation ? { transform: `rotate(${rotation}deg)` } : undefined}
                       crossOrigin="anonymous"
                       draggable={false}
                       data-testid="info-panel-preview"
@@ -306,13 +344,39 @@ export function InfoPanel({
                   </span>
                 </div>
 
-                {/* Quality score */}
+                {/* Quality score with subscores */}
                 {qualityScore != null && (
-                  <span className={`text-sm font-mono ${
-                    qualityScore >= 60 ? 'text-green-400' : qualityScore >= 35 ? 'text-yellow-400' : 'text-red-400'
-                  }`} data-testid="info-panel-score">
-                    Score: {qualityScore}%
-                  </span>
+                  <div className="flex flex-col gap-2" data-testid="info-panel-score">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm font-mono font-semibold ${scoreTextColor(qualityScore)}`}
+                        title="Weighted composite: 40% sharpness + 25% exposure + 20% contrast + 15% noise">
+                        Score: {qualityScore}%
+                      </span>
+                    </div>
+                    {qualitySubscores && (
+                      <div className="flex flex-col gap-1.5">
+                        {(Object.keys(SUBSCORE_LABELS) as Array<keyof QualitySubscores>).map((key) => (
+                          <div key={key} className="flex items-center gap-2" title={SUBSCORE_TOOLTIPS[key]}>
+                            <span className="text-[10px] text-gray-500 w-16 text-right flex-shrink-0">
+                              {SUBSCORE_LABELS[key]}
+                            </span>
+                            <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${scoreColor(qualitySubscores[key])}`}
+                                style={{ width: `${qualitySubscores[key]}%` }}
+                              />
+                            </div>
+                            <span className={`text-[10px] font-mono w-7 text-right flex-shrink-0 ${scoreTextColor(qualitySubscores[key])}`}>
+                              {qualitySubscores[key]}
+                            </span>
+                            <span className="text-[9px] text-gray-600 w-6 text-right flex-shrink-0">
+                              ×{SUBSCORE_WEIGHTS[key].toFixed(2).slice(1)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Exposure summary bar — full width */}

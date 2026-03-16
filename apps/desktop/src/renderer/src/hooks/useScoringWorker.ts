@@ -1,10 +1,11 @@
 import { useRef, useState, useCallback } from 'react';
 import type { ScoringResult } from '../workers/scoring.worker';
+import type { QualitySubscores } from '@photo-culler/types';
 
 export interface ScoringWorkerAPI {
   scoreAll: (
     files: Array<{ path: string; name: string }>,
-    onResult: (filename: string, score: number) => void,
+    onResult: (filename: string, score: number, subscores: QualitySubscores) => void,
   ) => void;
   isScoring: boolean;
   progress: { completed: number; total: number };
@@ -18,7 +19,7 @@ export function useScoringWorker(): ScoringWorkerAPI {
   const scoreAll = useCallback(
     (
       files: Array<{ path: string; name: string }>,
-      onResult: (filename: string, score: number) => void,
+      onResult: (filename: string, score: number, subscores: QualitySubscores) => void,
     ) => {
       // Terminate previous worker if re-scoring (folder change)
       if (workerRef.current) {
@@ -49,7 +50,7 @@ export function useScoringWorker(): ScoringWorkerAPI {
           worker.postMessage({ path: file.path, buffer }, [buffer]);
         } catch {
           // On IPC read error, report neutral score and continue
-          onResult(file.name, 50);
+          onResult(file.name, 50, { sharpness: 50, exposure: 50, contrast: 50, noise: 50 });
           completed++;
           setProgress({ completed, total: files.length });
           if (completed >= files.length) {
@@ -67,7 +68,12 @@ export function useScoringWorker(): ScoringWorkerAPI {
         // Find the filename from the path
         const file = files.find((f) => f.path === data.path);
         if (file) {
-          onResult(file.name, data.qualityScore);
+          onResult(file.name, data.qualityScore, {
+            sharpness: data.sharpness,
+            exposure: data.exposure,
+            contrast: data.contrast,
+            noise: data.noise,
+          });
         }
 
         completed++;

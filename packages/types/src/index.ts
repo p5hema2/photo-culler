@@ -4,6 +4,7 @@ export type {
   TrashResult,
   SessionConfig,
   ImageResult,
+  QualitySubscores,
   ResultsFile,
 } from './ipc';
 export type { ImageFileInfo } from './image';

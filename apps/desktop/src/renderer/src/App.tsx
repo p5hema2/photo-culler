@@ -121,6 +121,7 @@ function App(): React.JSX.Element {
     focusedImageId: state.focusedImageId,
     onFocusChange: store.setFocusedImage,
     onCycleClassification: store.cycleClassification,
+    onSetClassification: store.setClassification,
     containerRef: gridContainerRef,
     onToggleSelect: handleToggleSelect,
     onRangeSelect: handleRangeSelect,
@@ -132,6 +133,8 @@ function App(): React.JSX.Element {
     onExitPreview: handleExitPreview,
     isPreviewMode: state.isPreviewMode,
     sortedFlatImages,
+    thumbnailSize: state.thumbnailSize,
+    onRotate: store.rotateImage,
   });
 
   const handleSelectFolder = useCallback(async () => {
@@ -140,6 +143,14 @@ function App(): React.JSX.Element {
       store.openFolder(folder);
     }
   }, [store]);
+
+  const handleRescan = useCallback(async () => {
+    if (state.folderPath) {
+      await window.api.saveResults(state.folderPath, '');
+      scoringTriggeredRef.current = null;
+      store.openFolder(state.folderPath);
+    }
+  }, [state.folderPath, store]);
 
   // Listen for Cmd+O from menu (only available in Electron via contextBridge)
   useEffect(() => {
@@ -213,8 +224,8 @@ function App(): React.JSX.Element {
       if (unscoredFiles.length === 0) return;
 
       console.log(`[scoring] Starting scoring for ${unscoredFiles.length} images`);
-      scoringWorker.scoreAll(unscoredFiles, (filename, score) => {
-        storeRef.current.setQualityScore(filename, score);
+      scoringWorker.scoreAll(unscoredFiles, (filename, score, subscores) => {
+        storeRef.current.setQualityScore(filename, score, subscores);
       });
     }, 2000);
 
@@ -236,9 +247,13 @@ function App(): React.JSX.Element {
     return result;
   }, [store.filteredImages, state.classifications]);
 
-  // Count delete-classified images for the Execute button (filtered only)
+  // Count classified images for the Execute button (filtered only)
   const deleteCount = useMemo(() => {
     return Object.values(filteredClassifications).filter((c) => c === 'delete').length;
+  }, [filteredClassifications]);
+
+  const keepCount = useMemo(() => {
+    return Object.values(filteredClassifications).filter((c) => c === 'keep').length;
   }, [filteredClassifications]);
 
   // Find the focused image object
@@ -256,6 +271,16 @@ function App(): React.JSX.Element {
     if (!focusedImage) return undefined;
     return state.qualityScores[focusedImage.name];
   }, [focusedImage, state.qualityScores]);
+
+  const focusedQualitySubscores = useMemo(() => {
+    if (!focusedImage) return undefined;
+    return state.qualitySubscores[focusedImage.name];
+  }, [focusedImage, state.qualitySubscores]);
+
+  const focusedRotation = useMemo(() => {
+    if (!focusedImage) return 0;
+    return state.rotations[focusedImage.name] ?? 0;
+  }, [focusedImage, state.rotations]);
 
   const renderContent = (): React.JSX.Element => {
     if (state.isLoading) {
@@ -286,6 +311,7 @@ function App(): React.JSX.Element {
         groups={groups}
         classifications={state.classifications}
         qualityScores={state.qualityScores}
+        rotations={state.rotations}
         thumbnailSize={state.thumbnailSize}
         focusedImageId={state.focusedImageId}
         selectedImages={state.selectedImages}
@@ -316,9 +342,12 @@ function App(): React.JSX.Element {
           groupingThresholdMs={state.groupingThresholdMs}
           exifProgress={state.exifProgress}
           deleteCount={deleteCount}
+          keepCount={keepCount}
           selectedCount={selectedCount}
           totalCount={totalCount}
+          folderPath={state.folderPath}
           onSelectFolder={handleSelectFolder}
+          onRescan={handleRescan}
           onSortFieldChange={store.setSortField}
           onSortDirectionChange={store.setSortDirection}
           onFilterExtensionsChange={store.setFilterExtensions}
@@ -359,6 +388,8 @@ function App(): React.JSX.Element {
             image={focusedImage}
             classification={focusedClassification}
             qualityScore={focusedQualityScore}
+            qualitySubscores={focusedQualitySubscores}
+            rotation={focusedRotation}
             isOpen={infoPanelOpen}
             onToggle={handleToggleInfoPanel}
             showFocusPeaking={showFocusPeaking}
@@ -372,6 +403,7 @@ function App(): React.JSX.Element {
 
       <ExecutePanel
         classifications={filteredClassifications}
+        rotatedCount={Object.values(state.rotations).filter((r) => r !== 0).length}
         isOpen={showExecutePanel}
         onClose={handleCloseExecute}
         onExecute={store.executeActions}

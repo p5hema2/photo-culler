@@ -1,6 +1,7 @@
 import { ipcMain, dialog, shell } from 'electron';
 import { writeFile, readFile, mkdir, rename, unlink, stat } from 'node:fs/promises';
 import path from 'node:path';
+import sharp from 'sharp';
 import { IPC_CHANNELS } from '@photo-culler/types';
 import type { SessionConfig, TrashResult } from '@photo-culler/types';
 import { scanFolder } from '@photo-culler/image-utils';
@@ -182,6 +183,37 @@ export function registerIpcHandlers(): void {
       const thumbPath = getThumbCachePath(filePath);
       await mkdir(path.dirname(thumbPath), { recursive: true });
       await writeFile(thumbPath, Buffer.from(jpegBuffer));
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.ROTATE_FILES,
+    async (_event, files: Array<{ path: string; degrees: number }>) => {
+      const succeeded: string[] = [];
+      const failed: Array<{ path: string; error: string }> = [];
+
+      for (const file of files) {
+        if (file.degrees === 0) {
+          succeeded.push(file.path);
+          continue;
+        }
+        try {
+          const buffer = await readFile(file.path);
+          const rotated = await sharp(buffer)
+            .rotate(file.degrees)
+            .withMetadata()
+            .toBuffer();
+          await writeFile(file.path, rotated);
+          succeeded.push(file.path);
+        } catch (err) {
+          failed.push({
+            path: file.path,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      return { succeeded, failed };
     },
   );
 }

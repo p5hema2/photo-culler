@@ -6,16 +6,19 @@ export type DeleteMode = 'trash' | 'permanent';
 export interface ExecuteOptions {
   deleteMode: DeleteMode;
   movePicks: boolean;
+  applyRotations: boolean;
 }
 
 export interface ExecuteResult {
   trashedCount: number;
   movedCount: number;
+  rotatedCount: number;
   failedPaths: Array<{ path: string; error: string }>;
 }
 
 interface ExecutePanelProps {
   classifications: Record<string, Classification>;
+  rotatedCount: number;
   isOpen: boolean;
   onClose: () => void;
   onExecute: (options: ExecuteOptions) => Promise<ExecuteResult>;
@@ -23,12 +26,14 @@ interface ExecutePanelProps {
 
 export function ExecutePanel({
   classifications,
+  rotatedCount,
   isOpen,
   onClose,
   onExecute,
 }: ExecutePanelProps): React.JSX.Element | null {
   const [deleteMode, setDeleteMode] = useState<DeleteMode>('trash');
   const [movePicks, setMovePicks] = useState(false);
+  const [applyRotations, setApplyRotations] = useState(true);
   const [isExecuting, setIsExecuting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [result, setResult] = useState<ExecuteResult | null>(null);
@@ -53,14 +58,14 @@ export function ExecutePanel({
     setShowConfirm(false);
     setIsExecuting(true);
     try {
-      const res = await onExecute({ deleteMode, movePicks });
+      const res = await onExecute({ deleteMode, movePicks, applyRotations });
       setResult(res);
     } catch {
-      setResult({ trashedCount: 0, movedCount: 0, failedPaths: [{ path: '', error: 'Unexpected error' }] });
+      setResult({ trashedCount: 0, movedCount: 0, rotatedCount: 0, failedPaths: [{ path: '', error: 'Unexpected error' }] });
     } finally {
       setIsExecuting(false);
     }
-  }, [onExecute, deleteMode, movePicks]);
+  }, [onExecute, deleteMode, movePicks, applyRotations]);
 
   const handleDone = useCallback(() => {
     setResult(null);
@@ -96,6 +101,11 @@ export function ExecutePanel({
                   {result.movedCount} image{result.movedCount !== 1 ? 's' : ''} moved to picks/
                 </p>
               )}
+              {result.rotatedCount > 0 && (
+                <p className="text-green-400">
+                  {result.rotatedCount} image{result.rotatedCount !== 1 ? 's' : ''} rotated
+                </p>
+              )}
               {result.failedPaths.length > 0 && (
                 <div>
                   <p className="text-red-400 mb-1">
@@ -108,7 +118,7 @@ export function ExecutePanel({
                   </ul>
                 </div>
               )}
-              {result.trashedCount === 0 && result.movedCount === 0 && result.failedPaths.length === 0 && (
+              {result.trashedCount === 0 && result.movedCount === 0 && result.rotatedCount === 0 && result.failedPaths.length === 0 && (
                 <p className="text-gray-400">No actions were performed.</p>
               )}
             </div>
@@ -145,6 +155,12 @@ export function ExecutePanel({
                   Move <span className="text-green-400 font-medium">{counts.keep}</span> keep image{counts.keep !== 1 ? 's' : ''} to picks/ subfolder?
                 </p>
               )}
+              {applyRotations && rotatedCount > 0 && (
+                <p>
+                  Apply rotation to <span className="text-blue-400 font-medium">{rotatedCount}</span> image{rotatedCount !== 1 ? 's' : ''} on disk
+                  <span className="text-gray-500"> (modifies files in-place)</span>
+                </p>
+              )}
             </div>
 
             <div className="flex justify-end gap-3">
@@ -158,13 +174,15 @@ export function ExecutePanel({
               <button
                 onClick={handleConfirm}
                 className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                  deleteMode === 'permanent'
+                  counts.delete > 0 && deleteMode === 'permanent'
                     ? 'bg-red-700 hover:bg-red-600'
-                    : 'bg-red-600 hover:bg-red-700'
+                    : counts.delete > 0
+                      ? 'bg-red-600 hover:bg-red-700'
+                      : 'bg-blue-600 hover:bg-blue-700'
                 }`}
                 data-testid="execute-confirm-btn"
               >
-                {deleteMode === 'permanent' ? 'Permanently Delete' : 'Move to Trash'}
+                Confirm
               </button>
             </div>
           </div>
@@ -227,7 +245,7 @@ export function ExecutePanel({
             </div>
 
             {/* Move picks checkbox */}
-            <div className="mb-6">
+            <div className="mb-4">
               <label className="flex items-center gap-2 cursor-pointer text-sm" data-testid="move-picks-checkbox">
                 <input
                   type="checkbox"
@@ -238,6 +256,25 @@ export function ExecutePanel({
                 <span>Move &apos;keep&apos; images to picks/ subfolder</span>
                 {counts.keep > 0 && (
                   <span className="text-gray-500 text-xs">({counts.keep} image{counts.keep !== 1 ? 's' : ''})</span>
+                )}
+              </label>
+            </div>
+
+            {/* Apply rotations checkbox */}
+            <div className="mb-6">
+              <label className={`flex items-center gap-2 text-sm ${rotatedCount > 0 ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`} data-testid="apply-rotations-checkbox">
+                <input
+                  type="checkbox"
+                  checked={applyRotations && rotatedCount > 0}
+                  disabled={rotatedCount === 0}
+                  onChange={(e) => setApplyRotations(e.target.checked)}
+                  className="accent-blue-500"
+                />
+                <span>Apply rotations to files</span>
+                {rotatedCount > 0 ? (
+                  <span className="text-gray-500 text-xs">({rotatedCount} image{rotatedCount !== 1 ? 's' : ''})</span>
+                ) : (
+                  <span className="text-gray-500 text-xs">(none rotated)</span>
                 )}
               </label>
             </div>
@@ -253,9 +290,9 @@ export function ExecutePanel({
               </button>
               <button
                 onClick={handleExecuteClick}
-                disabled={counts.delete === 0 && !(movePicks && counts.keep > 0)}
+                disabled={counts.delete === 0 && !(movePicks && counts.keep > 0) && !(applyRotations && rotatedCount > 0)}
                 className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                  counts.delete === 0 && !(movePicks && counts.keep > 0)
+                  counts.delete === 0 && !(movePicks && counts.keep > 0) && !(applyRotations && rotatedCount > 0)
                     ? 'bg-gray-600 cursor-not-allowed text-gray-400'
                     : 'bg-red-600 hover:bg-red-700'
                 }`}

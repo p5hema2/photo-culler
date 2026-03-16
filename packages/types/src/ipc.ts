@@ -13,6 +13,7 @@ export const IPC_CHANNELS = {
   READ_FILE: 'fs:read-file',
   LOAD_THUMB_CACHE: 'fs:load-thumb-cache',
   SAVE_THUMB_CACHE: 'fs:save-thumb-cache',
+  ROTATE_FILES: 'fs:rotate-files',
 } as const;
 
 export interface TrashResult {
@@ -31,6 +32,13 @@ export interface SessionConfig {
   groupingThresholdMs: number;
 }
 
+export interface QualitySubscores {
+  sharpness: number;
+  exposure: number;
+  contrast: number;
+  noise: number;
+}
+
 export interface ImageResult {
   /** Classification assigned to the image (null = unclassified) */
   classification: 'keep' | 'review' | 'delete' | null;
@@ -38,6 +46,10 @@ export interface ImageResult {
   userOverride: boolean;
   /** Quality score from auto-classification (0-100) */
   qualityScore?: number;
+  /** Individual metric scores (0-100 each) */
+  qualitySubscores?: QualitySubscores;
+  /** Visual rotation in degrees (0, 90, 180, 270) */
+  rotation?: number;
   /** Star rating (1-5), auto-assigned from quality score or manually overridden */
   starRating?: number;
   /** Cached EXIF metadata extracted from the image */
@@ -88,4 +100,5 @@ export interface ElectronAPI {
   readFile: (filePath: string) => Promise<ArrayBuffer>;
   loadThumbCache: (filePath: string, lastModified: number) => Promise<ArrayBuffer | null>;
   saveThumbCache: (filePath: string, jpegBuffer: ArrayBuffer) => Promise<void>;
+  rotateFiles: (files: Array<{ path: string; degrees: number }>) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
 }

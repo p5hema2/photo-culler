@@ -2,11 +2,18 @@ import { useCallback, useRef, useEffect } from 'react';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { ImageFileInfo } from '@photo-culler/types';
 
+const THUMBNAIL_SIZE_MAP: Record<string, number> = {
+  small: 120,
+  medium: 200,
+  large: 300,
+};
+
 interface KeyboardNavOptions {
   groups: PhotoGroup[];
   focusedImageId: string | null;
   onFocusChange: (path: string | null) => void;
   onCycleClassification: (filename: string) => void;
+  onSetClassification: (filename: string, classification: 'keep' | 'review' | 'delete' | null) => void;
   containerRef: React.RefObject<HTMLElement | null>;
   onToggleSelect: (path: string) => void;
   onRangeSelect: (path: string) => void;
@@ -16,8 +23,10 @@ interface KeyboardNavOptions {
   onTrashSelected: () => void;
   onEnterPreview: (path: string) => void;
   onExitPreview: () => void;
+  onRotate: (filename: string, direction: 'cw' | 'ccw') => void;
   isPreviewMode: boolean;
   sortedFlatImages: ImageFileInfo[];
+  thumbnailSize: 'small' | 'medium' | 'large';
 }
 
 interface KeyboardNavResult {
@@ -47,6 +56,7 @@ export function useKeyboardNav({
   focusedImageId,
   onFocusChange,
   onCycleClassification,
+  onSetClassification,
   containerRef,
   onToggleSelect,
   onRangeSelect,
@@ -56,17 +66,21 @@ export function useKeyboardNav({
   onTrashSelected,
   onEnterPreview,
   onExitPreview,
+  onRotate,
   isPreviewMode,
   sortedFlatImages,
+  thumbnailSize,
 }: KeyboardNavOptions): KeyboardNavResult {
   const groupsRef = useRef(groups);
   const focusRef = useRef(focusedImageId);
   const previewRef = useRef(isPreviewMode);
   const flatImagesRef = useRef(sortedFlatImages);
+  const thumbnailSizeRef = useRef(thumbnailSize);
   groupsRef.current = groups;
   focusRef.current = focusedImageId;
   previewRef.current = isPreviewMode;
   flatImagesRef.current = sortedFlatImages;
+  thumbnailSizeRef.current = thumbnailSize;
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -117,6 +131,17 @@ export function useKeyboardNav({
         }
       }
 
+      // Alt+Arrow Left/Right: rotate focused image
+      if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        const pos = findImagePosition(currentGroups, focused);
+        if (pos) {
+          const image = currentGroups[pos.groupIndex]!.images[pos.imageIndex]!;
+          onRotate(image.name, e.key === 'ArrowRight' ? 'cw' : 'ccw');
+        }
+        return;
+      }
+
       const pos = findImagePosition(currentGroups, focused);
       if (!pos) return;
 
@@ -148,9 +173,24 @@ export function useKeyboardNav({
 
         case 'ArrowDown': {
           e.preventDefault();
-          if (groupIndex < currentGroups.length - 1) {
+          const cellSize = THUMBNAIL_SIZE_MAP[thumbnailSizeRef.current] ?? 200;
+          const gap = 8;
+          const containerWidth = containerRef.current?.querySelector('[data-testid="photo-grid"]')?.clientWidth
+            ?? containerRef.current?.clientWidth ?? 800;
+          const perRow = Math.max(1, Math.floor((containerWidth + gap) / (cellSize + gap)));
+
+          const currentRow = Math.floor(imageIndex / perRow);
+          const col = imageIndex % perRow;
+          const totalRows = Math.ceil(currentGroup.images.length / perRow);
+
+          if (currentRow < totalRows - 1) {
+            // Move to next row in same group
+            const targetIndex = Math.min((currentRow + 1) * perRow + col, currentGroup.images.length - 1);
+            onFocusChange(currentGroup.images[targetIndex]!.path);
+          } else if (groupIndex < currentGroups.length - 1) {
+            // Last row of group — jump to first row of next group, same column
             const nextGroup = currentGroups[groupIndex + 1]!;
-            const targetIndex = Math.min(imageIndex, nextGroup.images.length - 1);
+            const targetIndex = Math.min(col, nextGroup.images.length - 1);
             onFocusChange(nextGroup.images[targetIndex]!.path);
           }
           break;
@@ -158,9 +198,25 @@ export function useKeyboardNav({
 
         case 'ArrowUp': {
           e.preventDefault();
-          if (groupIndex > 0) {
+          const cellSizeUp = THUMBNAIL_SIZE_MAP[thumbnailSizeRef.current] ?? 200;
+          const gapUp = 8;
+          const containerWidthUp = containerRef.current?.querySelector('[data-testid="photo-grid"]')?.clientWidth
+            ?? containerRef.current?.clientWidth ?? 800;
+          const perRowUp = Math.max(1, Math.floor((containerWidthUp + gapUp) / (cellSizeUp + gapUp)));
+
+          const currentRowUp = Math.floor(imageIndex / perRowUp);
+          const colUp = imageIndex % perRowUp;
+
+          if (currentRowUp > 0) {
+            // Move to previous row in same group
+            const targetIndex = (currentRowUp - 1) * perRowUp + colUp;
+            onFocusChange(currentGroup.images[targetIndex]!.path);
+          } else if (groupIndex > 0) {
+            // First row of group — jump to last row of previous group, same column
             const prevGroup = currentGroups[groupIndex - 1]!;
-            const targetIndex = Math.min(imageIndex, prevGroup.images.length - 1);
+            const prevPerRow = perRowUp;
+            const prevLastRow = Math.floor((prevGroup.images.length - 1) / prevPerRow);
+            const targetIndex = Math.min(prevLastRow * prevPerRow + colUp, prevGroup.images.length - 1);
             onFocusChange(prevGroup.images[targetIndex]!.path);
           }
           break;
@@ -186,6 +242,34 @@ export function useKeyboardNav({
           if (image) {
             onCycleClassification(image.name);
           }
+          break;
+        }
+
+        case '1': {
+          e.preventDefault();
+          const img1 = currentGroup.images[imageIndex];
+          if (img1) onSetClassification(img1.name, 'keep');
+          break;
+        }
+
+        case '2': {
+          e.preventDefault();
+          const img2 = currentGroup.images[imageIndex];
+          if (img2) onSetClassification(img2.name, 'review');
+          break;
+        }
+
+        case '3': {
+          e.preventDefault();
+          const img3 = currentGroup.images[imageIndex];
+          if (img3) onSetClassification(img3.name, 'delete');
+          break;
+        }
+
+        case '0': {
+          e.preventDefault();
+          const img0 = currentGroup.images[imageIndex];
+          if (img0) onSetClassification(img0.name, null);
           break;
         }
 
@@ -227,12 +311,14 @@ export function useKeyboardNav({
     [
       onFocusChange,
       onCycleClassification,
+      onSetClassification,
       onSelectAll,
       onClearSelection,
       onTrashFocused,
       onTrashSelected,
       onEnterPreview,
       onExitPreview,
+      onRotate,
     ],
   );
 

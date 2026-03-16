@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import type { ImageFileInfo, ResultsFile, SessionConfig } from '@photo-culler/types';
+import type { ImageFileInfo, ResultsFile, SessionConfig, QualitySubscores } from '@photo-culler/types';
 import { sortImages } from '@photo-culler/image-utils/sorting';
 import type { SortField, SortDirection } from '@photo-culler/image-utils/sorting';
 import { groupByTimestamp } from '@photo-culler/image-utils/grouping';
@@ -29,8 +29,10 @@ export interface PhotoState {
   isPreviewMode: boolean;
   previewImageId: string | null;
   qualityScores: Record<string, number>;
+  qualitySubscores: Record<string, QualitySubscores>;
   filterScoreRange: { min: number; max: number } | null;
   scoringProgress: { completed: number; total: number };
+  rotations: Record<string, number>;
 }
 
 export type Classification = 'keep' | 'review' | 'delete' | null;
@@ -61,8 +63,10 @@ const initialState: PhotoState = {
   isPreviewMode: false,
   previewImageId: null,
   qualityScores: {},
+  qualitySubscores: {},
   filterScoreRange: null,
   scoringProgress: { completed: 0, total: 0 },
+  rotations: {},
 };
 
 export interface PhotoStoreAPI {
@@ -90,9 +94,10 @@ export interface PhotoStoreAPI {
   trashImages: (paths: string[]) => Promise<void>;
   enterPreview: (path: string) => void;
   exitPreview: () => void;
-  setQualityScore: (filename: string, score: number) => void;
+  setQualityScore: (filename: string, score: number, subscores?: QualitySubscores) => void;
   setFilterScoreRange: (range: { min: number; max: number } | null) => void;
   setScoringProgress: (progress: { completed: number; total: number }) => void;
+  rotateImage: (filename: string, direction: 'cw' | 'ccw') => void;
 }
 
 export function usePhotoStore(): PhotoStoreAPI {
@@ -132,6 +137,8 @@ export function usePhotoStore(): PhotoStoreAPI {
                 classification: v,
                 userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
                 qualityScore: currentState.qualityScores[k] ?? resultsRef.current?.images[k]?.qualityScore,
+                qualitySubscores: currentState.qualitySubscores[k] ?? resultsRef.current?.images[k]?.qualitySubscores,
+                rotation: currentState.rotations[k] ?? resultsRef.current?.images[k]?.rotation,
                 exif: resultsRef.current?.images[k]?.exif,
               },
             ]),
@@ -185,6 +192,7 @@ export function usePhotoStore(): PhotoStoreAPI {
         isPreviewMode: false,
         previewImageId: null,
         qualityScores: {},
+        qualitySubscores: {},
         filterScoreRange: null,
         scoringProgress: { completed: 0, total: 0 },
       }));
@@ -198,6 +206,8 @@ export function usePhotoStore(): PhotoStoreAPI {
         const results = await loadResults(folderPath);
         const classifications: Record<string, Classification> = {};
         const qualityScores: Record<string, number> = {};
+        const qualitySubscores: Record<string, QualitySubscores> = {};
+        const rotations: Record<string, number> = {};
 
         const imagesNeedingExif: typeof images = [];
         for (const img of images) {
@@ -205,6 +215,12 @@ export function usePhotoStore(): PhotoStoreAPI {
             classifications[img.name] = results.images[img.name].classification;
             if (results.images[img.name].qualityScore != null) {
               qualityScores[img.name] = results.images[img.name].qualityScore!;
+            }
+            if (results.images[img.name].qualitySubscores) {
+              qualitySubscores[img.name] = results.images[img.name].qualitySubscores!;
+            }
+            if (results.images[img.name].rotation) {
+              rotations[img.name] = results.images[img.name].rotation!;
             }
             // Apply cached EXIF data if available
             const cachedExif = results.images[img.name].exif;
@@ -254,6 +270,8 @@ export function usePhotoStore(): PhotoStoreAPI {
           images,
           classifications,
           qualityScores,
+          qualitySubscores,
+          rotations,
           isLoading: false,
         }));
 
@@ -361,6 +379,8 @@ export function usePhotoStore(): PhotoStoreAPI {
                   classification,
                   userOverride: true,
                   qualityScore: resultsRef.current.images[filename]?.qualityScore,
+                  qualitySubscores: resultsRef.current.images[filename]?.qualitySubscores,
+                  rotation: resultsRef.current.images[filename]?.rotation,
                   exif: resultsRef.current.images[filename]?.exif,
                 },
               },
@@ -394,6 +414,8 @@ export function usePhotoStore(): PhotoStoreAPI {
                   classification: next,
                   userOverride: true,
                   qualityScore: resultsRef.current.images[filename]?.qualityScore,
+                  qualitySubscores: resultsRef.current.images[filename]?.qualitySubscores,
+                  rotation: resultsRef.current.images[filename]?.rotation,
                   exif: resultsRef.current.images[filename]?.exif,
                 },
               },
@@ -449,14 +471,50 @@ export function usePhotoStore(): PhotoStoreAPI {
     async (options: ExecuteOptions): Promise<ExecuteResult> => {
       const current = stateRef.current;
       if (!current.folderPath) {
-        return { trashedCount: 0, movedCount: 0, failedPaths: [] };
+        return { trashedCount: 0, movedCount: 0, rotatedCount: 0, failedPaths: [] };
       }
 
       const folderPath = current.folderPath;
-      const executeResult: ExecuteResult = { trashedCount: 0, movedCount: 0, failedPaths: [] };
+      const executeResult: ExecuteResult = { trashedCount: 0, movedCount: 0, rotatedCount: 0, failedPaths: [] };
 
       // Only operate on currently visible (filtered) images
       const visibleImages = filteredImagesRef.current;
+
+      // Apply rotations to files on disk if requested
+      if (options.applyRotations) {
+        const rotatedFiles = visibleImages
+          .filter((img) => (current.rotations[img.name] ?? 0) !== 0)
+          .map((img) => ({ path: img.path, name: img.name, degrees: current.rotations[img.name]! }));
+
+        if (rotatedFiles.length > 0) {
+          const rotateResult = await window.api.rotateFiles(
+            rotatedFiles.map((f) => ({ path: f.path, degrees: f.degrees })),
+          );
+          executeResult.failedPaths.push(...rotateResult.failed);
+          executeResult.rotatedCount = rotateResult.succeeded.length;
+
+          // Clear rotation state for successfully rotated images
+          const rotatedSet = new Set(rotateResult.succeeded);
+          setState((prev) => {
+            const newRotations = { ...prev.rotations };
+            for (const file of rotatedFiles) {
+              if (rotatedSet.has(file.path)) {
+                delete newRotations[file.name];
+              }
+            }
+            return { ...prev, rotations: newRotations };
+          });
+
+          // Also clear rotation in resultsRef
+          if (resultsRef.current) {
+            for (const file of rotatedFiles) {
+              if (rotatedSet.has(file.path) && resultsRef.current.images[file.name]) {
+                delete resultsRef.current.images[file.name].rotation;
+              }
+            }
+          }
+        }
+      }
 
       // Get paths of delete-classified images (within visible set only)
       const deletePaths = visibleImages
@@ -533,6 +591,8 @@ export function usePhotoStore(): PhotoStoreAPI {
                 classification: v,
                 userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
                 qualityScore: resultsRef.current?.images[k]?.qualityScore,
+                qualitySubscores: resultsRef.current?.images[k]?.qualitySubscores,
+                rotation: resultsRef.current?.images[k]?.rotation,
                 exif: resultsRef.current?.images[k]?.exif,
               },
             ]),
@@ -716,7 +776,7 @@ export function usePhotoStore(): PhotoStoreAPI {
   }, []);
 
   const setQualityScore = useCallback(
-    (filename: string, score: number) => {
+    (filename: string, score: number, subscores?: QualitySubscores) => {
       setState((prev) => {
         // Auto-assign classification only if user hasn't manually overridden
         const isManualOverride = resultsRef.current?.images[filename]?.userOverride ?? false;
@@ -727,6 +787,9 @@ export function usePhotoStore(): PhotoStoreAPI {
 
         const newClassifications = { ...prev.classifications, [filename]: newClassification };
         const newQualityScores = { ...prev.qualityScores, [filename]: score };
+        const newQualitySubscores = subscores
+          ? { ...prev.qualitySubscores, [filename]: subscores }
+          : prev.qualitySubscores;
 
         // Update results ref
         if (resultsRef.current) {
@@ -738,6 +801,8 @@ export function usePhotoStore(): PhotoStoreAPI {
                 classification: newClassification,
                 userOverride: isManualOverride,
                 qualityScore: score,
+                qualitySubscores: subscores ?? resultsRef.current.images[filename]?.qualitySubscores,
+                rotation: resultsRef.current.images[filename]?.rotation,
                 exif: resultsRef.current.images[filename]?.exif,
               },
             },
@@ -752,6 +817,7 @@ export function usePhotoStore(): PhotoStoreAPI {
           ...prev,
           classifications: newClassifications,
           qualityScores: newQualityScores,
+          qualitySubscores: newQualitySubscores,
         };
       });
     },
@@ -770,6 +836,37 @@ export function usePhotoStore(): PhotoStoreAPI {
       return { ...prev, scoringProgress: progress };
     });
   }, []);
+
+  const rotateImage = useCallback((filename: string, direction: 'cw' | 'ccw') => {
+    const delta = direction === 'cw' ? 90 : -90;
+    setState((prev) => {
+      const current = prev.rotations[filename] ?? 0;
+      const next = (current + delta + 360) % 360;
+
+      // Persist to results ref
+      if (resultsRef.current) {
+        resultsRef.current = {
+          ...resultsRef.current,
+          images: {
+            ...resultsRef.current.images,
+            [filename]: {
+              ...resultsRef.current.images[filename],
+              rotation: next || undefined,
+            },
+          },
+        };
+      }
+
+      if (prev.folderPath) {
+        scheduleSave(prev.folderPath, prev.classifications);
+      }
+
+      return {
+        ...prev,
+        rotations: { ...prev.rotations, [filename]: next },
+      };
+    });
+  }, [scheduleSave]);
 
   // Derived state
   const filteredImages = useMemo(() => {
@@ -915,6 +1012,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     setQualityScore,
     setFilterScoreRange,
     setScoringProgress,
+    rotateImage,
   };
 }
 

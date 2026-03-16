@@ -16,7 +16,7 @@
     "test": "turbo run test"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["electron", "esbuild", "electron-winstaller"]
+    "onlyBuiltDependencies": ["electron", "esbuild", "electron-winstaller", "sharp"]
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.57.0",

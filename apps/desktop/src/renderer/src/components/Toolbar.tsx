@@ -14,12 +14,15 @@ interface ToolbarProps {
   groupingThresholdMs: number;
   exifProgress: { completed: number; total: number };
   deleteCount: number;
+  keepCount: number;
   selectedCount: number;
   totalCount: number;
   filterScoreRange: { min: number; max: number } | null;
   scoringProgress: { completed: number; total: number };
   selectOnHover: boolean;
+  folderPath: string | null;
   onSelectFolder: () => void;
+  onRescan: () => void;
   onSortFieldChange: (field: SortField) => void;
   onSortDirectionChange: (direction: SortDirection) => void;
   onFilterExtensionsChange: (extensions: Set<string>) => void;
@@ -116,11 +119,14 @@ export function Toolbar({
   groupingThresholdMs,
   exifProgress,
   deleteCount,
+  keepCount,
   selectedCount,
   totalCount,
   filterScoreRange,
   scoringProgress,
+  folderPath,
   onSelectFolder,
+  onRescan,
   onSortFieldChange,
   onSortDirectionChange,
   onFilterExtensionsChange,
@@ -249,6 +255,17 @@ export function Toolbar({
       >
         Open
       </button>
+
+      {folderPath && (
+        <button
+          onClick={onRescan}
+          className="px-2 py-1 text-gray-400 hover:text-white hover:bg-gray-700 rounded text-xs transition-colors"
+          data-testid="rescan-btn"
+          title="Rescan current folder — clears cached scores and re-processes all images"
+        >
+          &#x21BB; Rescan
+        </button>
+      )}
 
       {/* Sort dropdown */}
       <DropdownMenu label={`Sort: ${SORT_OPTIONS.find(o => o.value === sortField)?.label ?? ''}`} testId="sort-menu" tooltip="Change image sort order">
@@ -443,19 +460,19 @@ export function Toolbar({
         </button>
       )}
 
-      {/* Delete — batch delete all images classified as 'delete' */}
+      {/* Save / Delete — execute actions on classified images */}
       <button
         onClick={onExecute}
-        disabled={deleteCount === 0}
+        disabled={deleteCount === 0 && keepCount === 0}
         className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-          deleteCount > 0
-            ? 'bg-red-600 hover:bg-red-700'
+          deleteCount > 0 || keepCount > 0
+            ? 'bg-blue-600 hover:bg-blue-700'
             : 'bg-gray-600 cursor-not-allowed text-gray-400'
         }`}
         data-testid="execute-btn"
-        title="Batch delete all images classified as 'delete' (moves to OS trash)"
+        title="Execute actions: save keeps, delete rejects, apply rotations"
       >
-        Delete{deleteCount > 0 ? ` (${deleteCount})` : ''}
+        Save / Delete
       </button>
     </div>
   );
