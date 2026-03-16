@@ -18,6 +18,7 @@ interface ToolbarProps {
   totalCount: number;
   filterScoreRange: { min: number; max: number } | null;
   scoringProgress: { completed: number; total: number };
+  selectOnHover: boolean;
   onSelectFolder: () => void;
   onSortFieldChange: (field: SortField) => void;
   onSortDirectionChange: (direction: SortDirection) => void;
@@ -27,7 +28,6 @@ interface ToolbarProps {
   onThumbnailSizeChange: (size: 'small' | 'medium' | 'large') => void;
   onGroupingThresholdChange: (ms: number) => void;
   onFilterScoreRangeChange: (range: { min: number; max: number } | null) => void;
-  selectOnHover: boolean;
   onToggleSelectMode: () => void;
   onExecute: () => void;
   onDeleteSelected: () => void;
@@ -45,17 +45,11 @@ const GROUPING_STEPS = [500, 1000, 2000, 3000, 5000, 10000, 15000, 30000, 60000]
 
 const FILE_TYPE_CHIPS = ['jpg', 'png', 'tiff', 'webp'] as const;
 
-const CLASSIFICATION_CHIPS: Array<{ value: ClassificationFilter; label: string; color: string; activeColor: string }> = [
-  { value: 'unclassified', label: 'None', color: 'text-gray-400', activeColor: 'bg-gray-700 text-gray-300 border-gray-500' },
-  { value: 'keep', label: 'Keep', color: 'text-green-400', activeColor: 'bg-green-900 text-green-300 border-green-500' },
-  { value: 'review', label: 'Review', color: 'text-yellow-400', activeColor: 'bg-yellow-900 text-yellow-300 border-yellow-500' },
-  { value: 'delete', label: 'Delete', color: 'text-red-400', activeColor: 'bg-red-900 text-red-300 border-red-500' },
-];
-
-const SIZE_OPTIONS: Array<{ value: 'small' | 'medium' | 'large'; label: string }> = [
-  { value: 'small', label: 'S' },
-  { value: 'medium', label: 'M' },
-  { value: 'large', label: 'L' },
+const CLASSIFICATION_CHIPS: Array<{ value: ClassificationFilter; label: string; activeColor: string }> = [
+  { value: 'unclassified', label: 'None', activeColor: 'bg-gray-600 text-gray-300' },
+  { value: 'keep', label: 'Keep', activeColor: 'bg-green-900 text-green-300' },
+  { value: 'review', label: 'Review', activeColor: 'bg-yellow-900 text-yellow-300' },
+  { value: 'delete', label: 'Delete', activeColor: 'bg-red-900 text-red-300' },
 ];
 
 function formatThreshold(ms: number): string {
@@ -74,6 +68,41 @@ function findClosestStep(ms: number): number {
     }
   }
   return GROUPING_STEPS.indexOf(closest);
+}
+
+// Dropdown menu wrapper
+function DropdownMenu({ label, children, testId }: { label: string; children: React.ReactNode; testId?: string }): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative" data-testid={testId}>
+      <button
+        onClick={() => setOpen(!open)}
+        className={`px-2 py-1 text-xs rounded transition-colors ${
+          open ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+        }`}
+      >
+        {label} <span className="text-[10px]">{open ? '\u25B2' : '\u25BC'}</span>
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl z-50 min-w-[200px] p-2 flex flex-col gap-2">
+          {children}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function Toolbar({
@@ -108,7 +137,6 @@ export function Toolbar({
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sliderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sync external search query changes
   useEffect(() => {
     setLocalSearch(searchQuery);
   }, [searchQuery]);
@@ -124,7 +152,6 @@ export function Toolbar({
     [onSearchQueryChange],
   );
 
-  // Cleanup timers
   useEffect(() => {
     return () => {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
@@ -202,220 +229,215 @@ export function Toolbar({
   const showExifProgress = exifProgress.total > 0 && exifProgress.completed < exifProgress.total;
   const showScoringProgress = scoringProgress.total > 0 && scoringProgress.completed < scoringProgress.total;
 
+  // Active filter indicator
+  const activeFilters: string[] = [];
+  if (filterExtensions.size > 0) activeFilters.push('type');
+  if (filterClassification) activeFilters.push('class');
+  if (filterScoreRange) activeFilters.push('score');
+
   return (
     <div
-      className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex items-center gap-4 flex-wrap"
+      className="bg-gray-800 border-b border-gray-700 px-3 py-1.5 flex items-center gap-2"
       data-testid="toolbar"
     >
-      {/* Left: Open Folder + Sort */}
       <button
         onClick={onSelectFolder}
-        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-sm font-medium transition-colors"
+        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs font-medium transition-colors"
         data-testid="open-folder-btn"
       >
-        Open Folder
+        Open
       </button>
 
-      <div className="flex items-center gap-1" data-testid="sort-controls">
+      {/* Sort dropdown */}
+      <DropdownMenu label={`Sort: ${SORT_OPTIONS.find(o => o.value === sortField)?.label ?? ''}`} testId="sort-menu">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">Sort by</div>
         {SORT_OPTIONS.map((opt) => (
           <button
             key={opt.value}
             onClick={() => handleSortClick(opt.value)}
-            className={`px-2 py-1 text-xs rounded transition-colors ${
-              sortField === opt.value
-                ? 'bg-gray-600 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700'
+            className={`px-2 py-1 text-xs rounded text-left transition-colors ${
+              sortField === opt.value ? 'bg-gray-600 text-white' : 'text-gray-300 hover:bg-gray-700'
             }`}
             data-testid={`sort-${opt.value}`}
           >
             {opt.label}
             {sortField === opt.value && (
-              <span className="ml-1">{sortDirection === 'asc' ? '\u2191' : '\u2193'}</span>
+              <span className="ml-2 text-gray-400">{sortDirection === 'asc' ? '\u2191 Asc' : '\u2193 Desc'}</span>
             )}
           </button>
         ))}
-      </div>
+      </DropdownMenu>
 
-      {/* Center: Grouping slider */}
-      <div className="flex items-center gap-2" data-testid="grouping-slider">
-        <label className="text-xs text-gray-400">Group:</label>
+      {/* Filter dropdown */}
+      <DropdownMenu
+        label={`Filter${activeFilters.length > 0 ? ` (${activeFilters.length})` : ''}`}
+        testId="filter-menu"
+      >
+        {/* File type */}
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">File type</div>
+        <div className="flex gap-1">
+          {FILE_TYPE_CHIPS.map((ext) => (
+            <button
+              key={ext}
+              onClick={() => handleExtensionToggle(ext)}
+              className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                filterExtensions.size === 0 || filterExtensions.has(ext)
+                  ? 'bg-gray-600 text-white'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+              data-testid={`filter-ext-${ext}`}
+            >
+              {ext.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        {/* Classification */}
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mt-1">Classification</div>
+        <div className="flex gap-1">
+          {CLASSIFICATION_CHIPS.map((chip) => (
+            <button
+              key={String(chip.value)}
+              onClick={() => handleClassificationToggle(chip.value)}
+              className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                filterClassification === chip.value
+                  ? chip.activeColor
+                  : 'text-gray-400 hover:text-gray-300'
+              }`}
+              data-testid={`filter-cls-${chip.value}`}
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Score range */}
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mt-1">
+          Score: {filterScoreRange ? `${filterScoreRange.min}–${filterScoreRange.max}` : 'All'}
+          {filterScoreRange && (
+            <button
+              onClick={() => onFilterScoreRangeChange(null)}
+              className="ml-1 text-gray-500 hover:text-white"
+            >
+              &times;
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2 px-1">
+          <span className="text-[10px] text-gray-500 w-4">{filterScoreRange?.min ?? 0}</span>
+          <input
+            type="range" min={0} max={100} step={5}
+            value={filterScoreRange?.min ?? 0}
+            onChange={(e) => handleScoreMinChange(Number(e.target.value))}
+            className="flex-1 accent-blue-500"
+            data-testid="score-min-range"
+          />
+          <input
+            type="range" min={0} max={100} step={5}
+            value={filterScoreRange?.max ?? 100}
+            onChange={(e) => handleScoreMaxChange(Number(e.target.value))}
+            className="flex-1 accent-blue-500"
+            data-testid="score-max-range"
+          />
+          <span className="text-[10px] text-gray-500 w-6">{filterScoreRange?.max ?? 100}</span>
+        </div>
+      </DropdownMenu>
+
+      {/* View dropdown */}
+      <DropdownMenu label="View" testId="view-menu">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">Thumbnail size</div>
+        <div className="flex gap-1">
+          {(['small', 'medium', 'large'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => onThumbnailSizeChange(s)}
+              className={`px-3 py-1 text-xs rounded transition-colors ${
+                thumbnailSize === s ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-300'
+              }`}
+              data-testid={`size-${s}`}
+            >
+              {s === 'small' ? 'S' : s === 'medium' ? 'M' : 'L'}
+            </button>
+          ))}
+        </div>
+
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mt-1">
+          Group threshold: {formatThreshold(groupingThresholdMs)}
+        </div>
         <input
-          type="range"
-          min={0}
-          max={GROUPING_STEPS.length - 1}
-          step={1}
+          type="range" min={0} max={GROUPING_STEPS.length - 1} step={1}
           value={findClosestStep(groupingThresholdMs)}
           onChange={(e) => handleSliderChange(Number(e.target.value))}
-          className="w-24 accent-blue-500"
+          className="w-full accent-blue-500"
           data-testid="grouping-range"
         />
-        <span className="text-xs text-gray-400 w-10">
-          {formatThreshold(groupingThresholdMs)}
-        </span>
-      </div>
 
-      {/* Right: Filters, Search, Size */}
-      <div className="flex items-center gap-1" data-testid="extension-filters">
-        {FILE_TYPE_CHIPS.map((ext) => (
-          <button
-            key={ext}
-            onClick={() => handleExtensionToggle(ext)}
-            className={`px-2 py-0.5 text-xs rounded border transition-colors ${
-              filterExtensions.size === 0 || filterExtensions.has(ext)
-                ? 'bg-gray-600 text-white border-gray-500'
-                : 'text-gray-500 border-gray-700 hover:border-gray-500'
-            }`}
-            data-testid={`filter-ext-${ext}`}
-          >
-            {ext.toUpperCase()}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex items-center gap-1" data-testid="classification-filters">
-        {CLASSIFICATION_CHIPS.map((chip) => (
-          <button
-            key={String(chip.value)}
-            onClick={() => handleClassificationToggle(chip.value)}
-            className={`px-2 py-0.5 text-xs rounded border transition-colors ${
-              filterClassification === chip.value
-                ? chip.activeColor
-                : `${chip.color} border-gray-700 hover:border-gray-500`
-            }`}
-            data-testid={`filter-cls-${chip.value}`}
-          >
-            {chip.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="flex items-center gap-1.5" data-testid="score-range-filter">
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mt-1">Selection mode</div>
         <button
-          className="text-xs text-gray-400 hover:text-white transition-colors"
-          onClick={() => onFilterScoreRangeChange(null)}
-          title="Clear score filter"
+          onClick={onToggleSelectMode}
+          className={`px-2 py-1 text-xs rounded transition-colors ${
+            selectOnHover ? 'bg-cyan-900 text-cyan-300' : 'bg-gray-700 text-gray-300'
+          }`}
+          data-testid="select-mode-toggle"
         >
-          Score: {filterScoreRange ? `${filterScoreRange.min}–${filterScoreRange.max}` : 'All'}
-          {filterScoreRange && <span className="ml-1 text-gray-500">&times;</span>}
+          {selectOnHover ? 'Hover to select' : 'Click to select'}
         </button>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          step={5}
-          value={filterScoreRange?.min ?? 0}
-          onChange={(e) => handleScoreMinChange(Number(e.target.value))}
-          className="w-16 accent-blue-500"
-          data-testid="score-min-range"
-          title="Min score"
-        />
-        <input
-          type="range"
-          min={0}
-          max={100}
-          step={5}
-          value={filterScoreRange?.max ?? 100}
-          onChange={(e) => handleScoreMaxChange(Number(e.target.value))}
-          className="w-16 accent-blue-500"
-          data-testid="score-max-range"
-          title="Max score"
-        />
-      </div>
+      </DropdownMenu>
 
+      {/* Search */}
       <div className="relative" data-testid="search-container">
         <svg
-          className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
+          className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500"
+          fill="none" viewBox="0 0 24 24" stroke="currentColor"
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-          />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
         <input
           type="text"
           value={localSearch}
           onChange={(e) => handleSearchChange(e.target.value)}
-          placeholder="Search by filename..."
-          className="pl-7 pr-2 py-1 text-xs bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-500 w-40 focus:outline-none focus:border-blue-500"
+          placeholder="Search..."
+          className="pl-6 pr-2 py-1 text-xs bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-500 w-28 focus:outline-none focus:border-blue-500 focus:w-40 transition-all"
           data-testid="search-input"
         />
       </div>
 
-      <div className="flex items-center gap-0.5" data-testid="size-toggle">
-        {SIZE_OPTIONS.map((opt) => (
-          <button
-            key={opt.value}
-            onClick={() => onThumbnailSizeChange(opt.value)}
-            className={`px-2 py-1 text-xs rounded transition-colors ${
-              thumbnailSize === opt.value
-                ? 'bg-gray-600 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700'
-            }`}
-            data-testid={`size-${opt.value}`}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Select mode toggle */}
-      <button
-        onClick={onToggleSelectMode}
-        className={`px-2 py-1 text-xs rounded transition-colors ${
-          selectOnHover
-            ? 'bg-cyan-900 text-cyan-300 border border-cyan-600'
-            : 'bg-gray-700 text-gray-300 border border-gray-600'
-        }`}
-        title={selectOnHover ? 'Select on hover (click to switch to click mode)' : 'Select on click (click to switch to hover mode)'}
-        data-testid="select-mode-toggle"
-      >
-        {selectOnHover ? 'Hover' : 'Click'}
-      </button>
-
-      {/* Spacer to push execute button right */}
+      {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Selection count and trash button */}
+      {/* Progress indicators — only while active */}
+      {showExifProgress && (
+        <span className="text-[10px] text-gray-500" data-testid="exif-progress">
+          EXIF {exifProgress.completed}/{exifProgress.total}
+        </span>
+      )}
+      {showScoringProgress && (
+        <span className="text-[10px] text-gray-500" data-testid="scoring-progress">
+          Scoring {scoringProgress.completed}/{scoringProgress.total}
+        </span>
+      )}
+
+      {/* Selection */}
       {selectedCount > 0 && (
-        <span className="text-sm text-blue-400" data-testid="selection-count">
-          {selectedCount} of {totalCount} selected
+        <span className="text-xs text-blue-400" data-testid="selection-count">
+          {selectedCount}/{totalCount}
         </span>
       )}
       {selectedCount > 0 && (
         <button
           onClick={onDeleteSelected}
-          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded text-sm font-medium transition-colors"
+          className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-medium transition-colors"
           data-testid="delete-selected-btn"
         >
-          Trash Selected ({selectedCount})
+          Trash ({selectedCount})
         </button>
       )}
 
-      {/* EXIF progress */}
-      {showExifProgress && (
-        <span className="text-xs text-gray-500" data-testid="exif-progress">
-          Extracting metadata: {exifProgress.completed}/{exifProgress.total}
-        </span>
-      )}
-
-      {/* Scoring progress — always show when total > 0 */}
-      {scoringProgress.total > 0 && (
-        <span className="text-xs text-gray-500" data-testid="scoring-progress">
-          Scoring: {scoringProgress.completed}/{scoringProgress.total}
-          {scoringProgress.completed >= scoringProgress.total && ' ✓'}
-        </span>
-      )}
-
-      {/* Execute button */}
+      {/* Execute */}
       <button
         onClick={onExecute}
         disabled={deleteCount === 0}
-        className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+        className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
           deleteCount > 0
             ? 'bg-red-600 hover:bg-red-700'
             : 'bg-gray-600 cursor-not-allowed text-gray-400'
