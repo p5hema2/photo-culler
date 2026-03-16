@@ -2,6 +2,10 @@
   "name": "@photo-culler/desktop",
   "version": "1.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/p5hema2/photo-culler.git"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

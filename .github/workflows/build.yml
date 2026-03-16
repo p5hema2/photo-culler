@@ -30,8 +30,6 @@ jobs:
       - name: Package for macOS
         working-directory: apps/desktop
         run: pnpm package:mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -63,8 +61,6 @@ jobs:
       - name: Package for Windows
         working-directory: apps/desktop
         run: pnpm package:win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
