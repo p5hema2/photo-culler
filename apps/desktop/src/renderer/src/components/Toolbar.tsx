@@ -27,6 +27,8 @@ interface ToolbarProps {
   onThumbnailSizeChange: (size: 'small' | 'medium' | 'large') => void;
   onGroupingThresholdChange: (ms: number) => void;
   onFilterScoreRangeChange: (range: { min: number; max: number } | null) => void;
+  selectOnHover: boolean;
+  onToggleSelectMode: () => void;
   onExecute: () => void;
   onDeleteSelected: () => void;
 }
@@ -97,6 +99,8 @@ export function Toolbar({
   onThumbnailSizeChange,
   onGroupingThresholdChange,
   onFilterScoreRangeChange,
+  selectOnHover,
+  onToggleSelectMode,
   onExecute,
   onDeleteSelected,
 }: ToolbarProps): React.JSX.Element {
@@ -358,6 +362,20 @@ export function Toolbar({
           </button>
         ))}
       </div>
+
+      {/* Select mode toggle */}
+      <button
+        onClick={onToggleSelectMode}
+        className={`px-2 py-1 text-xs rounded transition-colors ${
+          selectOnHover
+            ? 'bg-cyan-900 text-cyan-300 border border-cyan-600'
+            : 'bg-gray-700 text-gray-300 border border-gray-600'
+        }`}
+        title={selectOnHover ? 'Select on hover (click to switch to click mode)' : 'Select on click (click to switch to hover mode)'}
+        data-testid="select-mode-toggle"
+      >
+        {selectOnHover ? 'Hover' : 'Click'}
+      </button>
 
       {/* Spacer to push execute button right */}
       <div className="flex-1" />

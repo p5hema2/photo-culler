@@ -10,8 +10,10 @@ interface GroupRowProps {
   qualityScores: Record<string, number>;
   focusedImageId: string | null;
   selectedImages: Set<string>;
+  selectOnHover: boolean;
   onImageClick: (filename: string) => void;
-  onImageHover: (path: string) => void;
+  onImageFocus: (path: string) => void;
+  onCycleClassification: (filename: string) => void;
   onToggleSelect: (path: string) => void;
   onRangeSelect: (path: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
@@ -57,8 +59,10 @@ export function GroupRow({
   qualityScores,
   focusedImageId,
   selectedImages,
+  selectOnHover,
   onImageClick,
-  onImageHover,
+  onImageFocus,
+  onCycleClassification,
   onToggleSelect,
   onRangeSelect,
   getThumbnail,
@@ -99,8 +103,10 @@ export function GroupRow({
             qualityScore={qualityScores[image.name]}
             isFocused={focusedImageId === image.path}
             isSelected={selectedImages.has(image.path)}
+            selectOnHover={selectOnHover}
             onClick={() => onImageClick(image.name)}
-            onHover={() => onImageHover(image.path)}
+            onFocus={() => onImageFocus(image.path)}
+            onCycleClassification={() => onCycleClassification(image.name)}
             onToggleSelect={onToggleSelect}
             onRangeSelect={onRangeSelect}
             getThumbnail={getThumbnail}

@@ -20,8 +20,10 @@ interface PhotoGridProps {
   thumbnailSize: 'small' | 'medium' | 'large';
   focusedImageId: string | null;
   selectedImages: Set<string>;
+  selectOnHover: boolean;
   onImageClick: (filename: string) => void;
-  onImageHover: (path: string) => void;
+  onImageFocus: (path: string) => void;
+  onCycleClassification: (filename: string) => void;
   onToggleSelect: (path: string) => void;
   onRangeSelect: (path: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
@@ -37,8 +39,10 @@ export function PhotoGrid({
   thumbnailSize,
   focusedImageId,
   selectedImages,
+  selectOnHover,
   onImageClick,
-  onImageHover,
+  onImageFocus,
+  onCycleClassification,
   onToggleSelect,
   onRangeSelect,
   getThumbnail,
@@ -141,8 +145,10 @@ export function PhotoGrid({
               qualityScores={qualityScores}
               focusedImageId={focusedImageId}
               selectedImages={selectedImages}
+              selectOnHover={selectOnHover}
               onImageClick={onImageClick}
-              onImageHover={onImageHover}
+              onImageFocus={onImageFocus}
+              onCycleClassification={onCycleClassification}
               onToggleSelect={onToggleSelect}
               onRangeSelect={onRangeSelect}
               getThumbnail={getThumbnail}

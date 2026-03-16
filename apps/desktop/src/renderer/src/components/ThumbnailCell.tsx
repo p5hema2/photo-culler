@@ -11,8 +11,10 @@ interface ThumbnailCellProps {
   qualityScore?: number;
   isFocused: boolean;
   isSelected: boolean;
+  selectOnHover: boolean;
   onClick: () => void;
-  onHover: () => void;
+  onFocus: () => void;
+  onCycleClassification: () => void;
   onToggleSelect: (path: string) => void;
   onRangeSelect: (path: string) => void;
   getThumbnail: (id: string) => ThumbnailStatus;
@@ -35,8 +37,10 @@ export function ThumbnailCell({
   qualityScore,
   isFocused,
   isSelected,
+  selectOnHover,
   onClick,
-  onHover,
+  onFocus,
+  onCycleClassification,
   onToggleSelect,
   onRangeSelect,
   getThumbnail,
@@ -102,8 +106,20 @@ export function ThumbnailCell({
     } else if (e.shiftKey) {
       e.preventDefault();
       onRangeSelect(image.path);
-    } else {
-      onClick();
+    } else if (!selectOnHover) {
+      // In click-select mode, left-click focuses the image
+      onFocus();
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent): void => {
+    e.preventDefault();
+    onCycleClassification();
+  };
+
+  const handleMouseEnter = (): void => {
+    if (selectOnHover) {
+      onFocus();
     }
   };
 
@@ -115,7 +131,8 @@ export function ThumbnailCell({
       className="relative cursor-pointer flex-shrink-0"
       style={{ width: cellSize, height: cellSize }}
       onClick={handleClick}
-      onMouseEnter={onHover}
+      onContextMenu={handleContextMenu}
+      onMouseEnter={handleMouseEnter}
       data-image-path={image.path}
       data-testid="thumbnail-cell"
       role="gridcell"

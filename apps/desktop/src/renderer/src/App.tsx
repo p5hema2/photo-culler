@@ -63,6 +63,7 @@ function App(): React.JSX.Element {
   const [infoPanelOpen, setInfoPanelOpen] = useState(true);
   const [showFocusPeaking, setShowFocusPeaking] = useState(false);
   const [showClipping, setShowClipping] = useState(false);
+  const [selectOnHover, setSelectOnHover] = useState(true);
 
   const sortedFlatImages = useMemo(() => groups.flatMap((g) => g.images), [groups]);
 
@@ -288,8 +289,10 @@ function App(): React.JSX.Element {
         thumbnailSize={state.thumbnailSize}
         focusedImageId={state.focusedImageId}
         selectedImages={state.selectedImages}
+        selectOnHover={selectOnHover}
         onImageClick={handleImageClick}
-        onImageHover={store.setFocusedImage}
+        onImageFocus={store.setFocusedImage}
+        onCycleClassification={store.cycleClassification}
         onToggleSelect={handleToggleSelect}
         onRangeSelect={handleRangeSelect}
         getThumbnail={thumbnailWorker.getThumbnail}
@@ -326,6 +329,8 @@ function App(): React.JSX.Element {
           filterScoreRange={state.filterScoreRange}
           scoringProgress={scoringProgress}
           onFilterScoreRangeChange={store.setFilterScoreRange}
+          selectOnHover={selectOnHover}
+          onToggleSelectMode={() => setSelectOnHover((prev) => !prev)}
           onExecute={handleOpenExecute}
           onDeleteSelected={handleTrashSelected}
         />
