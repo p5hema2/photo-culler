@@ -149,10 +149,14 @@ export function useZoomPan({
       const zoomFactor = 1 - e.deltaY * 0.001;
       const newZoom = Math.max(current.fitZoom * 0.5, Math.min(10, current.zoom * zoomFactor));
 
-      // Zoom toward cursor: keep the point under the cursor fixed
-      const factor = newZoom / current.zoom;
-      const newPanX = cursorX / newZoom - factor * (cursorX / current.zoom - current.panX);
-      const newPanY = cursorY / newZoom - factor * (cursorY / current.zoom - current.panY);
+      // Zoom toward cursor: keep the image point under the cursor fixed
+      // With transform: scale(zoom) translate(panX, panY), screen pos = zoom * (imagePos + pan)
+      // imagePos = screenPos / zoom - pan
+      // After zoom: newPan = screenPos / newZoom - imagePos
+      const imageX = cursorX / current.zoom - current.panX;
+      const imageY = cursorY / current.zoom - current.panY;
+      const newPanX = cursorX / newZoom - imageX;
+      const newPanY = cursorY / newZoom - imageY;
 
       setState((prev) => ({
         ...prev,
