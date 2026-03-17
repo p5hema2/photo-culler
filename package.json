@@ -16,7 +16,11 @@
     "test": "turbo run test"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["electron", "esbuild", "electron-winstaller", "sharp"]
+    "onlyBuiltDependencies": ["electron", "esbuild", "electron-winstaller", "sharp"],
+    "supportedArchitectures": {
+      "os": ["win32", "darwin", "linux"],
+      "cpu": ["x64", "arm64"]
+    }
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.57.0",
