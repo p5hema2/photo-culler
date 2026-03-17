@@ -45,5 +45,6 @@ win:
 
 nsis:
   oneClick: false
+  perMachine: false
   allowToChangeInstallationDirectory: true
   artifactName: '${productName}-${version}-win-${arch}-setup.${ext}'
