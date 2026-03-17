@@ -9,10 +9,8 @@ files:
   - out/**
   - package.json
   - '!node_modules'
-  - from: ../../node_modules/sharp
-    to: node_modules/sharp
-  - from: ../../node_modules/@img
-    to: node_modules/@img
+  - from: sharp-vendor/node_modules
+    to: node_modules
 
 npmRebuild: false
 asar: true

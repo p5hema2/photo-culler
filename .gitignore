@@ -3,3 +3,4 @@ out/
 dist/
 *.tsbuildinfo
 .turbo/
+sharp-vendor/

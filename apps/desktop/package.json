@@ -1,6 +1,6 @@
 {
   "name": "@photo-culler/desktop",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "repository": {
     "type": "git",
@@ -14,9 +14,9 @@
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "lint": "eslint src/",
-    "package": "electron-builder",
-    "package:mac": "electron-builder --mac",
-    "package:win": "electron-builder --win"
+    "package": "node scripts/copy-sharp-deps.mjs && electron-builder",
+    "package:mac": "node scripts/copy-sharp-deps.mjs && electron-builder --mac",
+    "package:win": "node scripts/copy-sharp-deps.mjs && electron-builder --win"
   },
   "dependencies": {
     "@photo-culler/image-utils": "workspace:*",
