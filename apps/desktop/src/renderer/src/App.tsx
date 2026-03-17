@@ -13,7 +13,10 @@ import { PreviewPanel } from './components/PreviewPanel';
 
 function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX.Element {
   return (
-    <div className="flex flex-col items-center justify-center h-full text-gray-400" data-testid="welcome-state">
+    <div
+      className="flex flex-col items-center justify-center h-full text-gray-400"
+      data-testid="welcome-state"
+    >
       <svg
         className="w-20 h-20 mb-6 text-gray-600"
         fill="none"
@@ -39,9 +42,16 @@ function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX
   );
 }
 
-function LoadingState({ progress }: { progress?: { completed: number; total: number } }): React.JSX.Element {
+function LoadingState({
+  progress,
+}: {
+  progress?: { completed: number; total: number };
+}): React.JSX.Element {
   return (
-    <div className="flex flex-col items-center justify-center h-full text-gray-400" data-testid="loading-state">
+    <div
+      className="flex flex-col items-center justify-center h-full text-gray-400"
+      data-testid="loading-state"
+    >
       <div className="w-8 h-8 border-2 border-gray-600 border-t-blue-500 rounded-full animate-spin mb-4" />
       <p className="text-lg">Scanning folder...</p>
       {progress && progress.total > 0 && (
@@ -219,7 +229,9 @@ function App(): React.JSX.Element {
         .filter((img) => currentState.qualityScores[img.name] == null)
         .map((img) => ({ path: img.path, name: img.name }));
 
-      console.log(`[scoring] ${unscoredFiles.length}/${currentState.images.length} images need scoring`);
+      console.log(
+        `[scoring] ${unscoredFiles.length}/${currentState.images.length} images need scoring`,
+      );
 
       if (unscoredFiles.length === 0) return;
 
@@ -331,7 +343,11 @@ function App(): React.JSX.Element {
 
   return (
     <DropZone onFolderDrop={store.openFolder}>
-      <div className="flex flex-col h-screen bg-gray-900 text-white" ref={gridContainerRef} tabIndex={-1}>
+      <div
+        className="flex flex-col h-screen bg-gray-900 text-white"
+        ref={gridContainerRef}
+        tabIndex={-1}
+      >
         <Toolbar
           sortField={state.sortField}
           sortDirection={state.sortDirection}
@@ -371,19 +387,14 @@ function App(): React.JSX.Element {
             data-testid="error-banner"
           >
             <span>{state.error}</span>
-            <button
-              onClick={store.clearError}
-              className="text-red-400 hover:text-red-200 ml-4"
-            >
+            <button onClick={store.clearError} className="text-red-400 hover:text-red-200 ml-4">
               Dismiss
             </button>
           </div>
         )}
 
         <div className="flex-1 overflow-hidden relative flex">
-          <div className="flex-1 overflow-hidden">
-            {renderContent()}
-          </div>
+          <div className="flex-1 overflow-hidden">{renderContent()}</div>
           <InfoPanel
             image={focusedImage}
             classification={focusedClassification}

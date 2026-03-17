@@ -21,7 +21,10 @@ function computeHistogram(imageElement: HTMLImageElement): HistogramData | null 
 
   // Downscale for performance -- max 400px on longest side
   const maxDim = 400;
-  const scale = Math.min(1, maxDim / Math.max(imageElement.naturalWidth, imageElement.naturalHeight));
+  const scale = Math.min(
+    1,
+    maxDim / Math.max(imageElement.naturalWidth, imageElement.naturalHeight),
+  );
   const w = Math.round(imageElement.naturalWidth * scale);
   const h = Math.round(imageElement.naturalHeight * scale);
 
@@ -50,10 +53,7 @@ function computeHistogram(imageElement: HTMLImageElement): HistogramData | null 
   return { r, g, b };
 }
 
-function drawHistogram(
-  canvas: HTMLCanvasElement,
-  data: HistogramData,
-): void {
+function drawHistogram(canvas: HTMLCanvasElement, data: HistogramData): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 

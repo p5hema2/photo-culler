@@ -169,22 +169,19 @@ export function useZoomPan({
   );
 
   // Pan: mousedown handler
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      const current = stateRef.current;
-      // Only allow pan when zoomed beyond fit
-      if (current.zoom <= current.fitZoom) return;
-      e.preventDefault();
-      dragStartRef.current = {
-        x: e.clientX,
-        y: e.clientY,
-        panX: current.panX,
-        panY: current.panY,
-      };
-      setState((prev) => ({ ...prev, isDragging: true }));
-    },
-    [],
-  );
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    const current = stateRef.current;
+    // Only allow pan when zoomed beyond fit
+    if (current.zoom <= current.fitZoom) return;
+    e.preventDefault();
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: current.panX,
+      panY: current.panY,
+    };
+    setState((prev) => ({ ...prev, isDragging: true }));
+  }, []);
 
   // Document-level mousemove and mouseup for pan
   useEffect(() => {

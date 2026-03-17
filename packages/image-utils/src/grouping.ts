@@ -24,10 +24,7 @@ function getTimestamp(image: ImageFileInfo): number {
  * Images MUST be pre-sorted by timestamp before calling this function.
  * Consecutive images within `thresholdMs` of each other are placed in the same group.
  */
-export function groupByTimestamp(
-  images: ImageFileInfo[],
-  thresholdMs: number,
-): PhotoGroup[] {
+export function groupByTimestamp(images: ImageFileInfo[], thresholdMs: number): PhotoGroup[] {
   if (images.length === 0) return [];
 
   const groups: PhotoGroup[] = [];

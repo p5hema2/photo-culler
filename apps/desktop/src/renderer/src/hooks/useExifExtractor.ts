@@ -14,11 +14,22 @@ interface ExifExtractorAPI {
 }
 
 const NULL_METADATA: ExifMetadata = {
-  dateTaken: null, width: null, height: null,
-  cameraMake: null, cameraModel: null, lensModel: null,
-  focalLength: null, aperture: null, shutterSpeed: null, iso: null,
-  exposureCompensation: null, flash: null, whiteBalance: null,
-  meteringMode: null, exposureProgram: null, colorSpace: null,
+  dateTaken: null,
+  width: null,
+  height: null,
+  cameraMake: null,
+  cameraModel: null,
+  lensModel: null,
+  focalLength: null,
+  aperture: null,
+  shutterSpeed: null,
+  iso: null,
+  exposureCompensation: null,
+  flash: null,
+  whiteBalance: null,
+  meteringMode: null,
+  exposureProgram: null,
+  colorSpace: null,
 };
 
 export function useExifExtractor(): ExifExtractorAPI {
@@ -27,10 +38,7 @@ export function useExifExtractor(): ExifExtractorAPI {
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
 
   const extractAll = useCallback(
-    (
-      files: Array<{ path: string }>,
-      onResult: (path: string, metadata: ExifMetadata) => void,
-    ) => {
+    (files: Array<{ path: string }>, onResult: (path: string, metadata: ExifMetadata) => void) => {
       if (workerRef.current) {
         workerRef.current.terminate();
       }

@@ -53,9 +53,9 @@ const SUBSCORE_LABELS: Record<keyof QualitySubscores, string> = {
 };
 
 const SUBSCORE_WEIGHTS: Record<keyof QualitySubscores, number> = {
-  sharpness: 0.40,
+  sharpness: 0.4,
   exposure: 0.25,
-  contrast: 0.20,
+  contrast: 0.2,
   noise: 0.15,
 };
 
@@ -180,9 +180,7 @@ export function InfoPanel({
 
   // Compute quick stats
   const megapixels =
-    image?.width && image?.height
-      ? ((image.width * image.height) / 1_000_000).toFixed(1)
-      : null;
+    image?.width && image?.height ? ((image.width * image.height) / 1_000_000).toFixed(1) : null;
   const aspectRatio =
     image?.width && image?.height
       ? (() => {
@@ -292,218 +290,250 @@ export function InfoPanel({
 
               {/* Info section — fixed height, no shrink */}
               <div className="flex-shrink-0 overflow-y-auto">
-              {/* RGB Histogram — fixed height to prevent layout shift */}
-              <div className="px-5 pt-3" style={{ height: '92px' }}>
-                <Histogram imageElement={previewImgElement} />
-              </div>
-
-              {/* Overlay toggle buttons */}
-              {previewUrl && onToggleFocusPeaking && onToggleClipping && (
-                <div className="px-5 pt-3 flex gap-2">
-                  <button
-                    onClick={onToggleFocusPeaking}
-                    className={`px-3 py-1 text-xs rounded-full border transition-colors ${
-                      showFocusPeaking
-                        ? 'bg-cyan-900 text-cyan-300 border-cyan-500'
-                        : 'bg-gray-800 text-gray-400 border-gray-600 hover:border-gray-500'
-                    }`}
-                    data-testid="toggle-focus-peaking"
-                  >
-                    Focus Peaking
-                  </button>
-                  <button
-                    onClick={onToggleClipping}
-                    className={`px-3 py-1 text-xs rounded-full border transition-colors ${
-                      showClipping
-                        ? 'bg-red-900 text-red-300 border-red-500'
-                        : 'bg-gray-800 text-gray-400 border-gray-600 hover:border-gray-500'
-                    }`}
-                    data-testid="toggle-clipping"
-                  >
-                    Clipping
-                  </button>
-                </div>
-              )}
-
-              {/* Info content */}
-              <div className="p-5 flex flex-col gap-4">
-                {/* Header: filename + badge */}
-                <div className="flex items-center gap-3">
-                  <h2
-                    className="text-base font-semibold text-white truncate flex-1"
-                    title={image.name}
-                    data-testid="info-panel-filename"
-                  >
-                    {image.name}
-                  </h2>
-                  <span
-                    className={`inline-block px-2 py-0.5 text-xs rounded border flex-shrink-0 ${badge.className}`}
-                    data-testid="info-panel-classification"
-                  >
-                    {badge.label}
-                  </span>
+                {/* RGB Histogram — fixed height to prevent layout shift */}
+                <div className="px-5 pt-3" style={{ height: '92px' }}>
+                  <Histogram imageElement={previewImgElement} />
                 </div>
 
-                {/* Quality score with subscores */}
-                {qualityScore != null && (
-                  <div className="flex flex-col gap-2" data-testid="info-panel-score">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-sm font-mono font-semibold ${scoreTextColor(qualityScore)}`}
-                        title="Weighted composite: 40% sharpness + 25% exposure + 20% contrast + 15% noise">
-                        Score: {qualityScore}%
-                      </span>
-                    </div>
-                    {qualitySubscores && (
-                      <div className="flex flex-col gap-1.5">
-                        {(Object.keys(SUBSCORE_LABELS) as Array<keyof QualitySubscores>).map((key) => (
-                          <div key={key} className="flex items-center gap-2" title={SUBSCORE_TOOLTIPS[key]}>
-                            <span className="text-[10px] text-gray-500 w-16 text-right flex-shrink-0">
-                              {SUBSCORE_LABELS[key]}
-                            </span>
-                            <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                {/* Overlay toggle buttons */}
+                {previewUrl && onToggleFocusPeaking && onToggleClipping && (
+                  <div className="px-5 pt-3 flex gap-2">
+                    <button
+                      onClick={onToggleFocusPeaking}
+                      className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                        showFocusPeaking
+                          ? 'bg-cyan-900 text-cyan-300 border-cyan-500'
+                          : 'bg-gray-800 text-gray-400 border-gray-600 hover:border-gray-500'
+                      }`}
+                      data-testid="toggle-focus-peaking"
+                    >
+                      Focus Peaking
+                    </button>
+                    <button
+                      onClick={onToggleClipping}
+                      className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                        showClipping
+                          ? 'bg-red-900 text-red-300 border-red-500'
+                          : 'bg-gray-800 text-gray-400 border-gray-600 hover:border-gray-500'
+                      }`}
+                      data-testid="toggle-clipping"
+                    >
+                      Clipping
+                    </button>
+                  </div>
+                )}
+
+                {/* Info content */}
+                <div className="p-5 flex flex-col gap-4">
+                  {/* Header: filename + badge */}
+                  <div className="flex items-center gap-3">
+                    <h2
+                      className="text-base font-semibold text-white truncate flex-1"
+                      title={image.name}
+                      data-testid="info-panel-filename"
+                    >
+                      {image.name}
+                    </h2>
+                    <span
+                      className={`inline-block px-2 py-0.5 text-xs rounded border flex-shrink-0 ${badge.className}`}
+                      data-testid="info-panel-classification"
+                    >
+                      {badge.label}
+                    </span>
+                  </div>
+
+                  {/* Quality score with subscores */}
+                  {qualityScore != null && (
+                    <div className="flex flex-col gap-2" data-testid="info-panel-score">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-sm font-mono font-semibold ${scoreTextColor(qualityScore)}`}
+                          title="Weighted composite: 40% sharpness + 25% exposure + 20% contrast + 15% noise"
+                        >
+                          Score: {qualityScore}%
+                        </span>
+                      </div>
+                      {qualitySubscores && (
+                        <div className="flex flex-col gap-1.5">
+                          {(Object.keys(SUBSCORE_LABELS) as Array<keyof QualitySubscores>).map(
+                            (key) => (
                               <div
-                                className={`h-full rounded-full ${scoreColor(qualitySubscores[key])}`}
-                                style={{ width: `${qualitySubscores[key]}%` }}
-                              />
+                                key={key}
+                                className="flex items-center gap-2"
+                                title={SUBSCORE_TOOLTIPS[key]}
+                              >
+                                <span className="text-[10px] text-gray-500 w-16 text-right flex-shrink-0">
+                                  {SUBSCORE_LABELS[key]}
+                                </span>
+                                <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full ${scoreColor(qualitySubscores[key])}`}
+                                    style={{ width: `${qualitySubscores[key]}%` }}
+                                  />
+                                </div>
+                                <span
+                                  className={`text-[10px] font-mono w-7 text-right flex-shrink-0 ${scoreTextColor(qualitySubscores[key])}`}
+                                >
+                                  {qualitySubscores[key]}
+                                </span>
+                                <span className="text-[9px] text-gray-600 w-6 text-right flex-shrink-0">
+                                  ×{SUBSCORE_WEIGHTS[key].toFixed(2).slice(1)}
+                                </span>
+                              </div>
+                            ),
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Exposure summary bar — full width */}
+                  {(image.aperture || image.shutterSpeed || image.iso || image.focalLength) && (
+                    <div className="flex gap-4 text-sm text-white font-mono py-1.5 px-3 bg-gray-800 rounded">
+                      {image.aperture && <span>f/{image.aperture}</span>}
+                      {image.shutterSpeed && <span>{image.shutterSpeed}</span>}
+                      {image.iso && <span>ISO {image.iso}</span>}
+                      {image.focalLength && <span>{image.focalLength}mm</span>}
+                      {image.exposureCompensation != null && image.exposureCompensation !== 0 && (
+                        <span>
+                          {image.exposureCompensation > 0 ? '+' : ''}
+                          {image.exposureCompensation.toFixed(1)} EV
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Two-column layout */}
+                  <div className="grid grid-cols-2 gap-5 text-xs text-gray-400">
+                    {/* LEFT COLUMN: Camera & Exposure */}
+                    <div className="flex flex-col gap-3">
+                      {/* Camera & Lens */}
+                      {(image.cameraMake || image.cameraModel || image.lensModel) && (
+                        <div className="flex flex-col gap-1.5">
+                          <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
+                            Camera
+                          </div>
+                          {(image.cameraMake || image.cameraModel) && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Body</span>
+                              <span className="text-right">
+                                {[image.cameraMake, image.cameraModel].filter(Boolean).join(' ')}
+                              </span>
                             </div>
-                            <span className={`text-[10px] font-mono w-7 text-right flex-shrink-0 ${scoreTextColor(qualitySubscores[key])}`}>
-                              {qualitySubscores[key]}
-                            </span>
-                            <span className="text-[9px] text-gray-600 w-6 text-right flex-shrink-0">
-                              ×{SUBSCORE_WEIGHTS[key].toFixed(2).slice(1)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Exposure summary bar — full width */}
-                {(image.aperture || image.shutterSpeed || image.iso || image.focalLength) && (
-                  <div className="flex gap-4 text-sm text-white font-mono py-1.5 px-3 bg-gray-800 rounded">
-                    {image.aperture && <span>f/{image.aperture}</span>}
-                    {image.shutterSpeed && <span>{image.shutterSpeed}</span>}
-                    {image.iso && <span>ISO {image.iso}</span>}
-                    {image.focalLength && <span>{image.focalLength}mm</span>}
-                    {image.exposureCompensation != null && image.exposureCompensation !== 0 && (
-                      <span>{image.exposureCompensation > 0 ? '+' : ''}{image.exposureCompensation.toFixed(1)} EV</span>
-                    )}
-                  </div>
-                )}
-
-                {/* Two-column layout */}
-                <div className="grid grid-cols-2 gap-5 text-xs text-gray-400">
-
-                  {/* LEFT COLUMN: Camera & Exposure */}
-                  <div className="flex flex-col gap-3">
-                    {/* Camera & Lens */}
-                    {(image.cameraMake || image.cameraModel || image.lensModel) && (
-                      <div className="flex flex-col gap-1.5">
-                        <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">Camera</div>
-                        {(image.cameraMake || image.cameraModel) && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Body</span>
-                            <span className="text-right">{[image.cameraMake, image.cameraModel].filter(Boolean).join(' ')}</span>
-                          </div>
-                        )}
-                        {image.lensModel && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Lens</span>
-                            <span className="text-right max-w-[70%] truncate" title={image.lensModel}>{image.lensModel}</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Exposure Details */}
-                    {(image.exposureProgram || image.meteringMode || image.flash || image.whiteBalance) && (
-                      <div className="flex flex-col gap-1.5">
-                        <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">Settings</div>
-                        {image.exposureProgram && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Program</span>
-                            <span>{image.exposureProgram}</span>
-                          </div>
-                        )}
-                        {image.meteringMode && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Metering</span>
-                            <span>{image.meteringMode}</span>
-                          </div>
-                        )}
-                        {image.flash && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Flash</span>
-                            <span>{image.flash}</span>
-                          </div>
-                        )}
-                        {image.whiteBalance && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">WB</span>
-                            <span>{image.whiteBalance}</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* RIGHT COLUMN: File Info */}
-                  <div className="flex flex-col gap-3">
-                    <div className="flex flex-col gap-1.5">
-                      <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">File</div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Size</span>
-                        <span>{formatFileSize(image.size)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Format</span>
-                        <span className="uppercase">{image.extension}</span>
-                      </div>
-                      {image.width && image.height && (
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Dimensions</span>
-                          <span>{image.width} x {image.height}</span>
+                          )}
+                          {image.lensModel && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Lens</span>
+                              <span
+                                className="text-right max-w-[70%] truncate"
+                                title={image.lensModel}
+                              >
+                                {image.lensModel}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       )}
-                      {megapixels && (
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Megapixels</span>
-                          <span>{megapixels} MP</span>
-                        </div>
-                      )}
-                      {aspectRatio && (
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Ratio</span>
-                          <span>{aspectRatio}</span>
-                        </div>
-                      )}
-                      {image.colorSpace && (
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Color</span>
-                          <span>{image.colorSpace}</span>
+
+                      {/* Exposure Details */}
+                      {(image.exposureProgram ||
+                        image.meteringMode ||
+                        image.flash ||
+                        image.whiteBalance) && (
+                        <div className="flex flex-col gap-1.5">
+                          <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
+                            Settings
+                          </div>
+                          {image.exposureProgram && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Program</span>
+                              <span>{image.exposureProgram}</span>
+                            </div>
+                          )}
+                          {image.meteringMode && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Metering</span>
+                              <span>{image.meteringMode}</span>
+                            </div>
+                          )}
+                          {image.flash && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Flash</span>
+                              <span>{image.flash}</span>
+                            </div>
+                          )}
+                          {image.whiteBalance && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">WB</span>
+                              <span>{image.whiteBalance}</span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
 
-                    <div className="flex flex-col gap-1.5">
-                      <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">Dates</div>
-                      {image.dateTaken && (
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Taken</span>
-                          <span>{formatDate(image.dateTaken)}</span>
+                    {/* RIGHT COLUMN: File Info */}
+                    <div className="flex flex-col gap-3">
+                      <div className="flex flex-col gap-1.5">
+                        <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
+                          File
                         </div>
-                      )}
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Modified</span>
-                        <span>{formatDate(image.lastModified)}</span>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Size</span>
+                          <span>{formatFileSize(image.size)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Format</span>
+                          <span className="uppercase">{image.extension}</span>
+                        </div>
+                        {image.width && image.height && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Dimensions</span>
+                            <span>
+                              {image.width} x {image.height}
+                            </span>
+                          </div>
+                        )}
+                        {megapixels && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Megapixels</span>
+                            <span>{megapixels} MP</span>
+                          </div>
+                        )}
+                        {aspectRatio && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Ratio</span>
+                            <span>{aspectRatio}</span>
+                          </div>
+                        )}
+                        {image.colorSpace && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Color</span>
+                            <span>{image.colorSpace}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
+                          Dates
+                        </div>
+                        {image.dateTaken && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Taken</span>
+                            <span>{formatDate(image.dateTaken)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Modified</span>
+                          <span>{formatDate(image.lastModified)}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
-
                 </div>
               </div>
-              </div>{/* end flex-shrink-0 info section */}
+              {/* end flex-shrink-0 info section */}
             </div>
           )}
         </div>

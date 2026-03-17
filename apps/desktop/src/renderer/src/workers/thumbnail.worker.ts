@@ -49,10 +49,9 @@ self.onmessage = async (event: MessageEvent<ThumbnailRequest>) => {
     const jpegBuffer = await thumbnailBlob.arrayBuffer();
     const thumbnailBitmap = await createImageBitmap(thumbnailBlob);
 
-    self.postMessage(
-      { id, bitmap: thumbnailBitmap, jpegBuffer } as ThumbnailResponse,
-      { transfer: [thumbnailBitmap, jpegBuffer] },
-    );
+    self.postMessage({ id, bitmap: thumbnailBitmap, jpegBuffer } as ThumbnailResponse, {
+      transfer: [thumbnailBitmap, jpegBuffer],
+    });
   } catch {
     self.postMessage({ id, error: true } as ThumbnailResponse);
   }

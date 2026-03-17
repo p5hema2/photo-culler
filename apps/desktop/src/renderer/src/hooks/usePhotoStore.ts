@@ -1,5 +1,10 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import type { ImageFileInfo, ResultsFile, SessionConfig, QualitySubscores } from '@photo-culler/types';
+import type {
+  ImageFileInfo,
+  ResultsFile,
+  SessionConfig,
+  QualitySubscores,
+} from '@photo-culler/types';
 import { sortImages } from '@photo-culler/image-utils/sorting';
 import type { SortField, SortDirection } from '@photo-culler/image-utils/sorting';
 import { groupByTimestamp } from '@photo-culler/image-utils/grouping';
@@ -121,34 +126,40 @@ export function usePhotoStore(): PhotoStoreAPI {
   }, []);
 
   // Debounced save
-  const scheduleSave = useCallback((folderPath: string, classifications: Record<string, Classification>) => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
-    saveTimerRef.current = setTimeout(() => {
-      if (resultsRef.current) {
-        const currentState = stateRef.current;
-        const updated: ResultsFile = {
-          ...resultsRef.current,
-          images: Object.fromEntries(
-            Object.entries(classifications).map(([k, v]) => [
-              k,
-              {
-                classification: v,
-                userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
-                qualityScore: currentState.qualityScores[k] ?? resultsRef.current?.images[k]?.qualityScore,
-                qualitySubscores: currentState.qualitySubscores[k] ?? resultsRef.current?.images[k]?.qualitySubscores,
-                rotation: currentState.rotations[k] ?? resultsRef.current?.images[k]?.rotation,
-                exif: resultsRef.current?.images[k]?.exif,
-              },
-            ]),
-          ),
-        };
-        resultsRef.current = updated;
-        saveResults(folderPath, updated);
+  const scheduleSave = useCallback(
+    (folderPath: string, classifications: Record<string, Classification>) => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
       }
-    }, 500);
-  }, []);
+      saveTimerRef.current = setTimeout(() => {
+        if (resultsRef.current) {
+          const currentState = stateRef.current;
+          const updated: ResultsFile = {
+            ...resultsRef.current,
+            images: Object.fromEntries(
+              Object.entries(classifications).map(([k, v]) => [
+                k,
+                {
+                  classification: v,
+                  userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
+                  qualityScore:
+                    currentState.qualityScores[k] ?? resultsRef.current?.images[k]?.qualityScore,
+                  qualitySubscores:
+                    currentState.qualitySubscores[k] ??
+                    resultsRef.current?.images[k]?.qualitySubscores,
+                  rotation: currentState.rotations[k] ?? resultsRef.current?.images[k]?.rotation,
+                  exif: resultsRef.current?.images[k]?.exif,
+                },
+              ]),
+            ),
+          };
+          resultsRef.current = updated;
+          saveResults(folderPath, updated);
+        }
+      }, 500);
+    },
+    [],
+  );
 
   // Flush save on unmount
   useEffect(() => {
@@ -235,11 +246,13 @@ export function usePhotoStore(): PhotoStoreAPI {
               if (cachedExif.aperture != null) img.aperture = cachedExif.aperture;
               if (cachedExif.shutterSpeed != null) img.shutterSpeed = cachedExif.shutterSpeed;
               if (cachedExif.iso != null) img.iso = cachedExif.iso;
-              if (cachedExif.exposureCompensation != null) img.exposureCompensation = cachedExif.exposureCompensation;
+              if (cachedExif.exposureCompensation != null)
+                img.exposureCompensation = cachedExif.exposureCompensation;
               if (cachedExif.flash != null) img.flash = cachedExif.flash;
               if (cachedExif.whiteBalance != null) img.whiteBalance = cachedExif.whiteBalance;
               if (cachedExif.meteringMode != null) img.meteringMode = cachedExif.meteringMode;
-              if (cachedExif.exposureProgram != null) img.exposureProgram = cachedExif.exposureProgram;
+              if (cachedExif.exposureProgram != null)
+                img.exposureProgram = cachedExif.exposureProgram;
               if (cachedExif.colorSpace != null) img.colorSpace = cachedExif.colorSpace;
             } else {
               imagesNeedingExif.push(img);
@@ -399,10 +412,13 @@ export function usePhotoStore(): PhotoStoreAPI {
       setState((prev) => {
         const current = prev.classifications[filename] ?? null;
         const next: Classification =
-          current === null ? 'keep' :
-          current === 'keep' ? 'review' :
-          current === 'review' ? 'delete' :
-          null;
+          current === null
+            ? 'keep'
+            : current === 'keep'
+              ? 'review'
+              : current === 'review'
+                ? 'delete'
+                : null;
         const newClassifications = { ...prev.classifications, [filename]: next };
         if (prev.folderPath) {
           if (resultsRef.current) {
@@ -441,9 +457,12 @@ export function usePhotoStore(): PhotoStoreAPI {
     setState((prev) => ({ ...prev, filterExtensions: extensions }));
   }, []);
 
-  const setFilterClassification = useCallback((classification: Classification | 'unclassified' | null) => {
-    setState((prev) => ({ ...prev, filterClassification: classification }));
-  }, []);
+  const setFilterClassification = useCallback(
+    (classification: Classification | 'unclassified' | null) => {
+      setState((prev) => ({ ...prev, filterClassification: classification }));
+    },
+    [],
+  );
 
   const setSearchQuery = useCallback((query: string) => {
     setState((prev) => ({ ...prev, searchQuery: query }));
@@ -467,144 +486,146 @@ export function usePhotoStore(): PhotoStoreAPI {
     setState((prev) => ({ ...prev, error: null }));
   }, []);
 
-  const executeActions = useCallback(
-    async (options: ExecuteOptions): Promise<ExecuteResult> => {
-      const current = stateRef.current;
-      if (!current.folderPath) {
-        return { trashedCount: 0, movedCount: 0, rotatedCount: 0, failedPaths: [] };
-      }
+  const executeActions = useCallback(async (options: ExecuteOptions): Promise<ExecuteResult> => {
+    const current = stateRef.current;
+    if (!current.folderPath) {
+      return { trashedCount: 0, movedCount: 0, rotatedCount: 0, failedPaths: [] };
+    }
 
-      const folderPath = current.folderPath;
-      const executeResult: ExecuteResult = { trashedCount: 0, movedCount: 0, rotatedCount: 0, failedPaths: [] };
+    const folderPath = current.folderPath;
+    const executeResult: ExecuteResult = {
+      trashedCount: 0,
+      movedCount: 0,
+      rotatedCount: 0,
+      failedPaths: [],
+    };
 
-      // Only operate on currently visible (filtered) images
-      const visibleImages = filteredImagesRef.current;
+    // Only operate on currently visible (filtered) images
+    const visibleImages = filteredImagesRef.current;
 
-      // Apply rotations to files on disk if requested
-      if (options.applyRotations) {
-        const rotatedFiles = visibleImages
-          .filter((img) => (current.rotations[img.name] ?? 0) !== 0)
-          .map((img) => ({ path: img.path, name: img.name, degrees: current.rotations[img.name]! }));
+    // Apply rotations to files on disk if requested
+    if (options.applyRotations) {
+      const rotatedFiles = visibleImages
+        .filter((img) => (current.rotations[img.name] ?? 0) !== 0)
+        .map((img) => ({ path: img.path, name: img.name, degrees: current.rotations[img.name]! }));
 
-        if (rotatedFiles.length > 0) {
-          const rotateResult = await window.api.rotateFiles(
-            rotatedFiles.map((f) => ({ path: f.path, degrees: f.degrees })),
-          );
-          executeResult.failedPaths.push(...rotateResult.failed);
-          executeResult.rotatedCount = rotateResult.succeeded.length;
+      if (rotatedFiles.length > 0) {
+        const rotateResult = await window.api.rotateFiles(
+          rotatedFiles.map((f) => ({ path: f.path, degrees: f.degrees })),
+        );
+        executeResult.failedPaths.push(...rotateResult.failed);
+        executeResult.rotatedCount = rotateResult.succeeded.length;
 
-          // Clear rotation state for successfully rotated images
-          const rotatedSet = new Set(rotateResult.succeeded);
-          setState((prev) => {
-            const newRotations = { ...prev.rotations };
-            for (const file of rotatedFiles) {
-              if (rotatedSet.has(file.path)) {
-                delete newRotations[file.name];
-              }
+        // Clear rotation state for successfully rotated images
+        const rotatedSet = new Set(rotateResult.succeeded);
+        setState((prev) => {
+          const newRotations = { ...prev.rotations };
+          for (const file of rotatedFiles) {
+            if (rotatedSet.has(file.path)) {
+              delete newRotations[file.name];
             }
-            return { ...prev, rotations: newRotations };
-          });
+          }
+          return { ...prev, rotations: newRotations };
+        });
 
-          // Also clear rotation in resultsRef
-          if (resultsRef.current) {
-            for (const file of rotatedFiles) {
-              if (rotatedSet.has(file.path) && resultsRef.current.images[file.name]) {
-                delete resultsRef.current.images[file.name].rotation;
-              }
+        // Also clear rotation in resultsRef
+        if (resultsRef.current) {
+          for (const file of rotatedFiles) {
+            if (rotatedSet.has(file.path) && resultsRef.current.images[file.name]) {
+              delete resultsRef.current.images[file.name].rotation;
             }
           }
         }
       }
+    }
 
-      // Get paths of delete-classified images (within visible set only)
-      const deletePaths = visibleImages
-        .filter((img) => (current.classifications[img.name] ?? null) === 'delete')
+    // Get paths of delete-classified images (within visible set only)
+    const deletePaths = visibleImages
+      .filter((img) => (current.classifications[img.name] ?? null) === 'delete')
+      .map((img) => img.path);
+
+    // Execute delete/trash
+    if (deletePaths.length > 0) {
+      const deleteResult =
+        options.deleteMode === 'trash'
+          ? await window.api.trashFiles(deletePaths)
+          : await window.api.deleteFiles(deletePaths);
+
+      executeResult.trashedCount = deleteResult.succeeded.length;
+      executeResult.failedPaths.push(...deleteResult.failed);
+    }
+
+    // Move keep images to picks/ if requested (within visible set only)
+    let moveSucceeded: string[] = [];
+    if (options.movePicks) {
+      const keepPaths = visibleImages
+        .filter((img) => (current.classifications[img.name] ?? null) === 'keep')
         .map((img) => img.path);
 
-      // Execute delete/trash
-      if (deletePaths.length > 0) {
-        const deleteResult =
-          options.deleteMode === 'trash'
-            ? await window.api.trashFiles(deletePaths)
-            : await window.api.deleteFiles(deletePaths);
-
-        executeResult.trashedCount = deleteResult.succeeded.length;
-        executeResult.failedPaths.push(...deleteResult.failed);
+      if (keepPaths.length > 0) {
+        const moveResult = await window.api.moveToPicks(folderPath, keepPaths);
+        executeResult.movedCount = moveResult.succeeded.length;
+        executeResult.failedPaths.push(...moveResult.failed);
+        moveSucceeded = moveResult.succeeded;
       }
+    }
 
-      // Move keep images to picks/ if requested (within visible set only)
-      let moveSucceeded: string[] = [];
-      if (options.movePicks) {
-        const keepPaths = visibleImages
-          .filter((img) => (current.classifications[img.name] ?? null) === 'keep')
-          .map((img) => img.path);
+    // Collect paths that were successfully processed (not in failedPaths)
+    const failedPathSet = new Set(executeResult.failedPaths.map((f) => f.path));
+    const succeededDeletePaths = new Set(deletePaths.filter((p) => !failedPathSet.has(p)));
+    const succeededMovePaths = new Set(moveSucceeded);
 
-        if (keepPaths.length > 0) {
-          const moveResult = await window.api.moveToPicks(folderPath, keepPaths);
-          executeResult.movedCount = moveResult.succeeded.length;
-          executeResult.failedPaths.push(...moveResult.failed);
-          moveSucceeded = moveResult.succeeded;
+    // Remove succeeded images from state
+    setState((prev) => {
+      const nextImages = prev.images.filter(
+        (img) => !succeededDeletePaths.has(img.path) && !succeededMovePaths.has(img.path),
+      );
+      const nextClassifications = { ...prev.classifications };
+      for (const img of prev.images) {
+        if (succeededDeletePaths.has(img.path) || succeededMovePaths.has(img.path)) {
+          delete nextClassifications[img.name];
+        }
+      }
+      return { ...prev, images: nextImages, classifications: nextClassifications };
+    });
+
+    // Cancel any pending debounced save
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+
+    // Save updated results file immediately (not debounced)
+    if (resultsRef.current) {
+      // Build new results from remaining images
+      const remainingClassifications: Record<string, Classification> = {};
+      for (const img of stateRef.current.images) {
+        if (!succeededDeletePaths.has(img.path) && !succeededMovePaths.has(img.path)) {
+          remainingClassifications[img.name] = stateRef.current.classifications[img.name] ?? null;
         }
       }
 
-      // Collect paths that were successfully processed (not in failedPaths)
-      const failedPathSet = new Set(executeResult.failedPaths.map((f) => f.path));
-      const succeededDeletePaths = new Set(deletePaths.filter((p) => !failedPathSet.has(p)));
-      const succeededMovePaths = new Set(moveSucceeded);
+      resultsRef.current = {
+        ...resultsRef.current,
+        images: Object.fromEntries(
+          Object.entries(remainingClassifications).map(([k, v]) => [
+            k,
+            {
+              classification: v,
+              userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
+              qualityScore: resultsRef.current?.images[k]?.qualityScore,
+              qualitySubscores: resultsRef.current?.images[k]?.qualitySubscores,
+              rotation: resultsRef.current?.images[k]?.rotation,
+              exif: resultsRef.current?.images[k]?.exif,
+            },
+          ]),
+        ),
+      };
+      await saveResults(folderPath, resultsRef.current);
+    }
 
-      // Remove succeeded images from state
-      setState((prev) => {
-        const nextImages = prev.images.filter(
-          (img) => !succeededDeletePaths.has(img.path) && !succeededMovePaths.has(img.path),
-        );
-        const nextClassifications = { ...prev.classifications };
-        for (const img of prev.images) {
-          if (succeededDeletePaths.has(img.path) || succeededMovePaths.has(img.path)) {
-            delete nextClassifications[img.name];
-          }
-        }
-        return { ...prev, images: nextImages, classifications: nextClassifications };
-      });
-
-      // Cancel any pending debounced save
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-
-      // Save updated results file immediately (not debounced)
-      if (resultsRef.current) {
-        // Build new results from remaining images
-        const remainingClassifications: Record<string, Classification> = {};
-        for (const img of stateRef.current.images) {
-          if (!succeededDeletePaths.has(img.path) && !succeededMovePaths.has(img.path)) {
-            remainingClassifications[img.name] = stateRef.current.classifications[img.name] ?? null;
-          }
-        }
-
-        resultsRef.current = {
-          ...resultsRef.current,
-          images: Object.fromEntries(
-            Object.entries(remainingClassifications).map(([k, v]) => [
-              k,
-              {
-                classification: v,
-                userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
-                qualityScore: resultsRef.current?.images[k]?.qualityScore,
-                qualitySubscores: resultsRef.current?.images[k]?.qualitySubscores,
-                rotation: resultsRef.current?.images[k]?.rotation,
-                exif: resultsRef.current?.images[k]?.exif,
-              },
-            ]),
-          ),
-        };
-        await saveResults(folderPath, resultsRef.current);
-      }
-
-      return executeResult;
-    },
-    [],
-  );
+    return executeResult;
+  }, []);
 
   const toggleSelect = useCallback((path: string) => {
     setState((prev) => {
@@ -658,7 +679,9 @@ export function usePhotoStore(): PhotoStoreAPI {
       const currentState = stateRef.current;
       let result = currentState.images;
       if (currentState.filterExtensions.size > 0) {
-        result = result.filter((img) => currentState.filterExtensions.has(img.extension.toLowerCase()));
+        result = result.filter((img) =>
+          currentState.filterExtensions.has(img.extension.toLowerCase()),
+        );
       }
       if (currentState.filterClassification) {
         result = result.filter(
@@ -801,7 +824,8 @@ export function usePhotoStore(): PhotoStoreAPI {
                 classification: newClassification,
                 userOverride: isManualOverride,
                 qualityScore: score,
-                qualitySubscores: subscores ?? resultsRef.current.images[filename]?.qualitySubscores,
+                qualitySubscores:
+                  subscores ?? resultsRef.current.images[filename]?.qualitySubscores,
                 rotation: resultsRef.current.images[filename]?.rotation,
                 exif: resultsRef.current.images[filename]?.exif,
               },
@@ -830,43 +854,49 @@ export function usePhotoStore(): PhotoStoreAPI {
 
   const setScoringProgress = useCallback((progress: { completed: number; total: number }) => {
     setState((prev) => {
-      if (prev.scoringProgress.completed === progress.completed && prev.scoringProgress.total === progress.total) {
+      if (
+        prev.scoringProgress.completed === progress.completed &&
+        prev.scoringProgress.total === progress.total
+      ) {
         return prev; // No change — skip re-render
       }
       return { ...prev, scoringProgress: progress };
     });
   }, []);
 
-  const rotateImage = useCallback((filename: string, direction: 'cw' | 'ccw') => {
-    const delta = direction === 'cw' ? 90 : -90;
-    setState((prev) => {
-      const current = prev.rotations[filename] ?? 0;
-      const next = (current + delta + 360) % 360;
+  const rotateImage = useCallback(
+    (filename: string, direction: 'cw' | 'ccw') => {
+      const delta = direction === 'cw' ? 90 : -90;
+      setState((prev) => {
+        const current = prev.rotations[filename] ?? 0;
+        const next = (current + delta + 360) % 360;
 
-      // Persist to results ref
-      if (resultsRef.current) {
-        resultsRef.current = {
-          ...resultsRef.current,
-          images: {
-            ...resultsRef.current.images,
-            [filename]: {
-              ...resultsRef.current.images[filename],
-              rotation: next || undefined,
+        // Persist to results ref
+        if (resultsRef.current) {
+          resultsRef.current = {
+            ...resultsRef.current,
+            images: {
+              ...resultsRef.current.images,
+              [filename]: {
+                ...resultsRef.current.images[filename],
+                rotation: next || undefined,
+              },
             },
-          },
+          };
+        }
+
+        if (prev.folderPath) {
+          scheduleSave(prev.folderPath, prev.classifications);
+        }
+
+        return {
+          ...prev,
+          rotations: { ...prev.rotations, [filename]: next },
         };
-      }
-
-      if (prev.folderPath) {
-        scheduleSave(prev.folderPath, prev.classifications);
-      }
-
-      return {
-        ...prev,
-        rotations: { ...prev.rotations, [filename]: next },
-      };
-    });
-  }, [scheduleSave]);
+      });
+    },
+    [scheduleSave],
+  );
 
   // Derived state
   const filteredImages = useMemo(() => {
@@ -905,7 +935,15 @@ export function usePhotoStore(): PhotoStoreAPI {
     }
 
     return result;
-  }, [state.images, state.filterExtensions, state.filterClassification, state.filterScoreRange, state.qualityScores, state.searchQuery, state.classifications]);
+  }, [
+    state.images,
+    state.filterExtensions,
+    state.filterClassification,
+    state.filterScoreRange,
+    state.qualityScores,
+    state.searchQuery,
+    state.classifications,
+  ]);
 
   // Keep a ref to filteredImages for use in callbacks (e.g., executeActions)
   const filteredImagesRef = useRef(filteredImages);
@@ -949,7 +987,13 @@ export function usePhotoStore(): PhotoStoreAPI {
     }
 
     return baseGroups;
-  }, [sortedImages, state.groupingThresholdMs, state.sortField, state.sortDirection, state.qualityScores]);
+  }, [
+    sortedImages,
+    state.groupingThresholdMs,
+    state.sortField,
+    state.sortDirection,
+    state.qualityScores,
+  ]);
 
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
@@ -968,7 +1012,8 @@ export function usePhotoStore(): PhotoStoreAPI {
             groupingThresholdMs: session.groupingThresholdMs ?? 5000,
           }));
         }
-        if (false && session.lastFolderPath) { // Disabled: always start blank
+        if (false && session.lastFolderPath) {
+          // Disabled: always start blank
           openFolder(session.lastFolderPath);
         }
       } catch {

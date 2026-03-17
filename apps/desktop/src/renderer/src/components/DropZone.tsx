@@ -68,7 +68,11 @@ export function DropZone({ onFolderDrop, children }: DropZoneProps): React.JSX.E
         if (entry?.isDirectory) {
           // Electron exposes .path on File objects
           const file = e.dataTransfer.files[0];
-          if (file && 'path' in file && typeof (file as File & { path: string }).path === 'string') {
+          if (
+            file &&
+            'path' in file &&
+            typeof (file as File & { path: string }).path === 'string'
+          ) {
             onFolderDrop((file as File & { path: string }).path);
           }
         } else {

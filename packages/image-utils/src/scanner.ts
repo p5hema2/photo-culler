@@ -2,14 +2,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { ImageFileInfo } from '@photo-culler/types';
 
-const SUPPORTED_EXTENSIONS = new Set([
-  '.jpg',
-  '.jpeg',
-  '.png',
-  '.tiff',
-  '.tif',
-  '.webp',
-]);
+const SUPPORTED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.webp']);
 
 const EXCLUDED_FILES = new Set(['photo-culler-results.json']);
 

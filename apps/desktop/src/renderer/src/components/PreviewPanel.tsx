@@ -204,12 +204,16 @@ export function PreviewPanel({
 
   // Double-click toggles between fit and 100%
   const handleDoubleClick = useCallback(() => {
-    const isFitted = Math.abs(zoom - (containerRef.current
-      ? Math.min(
-          containerRef.current.getBoundingClientRect().width / imageDimensions.width,
-          containerRef.current.getBoundingClientRect().height / imageDimensions.height,
-        )
-      : 1)) < 0.01;
+    const isFitted =
+      Math.abs(
+        zoom -
+          (containerRef.current
+            ? Math.min(
+                containerRef.current.getBoundingClientRect().width / imageDimensions.width,
+                containerRef.current.getBoundingClientRect().height / imageDimensions.height,
+              )
+            : 1),
+      ) < 0.01;
 
     if (isFitted) {
       zoomTo100();
@@ -218,12 +222,17 @@ export function PreviewPanel({
     }
   }, [zoom, imageDimensions, zoomTo100, fitToWindow]);
 
-  const cursorClass = isDragging ? 'cursor-grabbing' : zoom > (containerRef.current
-    ? Math.min(
-        containerRef.current.getBoundingClientRect().width / (imageDimensions.width || 1),
-        containerRef.current.getBoundingClientRect().height / (imageDimensions.height || 1),
-      )
-    : 1) ? 'cursor-grab' : 'cursor-zoom-in';
+  const cursorClass = isDragging
+    ? 'cursor-grabbing'
+    : zoom >
+        (containerRef.current
+          ? Math.min(
+              containerRef.current.getBoundingClientRect().width / (imageDimensions.width || 1),
+              containerRef.current.getBoundingClientRect().height / (imageDimensions.height || 1),
+            )
+          : 1)
+      ? 'cursor-grab'
+      : 'cursor-zoom-in';
 
   return (
     <div className="flex flex-col h-full" data-testid="preview-panel">

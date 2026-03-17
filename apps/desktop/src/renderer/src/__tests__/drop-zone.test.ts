@@ -18,14 +18,21 @@ describe('DropZone', () => {
 
   function renderDropZone() {
     return render(
-      createElement(DropZone, { onFolderDrop }, createElement('div', { 'data-testid': 'content' }, 'Content')),
+      createElement(
+        DropZone,
+        { onFolderDrop },
+        createElement('div', { 'data-testid': 'content' }, 'Content'),
+      ),
     );
   }
 
-  function createDragEvent(type: string, options: Partial<{
-    items: Array<{ webkitGetAsEntry: () => { isDirectory: boolean } }>;
-    files: Array<{ path: string }>;
-  }> = {}) {
+  function createDragEvent(
+    type: string,
+    options: Partial<{
+      items: Array<{ webkitGetAsEntry: () => { isDirectory: boolean } }>;
+      files: Array<{ path: string }>;
+    }> = {},
+  ) {
     const items = options.items ?? [];
     const files = options.files ?? [];
     return {

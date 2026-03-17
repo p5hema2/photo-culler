@@ -2,10 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { sortImages, type SortField, type SortDirection } from '../sorting';
 import type { ImageFileInfo } from '@photo-culler/types';
 
-function makeImage(
-  name: string,
-  overrides: Partial<ImageFileInfo> = {},
-): ImageFileInfo {
+function makeImage(name: string, overrides: Partial<ImageFileInfo> = {}): ImageFileInfo {
   return {
     path: `/test/${name}`,
     name,
@@ -26,31 +23,15 @@ describe('sortImages', () => {
 
   describe('sort by filename', () => {
     it('uses natural sort (IMG_2 before IMG_10)', () => {
-      const images = [
-        makeImage('IMG_10.jpg'),
-        makeImage('IMG_2.jpg'),
-        makeImage('IMG_1.jpg'),
-      ];
+      const images = [makeImage('IMG_10.jpg'), makeImage('IMG_2.jpg'), makeImage('IMG_1.jpg')];
       const sorted = sortImages(images, 'filename', 'asc');
-      expect(sorted.map((i) => i.name)).toEqual([
-        'IMG_1.jpg',
-        'IMG_2.jpg',
-        'IMG_10.jpg',
-      ]);
+      expect(sorted.map((i) => i.name)).toEqual(['IMG_1.jpg', 'IMG_2.jpg', 'IMG_10.jpg']);
     });
 
     it('supports descending order', () => {
-      const images = [
-        makeImage('IMG_1.jpg'),
-        makeImage('IMG_2.jpg'),
-        makeImage('IMG_10.jpg'),
-      ];
+      const images = [makeImage('IMG_1.jpg'), makeImage('IMG_2.jpg'), makeImage('IMG_10.jpg')];
       const sorted = sortImages(images, 'filename', 'desc');
-      expect(sorted.map((i) => i.name)).toEqual([
-        'IMG_10.jpg',
-        'IMG_2.jpg',
-        'IMG_1.jpg',
-      ]);
+      expect(sorted.map((i) => i.name)).toEqual(['IMG_10.jpg', 'IMG_2.jpg', 'IMG_1.jpg']);
     });
   });
 
@@ -94,18 +75,11 @@ describe('sortImages', () => {
         makeImage('mid.jpg', { size: 2500 }),
       ];
       const sorted = sortImages(images, 'size', 'asc');
-      expect(sorted.map((i) => i.name)).toEqual([
-        'small.jpg',
-        'mid.jpg',
-        'big.jpg',
-      ]);
+      expect(sorted.map((i) => i.name)).toEqual(['small.jpg', 'mid.jpg', 'big.jpg']);
     });
 
     it('sorts descending by size', () => {
-      const images = [
-        makeImage('small.jpg', { size: 100 }),
-        makeImage('big.jpg', { size: 5000 }),
-      ];
+      const images = [makeImage('small.jpg', { size: 100 }), makeImage('big.jpg', { size: 5000 })];
       const sorted = sortImages(images, 'size', 'desc');
       expect(sorted[0]!.name).toBe('big.jpg');
       expect(sorted[1]!.name).toBe('small.jpg');
@@ -120,11 +94,7 @@ describe('sortImages', () => {
         makeImage('medium.jpg', { width: 1920, height: 1080 }),
       ];
       const sorted = sortImages(images, 'dimensions', 'asc');
-      expect(sorted.map((i) => i.name)).toEqual([
-        'small.jpg',
-        'medium.jpg',
-        'large.jpg',
-      ]);
+      expect(sorted.map((i) => i.name)).toEqual(['small.jpg', 'medium.jpg', 'large.jpg']);
     });
 
     it('sorts descending by megapixels', () => {

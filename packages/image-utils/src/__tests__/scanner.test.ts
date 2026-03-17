@@ -93,10 +93,7 @@ describe('scanFolder', () => {
         err.code = 'ENOENT';
         throw err;
       }
-      return [
-        makeDirent('photo-culler-results.json'),
-        makeDirent('photo.jpg'),
-      ] as any;
+      return [makeDirent('photo-culler-results.json'), makeDirent('photo.jpg')] as any;
     });
     mockStat.mockResolvedValue(makeStats(1024, 1000000) as any);
 

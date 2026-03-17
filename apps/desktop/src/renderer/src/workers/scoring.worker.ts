@@ -200,8 +200,7 @@ function computeNoise(gray: Float32Array, width: number, height: number): number
 
   // Take the best flat patches (lowest Laplacian variance, up to targetFlat)
   const selected = candidates.slice(0, targetFlat);
-  const meanVariance =
-    selected.reduce((acc, p) => acc + p.patchVariance, 0) / selected.length;
+  const meanVariance = selected.reduce((acc, p) => acc + p.patchVariance, 0) / selected.length;
 
   // Inverse normalize: low variance = low noise = high score
   return clamp(100 - meanVariance * 2, 0, 100);

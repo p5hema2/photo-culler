@@ -13,7 +13,10 @@ interface KeyboardNavOptions {
   focusedImageId: string | null;
   onFocusChange: (path: string | null) => void;
   onCycleClassification: (filename: string) => void;
-  onSetClassification: (filename: string, classification: 'keep' | 'review' | 'delete' | null) => void;
+  onSetClassification: (
+    filename: string,
+    classification: 'keep' | 'review' | 'delete' | null,
+  ) => void;
   containerRef: React.RefObject<HTMLElement | null>;
   onToggleSelect: (path: string) => void;
   onRangeSelect: (path: string) => void;
@@ -175,8 +178,10 @@ export function useKeyboardNav({
           e.preventDefault();
           const cellSize = THUMBNAIL_SIZE_MAP[thumbnailSizeRef.current] ?? 200;
           const gap = 8;
-          const containerWidth = containerRef.current?.querySelector('[data-testid="photo-grid"]')?.clientWidth
-            ?? containerRef.current?.clientWidth ?? 800;
+          const containerWidth =
+            containerRef.current?.querySelector('[data-testid="photo-grid"]')?.clientWidth ??
+            containerRef.current?.clientWidth ??
+            800;
           const perRow = Math.max(1, Math.floor((containerWidth + gap) / (cellSize + gap)));
 
           const currentRow = Math.floor(imageIndex / perRow);
@@ -185,7 +190,10 @@ export function useKeyboardNav({
 
           if (currentRow < totalRows - 1) {
             // Move to next row in same group
-            const targetIndex = Math.min((currentRow + 1) * perRow + col, currentGroup.images.length - 1);
+            const targetIndex = Math.min(
+              (currentRow + 1) * perRow + col,
+              currentGroup.images.length - 1,
+            );
             onFocusChange(currentGroup.images[targetIndex]!.path);
           } else if (groupIndex < currentGroups.length - 1) {
             // Last row of group — jump to first row of next group, same column
@@ -200,9 +208,14 @@ export function useKeyboardNav({
           e.preventDefault();
           const cellSizeUp = THUMBNAIL_SIZE_MAP[thumbnailSizeRef.current] ?? 200;
           const gapUp = 8;
-          const containerWidthUp = containerRef.current?.querySelector('[data-testid="photo-grid"]')?.clientWidth
-            ?? containerRef.current?.clientWidth ?? 800;
-          const perRowUp = Math.max(1, Math.floor((containerWidthUp + gapUp) / (cellSizeUp + gapUp)));
+          const containerWidthUp =
+            containerRef.current?.querySelector('[data-testid="photo-grid"]')?.clientWidth ??
+            containerRef.current?.clientWidth ??
+            800;
+          const perRowUp = Math.max(
+            1,
+            Math.floor((containerWidthUp + gapUp) / (cellSizeUp + gapUp)),
+          );
 
           const currentRowUp = Math.floor(imageIndex / perRowUp);
           const colUp = imageIndex % perRowUp;
@@ -216,7 +229,10 @@ export function useKeyboardNav({
             const prevGroup = currentGroups[groupIndex - 1]!;
             const prevPerRow = perRowUp;
             const prevLastRow = Math.floor((prevGroup.images.length - 1) / prevPerRow);
-            const targetIndex = Math.min(prevLastRow * prevPerRow + colUp, prevGroup.images.length - 1);
+            const targetIndex = Math.min(
+              prevLastRow * prevPerRow + colUp,
+              prevGroup.images.length - 1,
+            );
             onFocusChange(prevGroup.images[targetIndex]!.path);
           }
           break;

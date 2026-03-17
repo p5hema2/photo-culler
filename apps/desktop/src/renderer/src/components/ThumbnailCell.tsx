@@ -71,16 +71,8 @@ export function ThumbnailCell({
   // Request thumbnail if not yet requested
   useEffect(() => {
     if (thumbnail === 'loading') {
-      const encodedPath = image.path
-        .split('/')
-        .map(encodeURIComponent)
-        .join('/');
-      requestThumbnail(
-        image.path,
-        `app://file${encodedPath}`,
-        256,
-        groupIndex,
-      );
+      const encodedPath = image.path.split('/').map(encodeURIComponent).join('/');
+      requestThumbnail(image.path, `app://file${encodedPath}`, 256, groupIndex);
     }
   }, [image.path, thumbnail, requestThumbnail, groupIndex]);
 
@@ -153,31 +145,55 @@ export function ThumbnailCell({
       {isSelected && (
         <div className="absolute inset-0 bg-blue-500/30 z-10 pointer-events-none">
           <div className="absolute top-1 left-1 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
-            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            <svg
+              className="w-3 h-3 text-white"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={3}
+                d="M5 13l4 4L19 7"
+              />
             </svg>
           </div>
         </div>
       )}
       {/* Quality score badge */}
       {qualityScore != null && (
-        <div className={`absolute bottom-1 left-1 z-10 bg-black/60 px-1 rounded text-[10px] font-mono ${
-          qualityScore >= 60 ? 'text-green-400' : qualityScore >= 35 ? 'text-yellow-400' : 'text-red-400'
-        }`}>
+        <div
+          className={`absolute bottom-1 left-1 z-10 bg-black/60 px-1 rounded text-[10px] font-mono ${
+            qualityScore >= 60
+              ? 'text-green-400'
+              : qualityScore >= 35
+                ? 'text-yellow-400'
+                : 'text-red-400'
+          }`}
+        >
           {qualityScore}%
         </div>
       )}
       {/* Focus ring as outline - outside everything, 2px gap from classification border */}
-      <div className={`absolute inset-0 ${isFocused ? 'outline-3 outline-blue-400 outline outline-offset-2' : ''}`} />
+      <div
+        className={`absolute inset-0 ${isFocused ? 'outline-3 outline-blue-400 outline outline-offset-2' : ''}`}
+      />
       {/* Classification border */}
       <div className={`absolute inset-0 border-2 ${borderColor}`}>
         {/* 2px gap with dark background for separation */}
         <div className="absolute inset-[2px] bg-gray-900 overflow-hidden">
           {thumbnail === 'loading' && (
-            <div className="absolute inset-0 bg-gray-700 animate-pulse" data-testid="thumbnail-loading" />
+            <div
+              className="absolute inset-0 bg-gray-700 animate-pulse"
+              data-testid="thumbnail-loading"
+            />
           )}
           {thumbnail === 'error' && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-700" data-testid="thumbnail-error">
+            <div
+              className="absolute inset-0 flex items-center justify-center bg-gray-700"
+              data-testid="thumbnail-error"
+            >
               <svg
                 className="w-8 h-8 text-gray-500"
                 fill="none"

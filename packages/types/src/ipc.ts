@@ -100,5 +100,7 @@ export interface ElectronAPI {
   readFile: (filePath: string) => Promise<ArrayBuffer>;
   loadThumbCache: (filePath: string, lastModified: number) => Promise<ArrayBuffer | null>;
   saveThumbCache: (filePath: string, jpegBuffer: ArrayBuffer) => Promise<void>;
-  rotateFiles: (files: Array<{ path: string; degrees: number }>) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
+  rotateFiles: (
+    files: Array<{ path: string; degrees: number }>,
+  ) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
 }

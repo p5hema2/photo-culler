@@ -61,7 +61,12 @@ export function ExecutePanel({
       const res = await onExecute({ deleteMode, movePicks, applyRotations });
       setResult(res);
     } catch {
-      setResult({ trashedCount: 0, movedCount: 0, rotatedCount: 0, failedPaths: [{ path: '', error: 'Unexpected error' }] });
+      setResult({
+        trashedCount: 0,
+        movedCount: 0,
+        rotatedCount: 0,
+        failedPaths: [{ path: '', error: 'Unexpected error' }],
+      });
     } finally {
       setIsExecuting(false);
     }
@@ -83,7 +88,10 @@ export function ExecutePanel({
         if (e.target === e.currentTarget && !isExecuting) onClose();
       }}
     >
-      <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-[480px] max-w-[90vw]" data-testid="execute-panel">
+      <div
+        className="bg-gray-800 rounded-lg shadow-xl p-6 w-[480px] max-w-[90vw]"
+        data-testid="execute-panel"
+      >
         {/* Result view */}
         {result ? (
           <div>
@@ -109,18 +117,24 @@ export function ExecutePanel({
               {result.failedPaths.length > 0 && (
                 <div>
                   <p className="text-red-400 mb-1">
-                    {result.failedPaths.length} file{result.failedPaths.length !== 1 ? 's' : ''} failed:
+                    {result.failedPaths.length} file{result.failedPaths.length !== 1 ? 's' : ''}{' '}
+                    failed:
                   </p>
                   <ul className="text-xs text-red-300 space-y-0.5 max-h-32 overflow-y-auto">
                     {result.failedPaths.map((f, i) => (
-                      <li key={i}>{f.path}: {f.error}</li>
+                      <li key={i}>
+                        {f.path}: {f.error}
+                      </li>
                     ))}
                   </ul>
                 </div>
               )}
-              {result.trashedCount === 0 && result.movedCount === 0 && result.rotatedCount === 0 && result.failedPaths.length === 0 && (
-                <p className="text-gray-400">No actions were performed.</p>
-              )}
+              {result.trashedCount === 0 &&
+                result.movedCount === 0 &&
+                result.rotatedCount === 0 &&
+                result.failedPaths.length === 0 && (
+                  <p className="text-gray-400">No actions were performed.</p>
+                )}
             </div>
 
             <div className="flex justify-end">
@@ -142,22 +156,29 @@ export function ExecutePanel({
               {counts.delete > 0 && (
                 <p>
                   {deleteMode === 'trash' ? (
-                    <>Move <span className="text-red-400 font-medium">{counts.delete}</span> image{counts.delete !== 1 ? 's' : ''} to trash?</>
+                    <>
+                      Move <span className="text-red-400 font-medium">{counts.delete}</span> image
+                      {counts.delete !== 1 ? 's' : ''} to trash?
+                    </>
                   ) : (
                     <span className="text-red-400 font-medium">
-                      Permanently delete {counts.delete} image{counts.delete !== 1 ? 's' : ''}? This cannot be undone!
+                      Permanently delete {counts.delete} image{counts.delete !== 1 ? 's' : ''}? This
+                      cannot be undone!
                     </span>
                   )}
                 </p>
               )}
               {movePicks && counts.keep > 0 && (
                 <p>
-                  Move <span className="text-green-400 font-medium">{counts.keep}</span> keep image{counts.keep !== 1 ? 's' : ''} to picks/ subfolder?
+                  Move <span className="text-green-400 font-medium">{counts.keep}</span> keep image
+                  {counts.keep !== 1 ? 's' : ''} to picks/ subfolder?
                 </p>
               )}
               {applyRotations && rotatedCount > 0 && (
                 <p>
-                  Apply rotation to <span className="text-blue-400 font-medium">{rotatedCount}</span> image{rotatedCount !== 1 ? 's' : ''} on disk
+                  Apply rotation to{' '}
+                  <span className="text-blue-400 font-medium">{rotatedCount}</span> image
+                  {rotatedCount !== 1 ? 's' : ''} on disk
                   <span className="text-gray-500"> (modifies files in-place)</span>
                 </p>
               )}
@@ -195,29 +216,42 @@ export function ExecutePanel({
             <div className="mb-6 space-y-1.5 text-sm">
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full bg-green-500 inline-block" />
-                <span>{counts.keep} image{counts.keep !== 1 ? 's' : ''} marked as Keep</span>
+                <span>
+                  {counts.keep} image{counts.keep !== 1 ? 's' : ''} marked as Keep
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full bg-yellow-500 inline-block" />
-                <span>{counts.review} image{counts.review !== 1 ? 's' : ''} marked as Review</span>
+                <span>
+                  {counts.review} image{counts.review !== 1 ? 's' : ''} marked as Review
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
-                <span>{counts.delete} image{counts.delete !== 1 ? 's' : ''} marked as Delete</span>
+                <span>
+                  {counts.delete} image{counts.delete !== 1 ? 's' : ''} marked as Delete
+                </span>
               </div>
               {counts.unclassified > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="w-3 h-3 rounded-full bg-gray-500 inline-block" />
-                  <span>{counts.unclassified} image{counts.unclassified !== 1 ? 's' : ''} unclassified</span>
+                  <span>
+                    {counts.unclassified} image{counts.unclassified !== 1 ? 's' : ''} unclassified
+                  </span>
                 </div>
               )}
             </div>
 
             {/* Delete mode selection */}
             <div className="mb-4">
-              <p className="text-sm font-medium text-gray-300 mb-2">Action for &apos;delete&apos; images:</p>
+              <p className="text-sm font-medium text-gray-300 mb-2">
+                Action for &apos;delete&apos; images:
+              </p>
               <div className="space-y-2">
-                <label className="flex items-center gap-2 cursor-pointer text-sm" data-testid="mode-trash">
+                <label
+                  className="flex items-center gap-2 cursor-pointer text-sm"
+                  data-testid="mode-trash"
+                >
                   <input
                     type="radio"
                     name="deleteMode"
@@ -229,7 +263,10 @@ export function ExecutePanel({
                   <span>Move to OS Trash</span>
                   <span className="text-gray-500 text-xs">(recoverable)</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer text-sm" data-testid="mode-permanent">
+                <label
+                  className="flex items-center gap-2 cursor-pointer text-sm"
+                  data-testid="mode-permanent"
+                >
                   <input
                     type="radio"
                     name="deleteMode"
@@ -246,7 +283,10 @@ export function ExecutePanel({
 
             {/* Move picks checkbox */}
             <div className="mb-4">
-              <label className="flex items-center gap-2 cursor-pointer text-sm" data-testid="move-picks-checkbox">
+              <label
+                className="flex items-center gap-2 cursor-pointer text-sm"
+                data-testid="move-picks-checkbox"
+              >
                 <input
                   type="checkbox"
                   checked={movePicks}
@@ -255,14 +295,19 @@ export function ExecutePanel({
                 />
                 <span>Move &apos;keep&apos; images to picks/ subfolder</span>
                 {counts.keep > 0 && (
-                  <span className="text-gray-500 text-xs">({counts.keep} image{counts.keep !== 1 ? 's' : ''})</span>
+                  <span className="text-gray-500 text-xs">
+                    ({counts.keep} image{counts.keep !== 1 ? 's' : ''})
+                  </span>
                 )}
               </label>
             </div>
 
             {/* Apply rotations checkbox */}
             <div className="mb-6">
-              <label className={`flex items-center gap-2 text-sm ${rotatedCount > 0 ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`} data-testid="apply-rotations-checkbox">
+              <label
+                className={`flex items-center gap-2 text-sm ${rotatedCount > 0 ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                data-testid="apply-rotations-checkbox"
+              >
                 <input
                   type="checkbox"
                   checked={applyRotations && rotatedCount > 0}
@@ -272,7 +317,9 @@ export function ExecutePanel({
                 />
                 <span>Apply rotations to files</span>
                 {rotatedCount > 0 ? (
-                  <span className="text-gray-500 text-xs">({rotatedCount} image{rotatedCount !== 1 ? 's' : ''})</span>
+                  <span className="text-gray-500 text-xs">
+                    ({rotatedCount} image{rotatedCount !== 1 ? 's' : ''})
+                  </span>
                 ) : (
                   <span className="text-gray-500 text-xs">(none rotated)</span>
                 )}
@@ -290,9 +337,15 @@ export function ExecutePanel({
               </button>
               <button
                 onClick={handleExecuteClick}
-                disabled={counts.delete === 0 && !(movePicks && counts.keep > 0) && !(applyRotations && rotatedCount > 0)}
+                disabled={
+                  counts.delete === 0 &&
+                  !(movePicks && counts.keep > 0) &&
+                  !(applyRotations && rotatedCount > 0)
+                }
                 className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                  counts.delete === 0 && !(movePicks && counts.keep > 0) && !(applyRotations && rotatedCount > 0)
+                  counts.delete === 0 &&
+                  !(movePicks && counts.keep > 0) &&
+                  !(applyRotations && rotatedCount > 0)
                     ? 'bg-gray-600 cursor-not-allowed text-gray-400'
                     : 'bg-red-600 hover:bg-red-700'
                 }`}
@@ -306,7 +359,10 @@ export function ExecutePanel({
 
         {/* Loading overlay */}
         {isExecuting && (
-          <div className="absolute inset-0 bg-gray-800/90 rounded-lg flex items-center justify-center" data-testid="execute-loading">
+          <div
+            className="absolute inset-0 bg-gray-800/90 rounded-lg flex items-center justify-center"
+            data-testid="execute-loading"
+          >
             <div className="text-center">
               <div className="w-8 h-8 border-2 border-gray-600 border-t-blue-500 rounded-full animate-spin mx-auto mb-3" />
               <p className="text-sm text-gray-300">Executing...</p>

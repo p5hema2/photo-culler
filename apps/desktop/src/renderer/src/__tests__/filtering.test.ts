@@ -18,9 +18,7 @@ function filterImages(
   }
 
   if (filterClassification) {
-    result = result.filter(
-      (img) => (classifications[img.name] ?? null) === filterClassification,
-    );
+    result = result.filter((img) => (classifications[img.name] ?? null) === filterClassification);
   }
 
   if (searchQuery.trim()) {

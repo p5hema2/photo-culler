@@ -42,14 +42,20 @@ export type ExifResponse = ExifResult | ExifDone;
 
 const EXIF_TAGS = [
   'DateTimeOriginal',
-  'ImageWidth', 'ImageHeight',
-  'Make', 'Model',
-  'LensModel', 'LensInfo',
-  'FocalLength', 'FocalLengthIn35mmFormat',
+  'ImageWidth',
+  'ImageHeight',
+  'Make',
+  'Model',
+  'LensModel',
+  'LensInfo',
+  'FocalLength',
+  'FocalLengthIn35mmFormat',
   'FNumber',
   'ExposureTime',
-  'ISO', 'ISOSpeedRatings',
-  'ExposureCompensation', 'ExposureBiasValue',
+  'ISO',
+  'ISOSpeedRatings',
+  'ExposureCompensation',
+  'ExposureBiasValue',
   'Flash',
   'WhiteBalance',
   'MeteringMode',
@@ -97,7 +103,7 @@ function formatFlash(value: number | string | undefined): string | null {
   if (value === undefined || value === null) return null;
   if (typeof value === 'string') return value;
   // Flash is a bitmask — bit 0 indicates whether flash fired
-  return (value & 1) ? 'Fired' : 'No flash';
+  return value & 1 ? 'Fired' : 'No flash';
 }
 
 self.onmessage = async (event: MessageEvent<ExifRequest>) => {
@@ -123,7 +129,8 @@ self.onmessage = async (event: MessageEvent<ExifRequest>) => {
     const cameraModel: string | null = parsed?.Model?.trim() ?? null;
     const lensModel: string | null = parsed?.LensModel?.trim() ?? null;
 
-    const focalLength: number | null = parsed?.FocalLength ?? parsed?.FocalLengthIn35mmFormat ?? null;
+    const focalLength: number | null =
+      parsed?.FocalLength ?? parsed?.FocalLengthIn35mmFormat ?? null;
     const aperture: number | null = parsed?.FNumber ?? null;
 
     let shutterSpeed: string | null = null;
@@ -143,30 +150,58 @@ self.onmessage = async (event: MessageEvent<ExifRequest>) => {
     }
 
     const meteringMode: string | null =
-      parsed?.MeteringMode != null ? (METERING_MODES[parsed.MeteringMode] ?? `Mode ${parsed.MeteringMode}`) : null;
+      parsed?.MeteringMode != null
+        ? (METERING_MODES[parsed.MeteringMode] ?? `Mode ${parsed.MeteringMode}`)
+        : null;
 
     const exposureProgram: string | null =
-      parsed?.ExposureProgram != null ? (EXPOSURE_PROGRAMS[parsed.ExposureProgram] ?? `Program ${parsed.ExposureProgram}`) : null;
+      parsed?.ExposureProgram != null
+        ? (EXPOSURE_PROGRAMS[parsed.ExposureProgram] ?? `Program ${parsed.ExposureProgram}`)
+        : null;
 
     const colorSpace: string | null =
-      parsed?.ColorSpace != null ? (COLOR_SPACES[parsed.ColorSpace] ?? `Space ${parsed.ColorSpace}`) : null;
+      parsed?.ColorSpace != null
+        ? (COLOR_SPACES[parsed.ColorSpace] ?? `Space ${parsed.ColorSpace}`)
+        : null;
 
     self.postMessage({
       path: file.path,
-      dateTaken, width, height,
-      cameraMake, cameraModel, lensModel,
-      focalLength, aperture, shutterSpeed, iso,
-      exposureCompensation, flash, whiteBalance,
-      meteringMode, exposureProgram, colorSpace,
+      dateTaken,
+      width,
+      height,
+      cameraMake,
+      cameraModel,
+      lensModel,
+      focalLength,
+      aperture,
+      shutterSpeed,
+      iso,
+      exposureCompensation,
+      flash,
+      whiteBalance,
+      meteringMode,
+      exposureProgram,
+      colorSpace,
     } as ExifResult);
   } catch {
     self.postMessage({
       path: file.path,
-      dateTaken: null, width: null, height: null,
-      cameraMake: null, cameraModel: null, lensModel: null,
-      focalLength: null, aperture: null, shutterSpeed: null, iso: null,
-      exposureCompensation: null, flash: null, whiteBalance: null,
-      meteringMode: null, exposureProgram: null, colorSpace: null,
+      dateTaken: null,
+      width: null,
+      height: null,
+      cameraMake: null,
+      cameraModel: null,
+      lensModel: null,
+      focalLength: null,
+      aperture: null,
+      shutterSpeed: null,
+      iso: null,
+      exposureCompensation: null,
+      flash: null,
+      whiteBalance: null,
+      meteringMode: null,
+      exposureProgram: null,
+      colorSpace: null,
     } as ExifResult);
   }
 };

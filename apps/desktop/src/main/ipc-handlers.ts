@@ -199,10 +199,7 @@ export function registerIpcHandlers(): void {
         }
         try {
           const buffer = await readFile(file.path);
-          const rotated = await sharp(buffer)
-            .rotate(file.degrees)
-            .withMetadata()
-            .toBuffer();
+          const rotated = await sharp(buffer).rotate(file.degrees).withMetadata().toBuffer();
           await writeFile(file.path, rotated);
           succeeded.push(file.path);
         } catch (err) {

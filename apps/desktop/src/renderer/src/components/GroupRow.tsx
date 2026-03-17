@@ -84,14 +84,15 @@ export function GroupRow({
   return (
     <div data-testid="group-row" data-group-id={group.id}>
       {/* Group header */}
-      <div className="text-xs text-gray-400 px-2 py-1 flex items-center gap-2" data-testid="group-header">
+      <div
+        className="text-xs text-gray-400 px-2 py-1 flex items-center gap-2"
+        data-testid="group-header"
+      >
         <span>
           Series: {photoCount} photo{photoCount !== 1 ? 's' : ''}
           {timeRange && ` \u00B7 ${timeRange}`}
         </span>
-        {summary && (
-          <span className="text-gray-500">({summary})</span>
-        )}
+        {summary && <span className="text-gray-500">({summary})</span>}
       </div>
 
       {/* Thumbnail grid */}

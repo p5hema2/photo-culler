@@ -48,7 +48,11 @@ const GROUPING_STEPS = [500, 1000, 2000, 3000, 5000, 10000, 15000, 30000, 60000]
 
 const FILE_TYPE_CHIPS = ['jpg', 'png', 'tiff', 'webp'] as const;
 
-const CLASSIFICATION_CHIPS: Array<{ value: ClassificationFilter; label: string; activeColor: string }> = [
+const CLASSIFICATION_CHIPS: Array<{
+  value: ClassificationFilter;
+  label: string;
+  activeColor: string;
+}> = [
   { value: 'unclassified', label: 'None', activeColor: 'bg-gray-600 text-gray-300' },
   { value: 'keep', label: 'Keep', activeColor: 'bg-green-900 text-green-300' },
   { value: 'review', label: 'Review', activeColor: 'bg-yellow-900 text-yellow-300' },
@@ -74,7 +78,17 @@ function findClosestStep(ms: number): number {
 }
 
 // Dropdown menu wrapper
-function DropdownMenu({ label, children, testId, tooltip }: { label: string; children: React.ReactNode; testId?: string; tooltip?: string }): React.JSX.Element {
+function DropdownMenu({
+  label,
+  children,
+  testId,
+  tooltip,
+}: {
+  label: string;
+  children: React.ReactNode;
+  testId?: string;
+  tooltip?: string;
+}): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -234,7 +248,8 @@ export function Toolbar({
   );
 
   const showExifProgress = exifProgress.total > 0 && exifProgress.completed < exifProgress.total;
-  const showScoringProgress = scoringProgress.total > 0 && scoringProgress.completed < scoringProgress.total;
+  const showScoringProgress =
+    scoringProgress.total > 0 && scoringProgress.completed < scoringProgress.total;
 
   // Active filter indicator
   const activeFilters: string[] = [];
@@ -268,7 +283,11 @@ export function Toolbar({
       )}
 
       {/* Sort dropdown */}
-      <DropdownMenu label={`Sort: ${SORT_OPTIONS.find(o => o.value === sortField)?.label ?? ''}`} testId="sort-menu" tooltip="Change image sort order">
+      <DropdownMenu
+        label={`Sort: ${SORT_OPTIONS.find((o) => o.value === sortField)?.label ?? ''}`}
+        testId="sort-menu"
+        tooltip="Change image sort order"
+      >
         <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">Sort by</div>
         {SORT_OPTIONS.map((opt) => (
           <button
@@ -281,7 +300,9 @@ export function Toolbar({
           >
             {opt.label}
             {sortField === opt.value && (
-              <span className="ml-2 text-gray-400">{sortDirection === 'asc' ? '\u2191 Asc' : '\u2193 Desc'}</span>
+              <span className="ml-2 text-gray-400">
+                {sortDirection === 'asc' ? '\u2191 Asc' : '\u2193 Desc'}
+              </span>
             )}
           </button>
         ))}
@@ -313,7 +334,9 @@ export function Toolbar({
         </div>
 
         {/* Classification */}
-        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mt-1">Classification</div>
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mt-1">
+          Classification
+        </div>
         <div className="flex gap-1">
           {CLASSIFICATION_CHIPS.map((chip) => (
             <button
@@ -346,14 +369,20 @@ export function Toolbar({
         <div className="flex items-center gap-2 px-1">
           <span className="text-[10px] text-gray-500 w-4">{filterScoreRange?.min ?? 0}</span>
           <input
-            type="range" min={0} max={100} step={5}
+            type="range"
+            min={0}
+            max={100}
+            step={5}
             value={filterScoreRange?.min ?? 0}
             onChange={(e) => handleScoreMinChange(Number(e.target.value))}
             className="flex-1 accent-blue-500"
             data-testid="score-min-range"
           />
           <input
-            type="range" min={0} max={100} step={5}
+            type="range"
+            min={0}
+            max={100}
+            step={5}
             value={filterScoreRange?.max ?? 100}
             onChange={(e) => handleScoreMaxChange(Number(e.target.value))}
             className="flex-1 accent-blue-500"
@@ -364,8 +393,14 @@ export function Toolbar({
       </DropdownMenu>
 
       {/* View dropdown */}
-      <DropdownMenu label="View" testId="view-menu" tooltip="Thumbnail size, grouping, and selection mode">
-        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">Thumbnail size</div>
+      <DropdownMenu
+        label="View"
+        testId="view-menu"
+        tooltip="Thumbnail size, grouping, and selection mode"
+      >
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">
+          Thumbnail size
+        </div>
         <div className="flex gap-1">
           {(['small', 'medium', 'large'] as const).map((s) => (
             <button
@@ -385,14 +420,19 @@ export function Toolbar({
           Group threshold: {formatThreshold(groupingThresholdMs)}
         </div>
         <input
-          type="range" min={0} max={GROUPING_STEPS.length - 1} step={1}
+          type="range"
+          min={0}
+          max={GROUPING_STEPS.length - 1}
+          step={1}
           value={findClosestStep(groupingThresholdMs)}
           onChange={(e) => handleSliderChange(Number(e.target.value))}
           className="w-full accent-blue-500"
           data-testid="grouping-range"
         />
 
-        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mt-1">Selection mode</div>
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mt-1">
+          Selection mode
+        </div>
         <button
           onClick={onToggleSelectMode}
           className={`px-2 py-1 text-xs rounded transition-colors ${
@@ -413,9 +453,16 @@ export function Toolbar({
       <div className="relative" data-testid="search-container">
         <svg
           className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500"
-          fill="none" viewBox="0 0 24 24" stroke="currentColor"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+          />
         </svg>
         <input
           type="text"

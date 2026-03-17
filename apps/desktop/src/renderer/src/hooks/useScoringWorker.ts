@@ -33,10 +33,9 @@ export function useScoringWorker(): ScoringWorkerAPI {
       setIsScoring(true);
       setProgress({ completed: 0, total: files.length });
 
-      const worker = new Worker(
-        new URL('../workers/scoring.worker.ts', import.meta.url),
-        { type: 'module' },
-      );
+      const worker = new Worker(new URL('../workers/scoring.worker.ts', import.meta.url), {
+        type: 'module',
+      });
       workerRef.current = worker;
 
       let completed = 0;

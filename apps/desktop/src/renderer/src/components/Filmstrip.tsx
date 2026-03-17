@@ -30,10 +30,7 @@ function FilmstripThumbnail({
   // Request thumbnail if loading
   useEffect(() => {
     if (thumbnail === 'loading') {
-      const encodedPath = image.path
-        .split('/')
-        .map(encodeURIComponent)
-        .join('/');
+      const encodedPath = image.path.split('/').map(encodeURIComponent).join('/');
       requestThumbnail(image.path, `app://file${encodedPath}`, 256);
     }
   }, [image.path, thumbnail, requestThumbnail]);
@@ -68,9 +65,7 @@ function FilmstripThumbnail({
       data-image-path={image.path}
       data-testid="filmstrip-thumbnail"
     >
-      {thumbnail === 'loading' && (
-        <div className="w-full h-full bg-gray-700 animate-pulse" />
-      )}
+      {thumbnail === 'loading' && <div className="w-full h-full bg-gray-700 animate-pulse" />}
       {thumbnail === 'error' && (
         <div className="w-full h-full bg-gray-700 flex items-center justify-center">
           <span className="text-gray-500 text-xs">!</span>
