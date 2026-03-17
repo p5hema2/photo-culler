@@ -8,8 +8,11 @@ directories:
 files:
   - out/**
   - package.json
-  - node_modules/sharp/**
-  - node_modules/@img/**
+  - '!node_modules'
+  - from: ../../node_modules/sharp
+    to: node_modules/sharp
+  - from: ../../node_modules/@img
+    to: node_modules/@img
 
 npmRebuild: false
 asar: true
@@ -36,7 +39,7 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
 
 dmg:
-  artifactName: "${productName}-${version}-mac-${arch}.${ext}"
+  artifactName: '${productName}-${version}-mac-${arch}.${ext}'
 
 win:
   icon: build/icon.ico
@@ -48,4 +51,4 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: "${productName}-${version}-win-${arch}-setup.${ext}"
+  artifactName: '${productName}-${version}-win-${arch}-setup.${ext}'
