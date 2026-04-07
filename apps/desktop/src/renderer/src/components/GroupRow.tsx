@@ -24,13 +24,25 @@ interface GroupRowProps {
 }
 
 function formatTime(ms: number): string {
-  const date = new Date(ms);
-  return date.toLocaleTimeString('en-US', {
+  return new Date(ms).toLocaleTimeString('en-US', {
     hour12: false,
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
+    timeZone: 'UTC',
   });
+}
+
+function offsetToLabel(offset: string): string {
+  const labels: Record<string, string> = {
+    '+00:00': 'UTC',
+    '+01:00': 'CET',
+    '+02:00': 'CEST',
+    '+09:00': 'JST',
+    '-05:00': 'EST',
+    '-08:00': 'PST',
+  };
+  return labels[offset] ?? `UTC${offset}`;
 }
 
 function getClassificationSummary(
@@ -73,11 +85,21 @@ export function GroupRow({
   groupIndex,
 }: GroupRowProps): React.JSX.Element {
   const photoCount = group.images.length;
+
+  // Use dateTakenLocal (wall-clock time) for display, falling back to dateTaken
+  const localTimes = group.images
+    .map((img) => img.dateTakenLocal ?? img.dateTaken)
+    .filter((t): t is number => t != null);
+  const startLocal = localTimes.length > 0 ? Math.min(...localTimes) : null;
+  const endLocal = localTimes.length > 0 ? Math.max(...localTimes) : null;
+  const offset = group.images[0]?.timezoneOffset;
+  const tzLabel = offset ? ` ${offsetToLabel(offset)}` : '';
+
   const timeRange =
-    group.startTime != null && group.endTime != null
-      ? group.startTime === group.endTime
-        ? formatTime(group.startTime)
-        : `${formatTime(group.startTime)} -- ${formatTime(group.endTime)}`
+    startLocal != null && endLocal != null
+      ? startLocal === endLocal
+        ? `${formatTime(startLocal)}${tzLabel}`
+        : `${formatTime(startLocal)} -- ${formatTime(endLocal)}${tzLabel}`
       : '';
   const summary = getClassificationSummary(group.images, classifications);
 

@@ -9,8 +9,12 @@ export interface ImageFileInfo {
   size: number;
   /** Last modified timestamp (ms since epoch) */
   lastModified: number;
-  /** EXIF DateTimeOriginal timestamp (ms since epoch), if available */
+  /** True UTC timestamp for sorting (ms since epoch): local time minus offset */
   dateTaken?: number;
+  /** Camera wall-clock time encoded as UTC (ms since epoch) for display with timeZone:'UTC' */
+  dateTakenLocal?: number;
+  /** UTC offset at capture time from EXIF OffsetTimeOriginal, e.g. "+01:00" */
+  timezoneOffset?: string;
   /** Image width in pixels (available after metadata extraction) */
   width?: number;
   /** Image height in pixels (available after metadata extraction) */

@@ -16,7 +16,12 @@ export interface ExifRequest {
 
 export interface ExifResult {
   path: string;
+  /** True UTC timestamp for sorting (local time minus offset) */
   dateTaken: number | null;
+  /** Camera wall-clock time encoded as UTC for display */
+  dateTakenLocal: number | null;
+  /** UTC offset at capture, e.g. "+01:00" */
+  timezoneOffset: string | null;
   width: number | null;
   height: number | null;
   cameraMake: string | null;
@@ -42,6 +47,7 @@ export type ExifResponse = ExifResult | ExifDone;
 
 const EXIF_TAGS = [
   'DateTimeOriginal',
+  'OffsetTimeOriginal',
   'ImageWidth',
   'ImageHeight',
   'Make',
@@ -113,13 +119,43 @@ self.onmessage = async (event: MessageEvent<ExifRequest>) => {
     const parsed = await exifr.parse(file.buffer, {
       pick: EXIF_TAGS,
       translateValues: false,
+      reviveValues: false,
     });
 
+    // Parse the raw EXIF date string ("YYYY:MM:DD HH:MM:SS") via Date.UTC
+    // to avoid system-timezone DST corruption (e.g. camera's 02:44 becomes 03:44).
+    //
+    // dateTakenLocal = camera wall-clock time encoded as UTC (for display)
+    // dateTaken      = true UTC for sorting (local minus offset, or same as local if no offset)
     let dateTaken: number | null = null;
+    let dateTakenLocal: number | null = null;
+    let timezoneOffset: string | null = null;
+
     if (parsed?.DateTimeOriginal) {
       const dt = parsed.DateTimeOriginal;
-      dateTaken = dt instanceof Date ? dt.getTime() : new Date(dt).getTime();
-      if (isNaN(dateTaken)) dateTaken = null;
+      if (typeof dt === 'string') {
+        const m = dt.match(/^(\d{4}):(\d{2}):(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+        if (m) {
+          dateTakenLocal = Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!);
+          if (isNaN(dateTakenLocal)) dateTakenLocal = null;
+        }
+      }
+    }
+
+    // Extract offset and compute true UTC
+    if (dateTakenLocal != null) {
+      const offsetRaw = parsed?.OffsetTimeOriginal;
+      if (typeof offsetRaw === 'string') {
+        const om = offsetRaw.match(/^([+-])(\d{2}):(\d{2})$/);
+        if (om) {
+          timezoneOffset = offsetRaw;
+          const sign = om[1] === '+' ? 1 : -1;
+          const offsetMs = sign * (+om[2]! * 60 + +om[3]!) * 60_000;
+          dateTaken = dateTakenLocal - offsetMs;
+        }
+      }
+      // No offset available — use local time as sort key (best we can do)
+      if (dateTaken == null) dateTaken = dateTakenLocal;
     }
 
     const width: number | null = parsed?.ImageWidth ?? null;
@@ -167,6 +203,8 @@ self.onmessage = async (event: MessageEvent<ExifRequest>) => {
     self.postMessage({
       path: file.path,
       dateTaken,
+      dateTakenLocal,
+      timezoneOffset,
       width,
       height,
       cameraMake,
@@ -187,6 +225,8 @@ self.onmessage = async (event: MessageEvent<ExifRequest>) => {
     self.postMessage({
       path: file.path,
       dateTaken: null,
+      dateTakenLocal: null,
+      timezoneOffset: null,
       width: null,
       height: null,
       cameraMake: null,

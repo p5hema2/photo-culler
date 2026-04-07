@@ -38,6 +38,34 @@ function formatDate(ms: number): string {
   return new Date(ms).toLocaleString();
 }
 
+function formatDateLocal(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { timeZone: 'UTC' });
+}
+
+/** Map common UTC offsets to timezone abbreviations */
+function offsetToLabel(offset: string): string {
+  const labels: Record<string, string> = {
+    '+00:00': 'UTC',
+    '-00:00': 'UTC',
+    '+01:00': 'CET',
+    '+02:00': 'CEST',
+    '+03:00': 'MSK',
+    '+04:00': 'GST',
+    '+05:00': 'PKT',
+    '+05:30': 'IST',
+    '+07:00': 'ICT',
+    '+08:00': 'CST',
+    '+09:00': 'JST',
+    '+10:00': 'AEST',
+    '-05:00': 'EST',
+    '-04:00': 'EDT',
+    '-06:00': 'CST',
+    '-07:00': 'MST',
+    '-08:00': 'PST',
+  };
+  return labels[offset] ?? `UTC${offset}`;
+}
+
 const SUBSCORE_TOOLTIPS: Record<keyof QualitySubscores, string> = {
   sharpness: 'Laplacian variance — measures edge detail and focus quality (weight: 40%)',
   exposure: 'Luminance analysis — penalizes over/underexposure and clipped pixels (weight: 25%)',
@@ -518,15 +546,35 @@ export function InfoPanel({
                         <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
                           Dates
                         </div>
-                        {image.dateTaken && (
+                        {(image.dateTakenLocal ?? image.dateTaken) != null && (
                           <div className="flex justify-between">
                             <span className="text-gray-500">Taken</span>
-                            <span>{formatDate(image.dateTaken)}</span>
+                            <span>
+                              {formatDateLocal(image.dateTakenLocal ?? image.dateTaken!)}
+                              {image.timezoneOffset && (
+                                <span className="text-gray-500 ml-1 text-[10px]">
+                                  {offsetToLabel(image.timezoneOffset)}
+                                </span>
+                              )}
+                            </span>
                           </div>
                         )}
                         <div className="flex justify-between">
                           <span className="text-gray-500">Modified</span>
-                          <span>{formatDate(image.lastModified)}</span>
+                          <span>
+                            {formatDate(image.lastModified)}
+                            <span className="text-gray-500 ml-1 text-[10px]">
+                              {offsetToLabel(
+                                (() => {
+                                  const off = -new Date(image.lastModified).getTimezoneOffset();
+                                  const sign = off >= 0 ? '+' : '-';
+                                  const h = String(Math.floor(Math.abs(off) / 60)).padStart(2, '0');
+                                  const m = String(Math.abs(off) % 60).padStart(2, '0');
+                                  return `${sign}${h}:${m}`;
+                                })(),
+                              )}
+                            </span>
+                          </span>
                         </div>
                       </div>
                     </div>

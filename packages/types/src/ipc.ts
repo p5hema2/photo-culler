@@ -55,6 +55,8 @@ export interface ImageResult {
   /** Cached EXIF metadata extracted from the image */
   exif?: {
     dateTaken?: number;
+    dateTakenLocal?: number;
+    timezoneOffset?: string;
     width?: number;
     height?: number;
     cameraMake?: string;

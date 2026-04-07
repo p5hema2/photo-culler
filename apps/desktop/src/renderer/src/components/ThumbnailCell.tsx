@@ -161,6 +161,10 @@ export function ThumbnailCell({
           </div>
         </div>
       )}
+      {/* Filename badge */}
+      <div className="absolute top-1 left-1 z-10 bg-black/60 px-1 rounded text-[9px] font-mono text-gray-300 max-w-[90%] truncate">
+        {image.name}
+      </div>
       {/* Quality score badge */}
       {qualityScore != null && (
         <div

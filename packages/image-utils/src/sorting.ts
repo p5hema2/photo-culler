@@ -30,6 +30,7 @@ export function sortImages(
     }
 
     case 'dateTaken': {
+      const naturalDateCompare = compare({ order: 'asc' });
       sorted.sort((a, b) => {
         const aDate = a.dateTaken;
         const bDate = b.dateTaken;
@@ -39,7 +40,10 @@ export function sortImages(
         if (aDate == null) return 1;
         if (bDate == null) return -1;
 
-        return (aDate - bDate) * dirMultiplier;
+        const diff = (aDate - bDate) * dirMultiplier;
+        if (diff !== 0) return diff;
+        // Tiebreaker: filename order for burst shots with identical timestamps
+        return naturalDateCompare(a.name, b.name);
       });
       break;
     }

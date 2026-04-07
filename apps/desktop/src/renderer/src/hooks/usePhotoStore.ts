@@ -237,6 +237,8 @@ export function usePhotoStore(): PhotoStoreAPI {
             const cachedExif = results.images[img.name].exif;
             if (cachedExif) {
               if (cachedExif.dateTaken != null) img.dateTaken = cachedExif.dateTaken;
+              if (cachedExif.dateTakenLocal != null) img.dateTakenLocal = cachedExif.dateTakenLocal;
+              if (cachedExif.timezoneOffset != null) img.timezoneOffset = cachedExif.timezoneOffset;
               if (cachedExif.width != null) img.width = cachedExif.width;
               if (cachedExif.height != null) img.height = cachedExif.height;
               if (cachedExif.cameraMake != null) img.cameraMake = cachedExif.cameraMake;
@@ -299,6 +301,8 @@ export function usePhotoStore(): PhotoStoreAPI {
             if (filename && resultsRef.current) {
               const exifData = {
                 dateTaken: metadata.dateTaken ?? undefined,
+                dateTakenLocal: metadata.dateTakenLocal ?? undefined,
+                timezoneOffset: metadata.timezoneOffset ?? undefined,
                 width: metadata.width ?? undefined,
                 height: metadata.height ?? undefined,
                 cameraMake: metadata.cameraMake ?? undefined,
@@ -338,6 +342,8 @@ export function usePhotoStore(): PhotoStoreAPI {
                   ? {
                       ...img,
                       dateTaken: metadata.dateTaken ?? undefined,
+                      dateTakenLocal: metadata.dateTakenLocal ?? undefined,
+                      timezoneOffset: metadata.timezoneOffset ?? undefined,
                       width: metadata.width ?? undefined,
                       height: metadata.height ?? undefined,
                       cameraMake: metadata.cameraMake ?? undefined,

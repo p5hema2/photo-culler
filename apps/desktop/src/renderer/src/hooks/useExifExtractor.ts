@@ -15,6 +15,8 @@ interface ExifExtractorAPI {
 
 const NULL_METADATA: ExifMetadata = {
   dateTaken: null,
+  dateTakenLocal: null,
+  timezoneOffset: null,
   width: null,
   height: null,
   cameraMake: null,
