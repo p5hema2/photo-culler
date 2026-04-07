@@ -10,6 +10,7 @@ import { EmptyState } from './components/EmptyState';
 import { ExecutePanel } from './components/ExecutePanel';
 import { InfoPanel } from './components/InfoPanel';
 import { PreviewPanel } from './components/PreviewPanel';
+import { ShortcutsTutorial } from './components/ShortcutsTutorial';
 
 function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX.Element {
   return (
@@ -74,6 +75,7 @@ function App(): React.JSX.Element {
   const [showFocusPeaking, setShowFocusPeaking] = useState(false);
   const [showClipping, setShowClipping] = useState(false);
   const [selectOnHover, setSelectOnHover] = useState(true);
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   const sortedFlatImages = useMemo(() => groups.flatMap((g) => g.images), [groups]);
 
@@ -172,6 +174,20 @@ function App(): React.JSX.Element {
       window.menuEvents?.removeOpenFolderListener();
     };
   }, [store]);
+
+  // ? key opens shortcuts tutorial
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea') return;
+      if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        setShowShortcuts((prev) => !prev);
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, []);
 
   const handleImageClick = useCallback(
     (filename: string) => {
@@ -378,6 +394,7 @@ function App(): React.JSX.Element {
           onToggleSelectMode={() => setSelectOnHover((prev) => !prev)}
           onExecute={handleOpenExecute}
           onDeleteSelected={handleTrashSelected}
+          onShowShortcuts={() => setShowShortcuts(true)}
         />
 
         {/* Error banner */}
@@ -419,6 +436,8 @@ function App(): React.JSX.Element {
         onClose={handleCloseExecute}
         onExecute={store.executeActions}
       />
+
+      <ShortcutsTutorial isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </DropZone>
   );
 }

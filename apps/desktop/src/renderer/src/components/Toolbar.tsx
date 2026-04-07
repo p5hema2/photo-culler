@@ -34,6 +34,7 @@ interface ToolbarProps {
   onToggleSelectMode: () => void;
   onExecute: () => void;
   onDeleteSelected: () => void;
+  onShowShortcuts: () => void;
 }
 
 const SORT_OPTIONS: Array<{ value: SortField; label: string }> = [
@@ -153,6 +154,7 @@ export function Toolbar({
   onToggleSelectMode,
   onExecute,
   onDeleteSelected,
+  onShowShortcuts,
 }: ToolbarProps): React.JSX.Element {
   const [localSearch, setLocalSearch] = useState(searchQuery);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -474,6 +476,16 @@ export function Toolbar({
           title="Filter images by filename"
         />
       </div>
+
+      {/* Shortcuts help */}
+      <button
+        onClick={onShowShortcuts}
+        className="px-2 py-1 text-xs text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+        data-testid="shortcuts-btn"
+        title="Keyboard shortcuts (?)"
+      >
+        ?
+      </button>
 
       {/* Spacer */}
       <div className="flex-1" />

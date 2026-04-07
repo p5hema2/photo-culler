@@ -801,51 +801,38 @@ export function usePhotoStore(): PhotoStoreAPI {
   const setQualityScore = useCallback(
     (filename: string, score: number, subscores?: QualitySubscores) => {
       setState((prev) => {
-        // Auto-assign classification only if user hasn't manually overridden
-        const isManualOverride = resultsRef.current?.images[filename]?.userOverride ?? false;
-        let newClassification = prev.classifications[filename];
-        if (!isManualOverride) {
-          newClassification = score >= 60 ? 'keep' : score >= 35 ? 'review' : 'delete';
-        }
-
-        const newClassifications = { ...prev.classifications, [filename]: newClassification };
         const newQualityScores = { ...prev.qualityScores, [filename]: score };
         const newQualitySubscores = subscores
           ? { ...prev.qualitySubscores, [filename]: subscores }
           : prev.qualitySubscores;
 
-        // Update results ref
+        // Update results ref (score only — classification is user-driven)
         if (resultsRef.current) {
+          const existing = resultsRef.current.images[filename];
           resultsRef.current = {
             ...resultsRef.current,
             images: {
               ...resultsRef.current.images,
               [filename]: {
-                classification: newClassification,
-                userOverride: isManualOverride,
+                classification: existing?.classification ?? null,
+                userOverride: existing?.userOverride ?? false,
                 qualityScore: score,
-                qualitySubscores:
-                  subscores ?? resultsRef.current.images[filename]?.qualitySubscores,
-                rotation: resultsRef.current.images[filename]?.rotation,
-                exif: resultsRef.current.images[filename]?.exif,
+                qualitySubscores: subscores ?? existing?.qualitySubscores,
+                rotation: existing?.rotation,
+                exif: existing?.exif,
               },
             },
           };
         }
 
-        if (prev.folderPath) {
-          scheduleSave(prev.folderPath, newClassifications);
-        }
-
         return {
           ...prev,
-          classifications: newClassifications,
           qualityScores: newQualityScores,
           qualitySubscores: newQualitySubscores,
         };
       });
     },
-    [scheduleSave],
+    [],
   );
 
   const setFilterScoreRange = useCallback((range: { min: number; max: number } | null) => {
