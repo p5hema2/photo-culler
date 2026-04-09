@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { groupByTimestamp, type PhotoGroup } from '../grouping';
+import { groupByTimestamp } from '../grouping';
 import type { ImageFileInfo } from '@photo-culler/types';
 
 function makeImage(name: string, dateTaken?: number, lastModified = 1000000): ImageFileInfo {

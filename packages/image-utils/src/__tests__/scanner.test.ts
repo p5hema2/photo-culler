@@ -38,7 +38,7 @@ describe('scanFolder', () => {
   });
 
   it('returns ImageFileInfo[] for supported image types only', async () => {
-    mockReaddir.mockImplementation(async (dirPath: any) => {
+    mockReaddir.mockImplementation(async (dirPath) => {
       if (String(dirPath).endsWith('/picks')) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
@@ -54,9 +54,9 @@ describe('scanFolder', () => {
         makeDirent('document.pdf'),
         makeDirent('video.mp4'),
         makeDirent('readme.txt'),
-      ] as any;
+      ] as Dirent[];
     });
-    mockStat.mockResolvedValue(makeStats(1024, 1000000) as any);
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
     expect(result).toHaveLength(6);
@@ -71,15 +71,15 @@ describe('scanFolder', () => {
   });
 
   it('excludes hidden files (names starting with .)', async () => {
-    mockReaddir.mockImplementation(async (dirPath: any) => {
+    mockReaddir.mockImplementation(async (dirPath) => {
       if (String(dirPath).endsWith('/picks')) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
       }
-      return [makeDirent('.hidden.jpg'), makeDirent('visible.jpg')] as any;
+      return [makeDirent('.hidden.jpg'), makeDirent('visible.jpg')] as Dirent[];
     });
-    mockStat.mockResolvedValue(makeStats(1024, 1000000) as any);
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
     expect(result).toHaveLength(1);
@@ -87,15 +87,15 @@ describe('scanFolder', () => {
   });
 
   it('excludes photo-culler-results.json', async () => {
-    mockReaddir.mockImplementation(async (dirPath: any) => {
+    mockReaddir.mockImplementation(async (dirPath) => {
       if (String(dirPath).endsWith('/picks')) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
       }
-      return [makeDirent('photo-culler-results.json'), makeDirent('photo.jpg')] as any;
+      return [makeDirent('photo-culler-results.json'), makeDirent('photo.jpg')] as Dirent[];
     });
-    mockStat.mockResolvedValue(makeStats(1024, 1000000) as any);
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
     expect(result).toHaveLength(1);
@@ -103,14 +103,14 @@ describe('scanFolder', () => {
   });
 
   it('includes files from picks/ subfolder when it exists', async () => {
-    mockReaddir.mockImplementation(async (dirPath: any) => {
+    mockReaddir.mockImplementation(async (dirPath) => {
       const dir = String(dirPath);
       if (dir.endsWith('/picks')) {
-        return [makeDirent('picked.jpg')] as any;
+        return [makeDirent('picked.jpg')] as Dirent[];
       }
-      return [makeDirent('main.jpg')] as any;
+      return [makeDirent('main.jpg')] as Dirent[];
     });
-    mockStat.mockResolvedValue(makeStats(1024, 1000000) as any);
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
     expect(result).toHaveLength(2);
@@ -120,28 +120,28 @@ describe('scanFolder', () => {
   });
 
   it('handles picks/ not existing without error', async () => {
-    mockReaddir.mockImplementation(async (dirPath: any) => {
+    mockReaddir.mockImplementation(async (dirPath) => {
       if (String(dirPath).endsWith('/picks')) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
       }
-      return [makeDirent('photo.jpg')] as any;
+      return [makeDirent('photo.jpg')] as Dirent[];
     });
-    mockStat.mockResolvedValue(makeStats(1024, 1000000) as any);
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
     expect(result).toHaveLength(1);
   });
 
   it('returns empty array for empty folder', async () => {
-    mockReaddir.mockImplementation(async (dirPath: any) => {
+    mockReaddir.mockImplementation(async (dirPath) => {
       if (String(dirPath).endsWith('/picks')) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
       }
-      return [] as any;
+      return [] as Dirent[];
     });
 
     const result = await scanFolder('/test/folder');
@@ -149,15 +149,15 @@ describe('scanFolder', () => {
   });
 
   it('handles case-insensitive extension matching (.JPG works)', async () => {
-    mockReaddir.mockImplementation(async (dirPath: any) => {
+    mockReaddir.mockImplementation(async (dirPath) => {
       if (String(dirPath).endsWith('/picks')) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
       }
-      return [makeDirent('PHOTO.JPG'), makeDirent('Image.PNG')] as any;
+      return [makeDirent('PHOTO.JPG'), makeDirent('Image.PNG')] as Dirent[];
     });
-    mockStat.mockResolvedValue(makeStats(1024, 1000000) as any);
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
     expect(result).toHaveLength(2);
@@ -174,15 +174,15 @@ describe('scanFolder', () => {
   });
 
   it('returns correct ImageFileInfo shape', async () => {
-    mockReaddir.mockImplementation(async (dirPath: any) => {
+    mockReaddir.mockImplementation(async (dirPath) => {
       if (String(dirPath).endsWith('/picks')) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
       }
-      return [makeDirent('photo.jpg')] as any;
+      return [makeDirent('photo.jpg')] as Dirent[];
     });
-    mockStat.mockResolvedValue(makeStats(2048, 1700000000000) as any);
+    mockStat.mockResolvedValue(makeStats(2048, 1700000000000));
 
     const result = await scanFolder('/test/folder');
     expect(result[0]).toEqual({
