@@ -18,7 +18,6 @@ interface InfoPanelProps {
   onToggleFocusPeaking?: () => void;
   showClipping?: boolean;
   onToggleClipping?: () => void;
-  isPreviewMode?: boolean;
 }
 
 const CLASSIFICATION_BADGES: Record<string, { label: string; className: string }> = {
@@ -111,7 +110,6 @@ export function InfoPanel({
   onToggleFocusPeaking,
   showClipping,
   onToggleClipping,
-  isPreviewMode,
 }: InfoPanelProps): React.JSX.Element {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);

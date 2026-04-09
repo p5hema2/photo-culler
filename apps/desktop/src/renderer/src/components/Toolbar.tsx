@@ -15,7 +15,6 @@ interface ToolbarProps {
   exifProgress: { completed: number; total: number };
   deleteCount: number;
   keepCount: number;
-  selectedCount: number;
   totalCount: number;
   filterScoreRange: { min: number; max: number } | null;
   scoringProgress: { completed: number; total: number };
@@ -32,8 +31,10 @@ interface ToolbarProps {
   onGroupingThresholdChange: (ms: number) => void;
   onFilterScoreRangeChange: (range: { min: number; max: number } | null) => void;
   onToggleSelectMode: () => void;
+  viewLayout: 'default' | 'loupe' | 'filmstrip';
+  onCycleViewLayout: () => void;
+  onSetViewLayout: (layout: 'default' | 'loupe' | 'filmstrip') => void;
   onExecute: () => void;
-  onDeleteSelected: () => void;
   onShowShortcuts: () => void;
 }
 
@@ -135,7 +136,6 @@ export function Toolbar({
   exifProgress,
   deleteCount,
   keepCount,
-  selectedCount,
   totalCount,
   filterScoreRange,
   scoringProgress,
@@ -152,8 +152,10 @@ export function Toolbar({
   onFilterScoreRangeChange,
   selectOnHover,
   onToggleSelectMode,
+  viewLayout,
+  onCycleViewLayout,
+  onSetViewLayout,
   onExecute,
-  onDeleteSelected,
   onShowShortcuts,
 }: ToolbarProps): React.JSX.Element {
   const [localSearch, setLocalSearch] = useState(searchQuery);
@@ -400,6 +402,25 @@ export function Toolbar({
         testId="view-menu"
         tooltip="Thumbnail size, grouping, and selection mode"
       >
+        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">Layout</div>
+        <div className="flex gap-1 mb-2">
+          {(['default', 'loupe', 'filmstrip'] as const).map((layout) => (
+            <button
+              key={layout}
+              onClick={() => onSetViewLayout(layout)}
+              className={`px-3 py-1 text-xs rounded transition-colors ${
+                viewLayout === layout
+                  ? 'bg-gray-600 text-white'
+                  : 'text-gray-400 hover:text-gray-300'
+              }`}
+              data-testid={`layout-${layout}`}
+              title="Cycle with V"
+            >
+              {layout === 'default' ? 'Grid' : layout === 'loupe' ? 'Loupe' : 'Filmstrip'}
+            </button>
+          ))}
+        </div>
+
         <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">
           Thumbnail size
         </div>
@@ -500,23 +521,6 @@ export function Toolbar({
         <span className="text-[10px] text-gray-500" data-testid="scoring-progress">
           Scoring {scoringProgress.completed}/{scoringProgress.total}
         </span>
-      )}
-
-      {/* Selection */}
-      {selectedCount > 0 && (
-        <span className="text-xs text-blue-400" data-testid="selection-count">
-          {selectedCount}/{totalCount}
-        </span>
-      )}
-      {selectedCount > 0 && (
-        <button
-          onClick={onDeleteSelected}
-          className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-medium transition-colors"
-          data-testid="delete-selected-btn"
-          title="Move selected images to OS trash (recoverable)"
-        >
-          Trash ({selectedCount})
-        </button>
       )}
 
       {/* Save / Delete — execute actions on classified images */}

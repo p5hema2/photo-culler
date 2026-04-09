@@ -11,13 +11,10 @@ interface ThumbnailCellProps {
   qualityScore?: number;
   rotation?: number;
   isFocused: boolean;
-  isSelected: boolean;
   selectOnHover: boolean;
   onClick: () => void;
   onFocus: () => void;
   onCycleClassification: () => void;
-  onToggleSelect: (path: string) => void;
-  onRangeSelect: (path: string) => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   setLastModified?: (id: string, lastModified: number) => void;
@@ -38,13 +35,10 @@ export function ThumbnailCell({
   qualityScore,
   rotation = 0,
   isFocused,
-  isSelected,
   selectOnHover,
   onClick,
   onFocus,
   onCycleClassification,
-  onToggleSelect,
-  onRangeSelect,
   getThumbnail,
   requestThumbnail,
   setLastModified,
@@ -102,15 +96,8 @@ export function ThumbnailCell({
     }
   }, [thumbnail, cellSize, rotation]);
 
-  const handleClick = (e: React.MouseEvent): void => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      onToggleSelect(image.path);
-    } else if (e.shiftKey) {
-      e.preventDefault();
-      onRangeSelect(image.path);
-    } else if (!selectOnHover) {
-      // In click-select mode, left-click focuses the image
+  const handleClick = (): void => {
+    if (!selectOnHover) {
       onFocus();
     }
   };
@@ -141,26 +128,6 @@ export function ThumbnailCell({
       role="gridcell"
       tabIndex={isFocused ? 0 : -1}
     >
-      {/* Selection overlay */}
-      {isSelected && (
-        <div className="absolute inset-0 bg-blue-500/30 z-10 pointer-events-none">
-          <div className="absolute top-1 left-1 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
-            <svg
-              className="w-3 h-3 text-white"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={3}
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
-          </div>
-        </div>
-      )}
       {/* Filename badge */}
       <div className="absolute top-1 left-1 z-10 bg-black/60 px-1 rounded text-[9px] font-mono text-gray-300 max-w-[90%] truncate">
         {image.name}

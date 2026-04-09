@@ -9,7 +9,8 @@ import { PhotoGrid } from './components/PhotoGrid';
 import { EmptyState } from './components/EmptyState';
 import { ExecutePanel } from './components/ExecutePanel';
 import { InfoPanel } from './components/InfoPanel';
-import { PreviewPanel } from './components/PreviewPanel';
+import { LoupeView } from './components/LoupeView';
+import { FilmstripView } from './components/FilmstripView';
 import { ShortcutsTutorial } from './components/ShortcutsTutorial';
 
 function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX.Element {
@@ -74,59 +75,17 @@ function App(): React.JSX.Element {
   const [infoPanelOpen, setInfoPanelOpen] = useState(true);
   const [showFocusPeaking, setShowFocusPeaking] = useState(false);
   const [showClipping, setShowClipping] = useState(false);
-  const [selectOnHover, setSelectOnHover] = useState(true);
+  const [selectOnHover, setSelectOnHover] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [viewLayout, setViewLayout] = useState<'default' | 'loupe' | 'filmstrip'>('default');
 
   const sortedFlatImages = useMemo(() => groups.flatMap((g) => g.images), [groups]);
-
-  const handleToggleSelect = useCallback(
-    (path: string) => {
-      store.toggleSelect(path);
-    },
-    [store],
-  );
-
-  const handleRangeSelect = useCallback(
-    (path: string) => {
-      store.rangeSelect(path);
-    },
-    [store],
-  );
-
-  const handleSelectAll = useCallback(() => {
-    store.selectAll();
-  }, [store]);
-
-  const handleClearSelection = useCallback(() => {
-    store.clearSelection();
-  }, [store]);
 
   const handleTrashFocused = useCallback(() => {
     if (state.focusedImageId) {
       store.trashImages([state.focusedImageId]);
     }
   }, [store, state.focusedImageId]);
-
-  const handleTrashSelected = useCallback(() => {
-    if (state.selectedImages.size > 0) {
-      store.trashImages(Array.from(state.selectedImages));
-    } else if (state.focusedImageId) {
-      store.trashImages([state.focusedImageId]);
-    }
-  }, [store, state.selectedImages, state.focusedImageId]);
-
-  const handleEnterPreview = useCallback(
-    (path: string) => {
-      store.enterPreview(path);
-    },
-    [store],
-  );
-
-  const handleExitPreview = useCallback(() => {
-    store.exitPreview();
-    setShowFocusPeaking(false);
-    setShowClipping(false);
-  }, [store]);
 
   useKeyboardNav({
     groups,
@@ -135,18 +94,11 @@ function App(): React.JSX.Element {
     onCycleClassification: store.cycleClassification,
     onSetClassification: store.setClassification,
     containerRef: gridContainerRef,
-    onToggleSelect: handleToggleSelect,
-    onRangeSelect: handleRangeSelect,
-    onSelectAll: handleSelectAll,
-    onClearSelection: handleClearSelection,
     onTrashFocused: handleTrashFocused,
-    onTrashSelected: handleTrashSelected,
-    onEnterPreview: handleEnterPreview,
-    onExitPreview: handleExitPreview,
-    isPreviewMode: state.isPreviewMode,
     sortedFlatImages,
     thumbnailSize: state.thumbnailSize,
     onRotate: store.rotateImage,
+    viewLayout,
   });
 
   const handleSelectFolder = useCallback(async () => {
@@ -175,7 +127,7 @@ function App(): React.JSX.Element {
     };
   }, [store]);
 
-  // ? key opens shortcuts tutorial
+  // ? key opens shortcuts tutorial, V key toggles layout
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
@@ -183,6 +135,12 @@ function App(): React.JSX.Element {
       if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         setShowShortcuts((prev) => !prev);
+      }
+      if (e.key === 'v' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        setViewLayout((prev) =>
+          prev === 'default' ? 'loupe' : prev === 'loupe' ? 'filmstrip' : 'default',
+        );
       }
     };
     document.addEventListener('keydown', handleKey);
@@ -208,6 +166,12 @@ function App(): React.JSX.Element {
     setInfoPanelOpen((prev) => !prev);
   }, []);
 
+  const handleCycleViewLayout = useCallback(() => {
+    setViewLayout((prev) =>
+      prev === 'default' ? 'loupe' : prev === 'loupe' ? 'filmstrip' : 'default',
+    );
+  }, []);
+
   const handleToggleFocusPeaking = useCallback(() => {
     setShowFocusPeaking((prev) => !prev);
   }, []);
@@ -215,6 +179,13 @@ function App(): React.JSX.Element {
   const handleToggleClipping = useCallback(() => {
     setShowClipping((prev) => !prev);
   }, []);
+
+  // Focus the container after folder loads so keyboard nav works immediately
+  useEffect(() => {
+    if (!state.isLoading && state.images.length > 0 && gridContainerRef.current) {
+      gridContainerRef.current.focus();
+    }
+  }, [state.isLoading, state.images.length]);
 
   // Reset scoring trigger when folder changes
   useEffect(() => {
@@ -263,7 +234,6 @@ function App(): React.JSX.Element {
   // Scoring progress read directly from hook — no sync needed
   const scoringProgress = scoringWorker.progress;
 
-  const selectedCount = state.selectedImages.size;
   const totalCount = store.filteredImages.length;
 
   // Filtered classifications — only for visible (filtered) images
@@ -320,13 +290,20 @@ function App(): React.JSX.Element {
     if (groups.length === 0) {
       return <EmptyState />;
     }
-    if (state.isPreviewMode && state.previewImageId) {
+    if (viewLayout === 'loupe' || viewLayout === 'filmstrip') {
+      const DetailView = viewLayout === 'loupe' ? LoupeView : FilmstripView;
       return (
-        <PreviewPanel
-          imageId={state.previewImageId}
-          images={sortedFlatImages}
-          onNavigate={(path) => store.enterPreview(path)}
-          onClose={store.exitPreview}
+        <DetailView
+          groups={groups}
+          focusedImageId={state.focusedImageId}
+          classifications={state.classifications}
+          qualityScores={state.qualityScores}
+          qualitySubscores={state.qualitySubscores}
+          rotations={state.rotations}
+          selectOnHover={selectOnHover}
+          onImageClick={handleImageClick}
+          onImageFocus={store.setFocusedImage}
+          onCycleClassification={store.cycleClassification}
           getThumbnail={thumbnailWorker.getThumbnail}
           requestThumbnail={thumbnailWorker.requestThumbnail}
           showFocusPeaking={showFocusPeaking}
@@ -342,13 +319,10 @@ function App(): React.JSX.Element {
         rotations={state.rotations}
         thumbnailSize={state.thumbnailSize}
         focusedImageId={state.focusedImageId}
-        selectedImages={state.selectedImages}
         selectOnHover={selectOnHover}
         onImageClick={handleImageClick}
         onImageFocus={store.setFocusedImage}
         onCycleClassification={store.cycleClassification}
-        onToggleSelect={handleToggleSelect}
-        onRangeSelect={handleRangeSelect}
         getThumbnail={thumbnailWorker.getThumbnail}
         requestThumbnail={thumbnailWorker.requestThumbnail}
         setLastModified={thumbnailWorker.setLastModified}
@@ -360,7 +334,7 @@ function App(): React.JSX.Element {
   return (
     <DropZone onFolderDrop={store.openFolder}>
       <div
-        className="flex flex-col h-screen bg-gray-900 text-white"
+        className="flex flex-col h-screen bg-gray-900 text-white outline-none"
         ref={gridContainerRef}
         tabIndex={-1}
       >
@@ -375,7 +349,6 @@ function App(): React.JSX.Element {
           exifProgress={state.exifProgress}
           deleteCount={deleteCount}
           keepCount={keepCount}
-          selectedCount={selectedCount}
           totalCount={totalCount}
           folderPath={state.folderPath}
           onSelectFolder={handleSelectFolder}
@@ -392,8 +365,10 @@ function App(): React.JSX.Element {
           onFilterScoreRangeChange={store.setFilterScoreRange}
           selectOnHover={selectOnHover}
           onToggleSelectMode={() => setSelectOnHover((prev) => !prev)}
+          viewLayout={viewLayout}
+          onCycleViewLayout={handleCycleViewLayout}
+          onSetViewLayout={setViewLayout}
           onExecute={handleOpenExecute}
-          onDeleteSelected={handleTrashSelected}
           onShowShortcuts={() => setShowShortcuts(true)}
         />
 
@@ -412,20 +387,21 @@ function App(): React.JSX.Element {
 
         <div className="flex-1 overflow-hidden relative flex">
           <div className="flex-1 overflow-hidden">{renderContent()}</div>
-          <InfoPanel
-            image={focusedImage}
-            classification={focusedClassification}
-            qualityScore={focusedQualityScore}
-            qualitySubscores={focusedQualitySubscores}
-            rotation={focusedRotation}
-            isOpen={infoPanelOpen}
-            onToggle={handleToggleInfoPanel}
-            showFocusPeaking={showFocusPeaking}
-            onToggleFocusPeaking={handleToggleFocusPeaking}
-            showClipping={showClipping}
-            onToggleClipping={handleToggleClipping}
-            isPreviewMode={state.isPreviewMode}
-          />
+          {viewLayout === 'default' && (
+            <InfoPanel
+              image={focusedImage}
+              classification={focusedClassification}
+              qualityScore={focusedQualityScore}
+              qualitySubscores={focusedQualitySubscores}
+              rotation={focusedRotation}
+              isOpen={infoPanelOpen}
+              onToggle={handleToggleInfoPanel}
+              showFocusPeaking={showFocusPeaking}
+              onToggleFocusPeaking={handleToggleFocusPeaking}
+              showClipping={showClipping}
+              onToggleClipping={handleToggleClipping}
+            />
+          )}
         </div>
       </div>
 

@@ -10,13 +10,10 @@ interface GroupRowProps {
   qualityScores: Record<string, number>;
   rotations: Record<string, number>;
   focusedImageId: string | null;
-  selectedImages: Set<string>;
   selectOnHover: boolean;
   onImageClick: (filename: string) => void;
   onImageFocus: (path: string) => void;
   onCycleClassification: (filename: string) => void;
-  onToggleSelect: (path: string) => void;
-  onRangeSelect: (path: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   setLastModified?: (id: string, lastModified: number) => void;
@@ -72,13 +69,10 @@ export function GroupRow({
   qualityScores,
   rotations,
   focusedImageId,
-  selectedImages,
   selectOnHover,
   onImageClick,
   onImageFocus,
   onCycleClassification,
-  onToggleSelect,
-  onRangeSelect,
   getThumbnail,
   requestThumbnail,
   setLastModified,
@@ -128,13 +122,10 @@ export function GroupRow({
             qualityScore={qualityScores[image.name]}
             rotation={rotations[image.name]}
             isFocused={focusedImageId === image.path}
-            isSelected={selectedImages.has(image.path)}
             selectOnHover={selectOnHover}
             onClick={() => onImageClick(image.name)}
             onFocus={() => onImageFocus(image.path)}
             onCycleClassification={() => onCycleClassification(image.name)}
-            onToggleSelect={onToggleSelect}
-            onRangeSelect={onRangeSelect}
             getThumbnail={getThumbnail}
             requestThumbnail={requestThumbnail}
             setLastModified={setLastModified}

@@ -33,16 +33,6 @@ const SECTIONS: ShortcutSection[] = [
       { keys: '\u2190 \u2192 \u2191 \u2193', description: 'Navigate grid (row & column aware)' },
       { keys: 'Home', description: 'Jump to first image' },
       { keys: 'End', description: 'Jump to last image' },
-      { keys: 'Enter', description: 'Enter preview mode' },
-      { keys: 'Escape', description: 'Exit preview / clear selection' },
-    ],
-  },
-  {
-    title: 'Selection',
-    shortcuts: [
-      { keys: '\u2318/Ctrl + A', description: 'Select all images' },
-      { keys: '\u2318/Ctrl + Click', description: 'Toggle selection' },
-      { keys: 'Shift + Click', description: 'Range select' },
     ],
   },
   {
@@ -50,17 +40,16 @@ const SECTIONS: ShortcutSection[] = [
     shortcuts: [
       { keys: 'Alt + \u2192', description: 'Rotate clockwise' },
       { keys: 'Alt + \u2190', description: 'Rotate counter-clockwise' },
-      { keys: 'Backspace', description: 'Trash focused image' },
-      { keys: 'Delete', description: 'Trash selected images' },
+      { keys: 'Backspace / Delete', description: 'Trash focused image' },
       { keys: '\u2318/Ctrl + O', description: 'Open folder' },
     ],
   },
   {
-    title: 'Preview Mode',
+    title: 'View',
     shortcuts: [
-      { keys: '\u2190 \u2191 / \u2192 \u2193', description: 'Previous / next image' },
-      { keys: 'Scroll wheel', description: 'Zoom in / out' },
-      { keys: 'Drag', description: 'Pan zoomed image' },
+      { keys: 'V', description: 'Cycle layout: Grid / Loupe / Filmstrip' },
+      { keys: 'I', description: 'Toggle metadata overlay (Loupe/Filmstrip)' },
+      { keys: 'Scroll wheel', description: 'Zoom in / out (Loupe/Filmstrip)' },
       { keys: 'Double-click', description: 'Toggle fit / 100% zoom' },
     ],
   },
@@ -107,10 +96,7 @@ export function ShortcutsTutorial({
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700">
           <h2 className="text-sm font-semibold text-white">Keyboard Shortcuts</h2>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-white text-lg leading-none"
-          >
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-lg leading-none">
             &times;
           </button>
         </div>
@@ -139,8 +125,7 @@ export function ShortcutsTutorial({
         </div>
 
         <div className="px-5 py-3 border-t border-gray-700 text-[10px] text-gray-500 text-center">
-          Press <kbd className="px-1 py-0.5 bg-gray-700 rounded text-gray-400 font-mono">?</kbd>{' '}
-          or{' '}
+          Press <kbd className="px-1 py-0.5 bg-gray-700 rounded text-gray-400 font-mono">?</kbd> or{' '}
           <kbd className="px-1 py-0.5 bg-gray-700 rounded text-gray-400 font-mono">Escape</kbd> to
           close
         </div>

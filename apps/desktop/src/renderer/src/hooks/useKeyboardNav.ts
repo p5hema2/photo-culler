@@ -8,6 +8,8 @@ const THUMBNAIL_SIZE_MAP: Record<string, number> = {
   large: 300,
 };
 
+type ViewLayout = 'default' | 'loupe' | 'filmstrip';
+
 interface KeyboardNavOptions {
   groups: PhotoGroup[];
   focusedImageId: string | null;
@@ -18,18 +20,11 @@ interface KeyboardNavOptions {
     classification: 'keep' | 'review' | 'delete' | null,
   ) => void;
   containerRef: React.RefObject<HTMLElement | null>;
-  onToggleSelect: (path: string) => void;
-  onRangeSelect: (path: string) => void;
-  onSelectAll: () => void;
-  onClearSelection: () => void;
   onTrashFocused: () => void;
-  onTrashSelected: () => void;
-  onEnterPreview: (path: string) => void;
-  onExitPreview: () => void;
   onRotate: (filename: string, direction: 'cw' | 'ccw') => void;
-  isPreviewMode: boolean;
   sortedFlatImages: ImageFileInfo[];
   thumbnailSize: 'small' | 'medium' | 'large';
+  viewLayout: ViewLayout;
 }
 
 interface KeyboardNavResult {
@@ -61,29 +56,22 @@ export function useKeyboardNav({
   onCycleClassification,
   onSetClassification,
   containerRef,
-  onToggleSelect,
-  onRangeSelect,
-  onSelectAll,
-  onClearSelection,
   onTrashFocused,
-  onTrashSelected,
-  onEnterPreview,
-  onExitPreview,
   onRotate,
-  isPreviewMode,
   sortedFlatImages,
   thumbnailSize,
+  viewLayout,
 }: KeyboardNavOptions): KeyboardNavResult {
   const groupsRef = useRef(groups);
   const focusRef = useRef(focusedImageId);
-  const previewRef = useRef(isPreviewMode);
   const flatImagesRef = useRef(sortedFlatImages);
   const thumbnailSizeRef = useRef(thumbnailSize);
+  const viewLayoutRef = useRef(viewLayout);
   groupsRef.current = groups;
   focusRef.current = focusedImageId;
-  previewRef.current = isPreviewMode;
   flatImagesRef.current = sortedFlatImages;
   thumbnailSizeRef.current = thumbnailSize;
+  viewLayoutRef.current = viewLayout;
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -91,15 +79,8 @@ export function useKeyboardNav({
       if (currentGroups.length === 0) return;
 
       const focused = focusRef.current;
-      const inPreview = previewRef.current;
       const flatImages = flatImagesRef.current;
-
-      // Ctrl/Cmd+A: select all (before switch since 'a' is a letter)
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-        e.preventDefault();
-        onSelectAll();
-        return;
-      }
+      const layout = viewLayoutRef.current;
 
       // If nothing focused, focus the first image on any nav key
       if (!focused) {
@@ -111,15 +92,24 @@ export function useKeyboardNav({
         return;
       }
 
-      // Preview mode: arrow keys navigate linearly through flat image list
-      if (inPreview) {
+      // Loupe & filmstrip: all arrows navigate linearly through flat image list
+      if (layout === 'loupe' || layout === 'filmstrip') {
         const flatIndex = flatImages.findIndex((img) => img.path === focused);
+
+        // Alt+Arrow: rotate
+        if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          e.preventDefault();
+          const image = flatImages[flatIndex];
+          if (image) onRotate(image.name, e.key === 'ArrowRight' ? 'cw' : 'ccw');
+          return;
+        }
+
         switch (e.key) {
           case 'ArrowRight':
           case 'ArrowDown': {
             e.preventDefault();
             if (flatIndex < flatImages.length - 1) {
-              onEnterPreview(flatImages[flatIndex + 1]!.path);
+              onFocusChange(flatImages[flatIndex + 1]!.path);
             }
             return;
           }
@@ -127,7 +117,7 @@ export function useKeyboardNav({
           case 'ArrowUp': {
             e.preventDefault();
             if (flatIndex > 0) {
-              onEnterPreview(flatImages[flatIndex - 1]!.path);
+              onFocusChange(flatImages[flatIndex - 1]!.path);
             }
             return;
           }
@@ -289,53 +279,17 @@ export function useKeyboardNav({
           break;
         }
 
-        case 'Enter': {
-          if (!inPreview && focused) {
-            e.preventDefault();
-            onEnterPreview(focused);
-          }
-          break;
-        }
-
-        case 'Escape': {
-          e.preventDefault();
-          if (inPreview) {
-            onExitPreview();
-          } else {
-            onClearSelection();
-          }
-          break;
-        }
-
-        case 'Backspace': {
+        case 'Backspace':
+        case 'Delete': {
           const tag = (document.activeElement as HTMLElement)?.tagName?.toLowerCase();
           if (tag === 'input' || tag === 'textarea') return;
           e.preventDefault();
           onTrashFocused();
           break;
         }
-
-        case 'Delete': {
-          const tag = (document.activeElement as HTMLElement)?.tagName?.toLowerCase();
-          if (tag === 'input' || tag === 'textarea') return;
-          e.preventDefault();
-          onTrashSelected();
-          break;
-        }
       }
     },
-    [
-      onFocusChange,
-      onCycleClassification,
-      onSetClassification,
-      onSelectAll,
-      onClearSelection,
-      onTrashFocused,
-      onTrashSelected,
-      onEnterPreview,
-      onExitPreview,
-      onRotate,
-    ],
+    [onFocusChange, onCycleClassification, onSetClassification, onTrashFocused, onRotate],
   );
 
   // Attach keydown listener to container

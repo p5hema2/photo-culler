@@ -29,10 +29,6 @@ export interface PhotoState {
   exifProgress: { completed: number; total: number };
   focusedImageId: string | null;
   error: string | null;
-  selectedImages: Set<string>;
-  selectionAnchor: string | null;
-  isPreviewMode: boolean;
-  previewImageId: string | null;
   qualityScores: Record<string, number>;
   qualitySubscores: Record<string, QualitySubscores>;
   filterScoreRange: { min: number; max: number } | null;
@@ -63,10 +59,6 @@ const initialState: PhotoState = {
   exifProgress: { completed: 0, total: 0 },
   focusedImageId: null,
   error: null,
-  selectedImages: new Set<string>(),
-  selectionAnchor: null,
-  isPreviewMode: false,
-  previewImageId: null,
   qualityScores: {},
   qualitySubscores: {},
   filterScoreRange: null,
@@ -92,13 +84,7 @@ export interface PhotoStoreAPI {
   setFocusedImage: (path: string | null) => void;
   clearError: () => void;
   executeActions: (options: ExecuteOptions) => Promise<ExecuteResult>;
-  toggleSelect: (path: string) => void;
-  rangeSelect: (path: string) => void;
-  selectAll: () => void;
-  clearSelection: () => void;
   trashImages: (paths: string[]) => Promise<void>;
-  enterPreview: (path: string) => void;
-  exitPreview: () => void;
   setQualityScore: (filename: string, score: number, subscores?: QualitySubscores) => void;
   setFilterScoreRange: (range: { min: number; max: number } | null) => void;
   setScoringProgress: (progress: { completed: number; total: number }) => void;
@@ -198,10 +184,6 @@ export function usePhotoStore(): PhotoStoreAPI {
         images: [],
         classifications: {},
         focusedImageId: null,
-        selectedImages: new Set<string>(),
-        selectionAnchor: null,
-        isPreviewMode: false,
-        previewImageId: null,
         qualityScores: {},
         qualitySubscores: {},
         filterScoreRange: null,
@@ -288,6 +270,7 @@ export function usePhotoStore(): PhotoStoreAPI {
           qualitySubscores,
           rotations,
           isLoading: false,
+          focusedImageId: images.length > 0 ? images[0]!.path : null,
         }));
 
         // Trigger EXIF extraction only for images without cached EXIF data
@@ -633,85 +616,6 @@ export function usePhotoStore(): PhotoStoreAPI {
     return executeResult;
   }, []);
 
-  const toggleSelect = useCallback((path: string) => {
-    setState((prev) => {
-      const next = new Set(prev.selectedImages);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return {
-        ...prev,
-        selectedImages: next,
-        selectionAnchor: next.size > 0 ? path : null,
-      };
-    });
-  }, []);
-
-  const rangeSelect = useCallback((path: string) => {
-    setState((prev) => {
-      const anchor = prev.selectionAnchor;
-      if (!anchor) {
-        const next = new Set(prev.selectedImages);
-        next.add(path);
-        return { ...prev, selectedImages: next, selectionAnchor: path };
-      }
-      // Find anchor and target in the same group
-      const currentGroups = groupsRef.current;
-      for (const group of currentGroups) {
-        const anchorIdx = group.images.findIndex((img) => img.path === anchor);
-        const targetIdx = group.images.findIndex((img) => img.path === path);
-        if (anchorIdx !== -1 && targetIdx !== -1) {
-          const [start, end] =
-            anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
-          const next = new Set(prev.selectedImages);
-          for (let i = start; i <= end; i++) {
-            next.add(group.images[i]!.path);
-          }
-          return { ...prev, selectedImages: next };
-        }
-      }
-      // Different groups -- just select the target
-      const next = new Set(prev.selectedImages);
-      next.add(path);
-      return { ...prev, selectedImages: next, selectionAnchor: path };
-    });
-  }, []);
-
-  const selectAll = useCallback(() => {
-    setState((prev) => {
-      // Use stateRef to access current filtered images
-      const currentState = stateRef.current;
-      let result = currentState.images;
-      if (currentState.filterExtensions.size > 0) {
-        result = result.filter((img) =>
-          currentState.filterExtensions.has(img.extension.toLowerCase()),
-        );
-      }
-      if (currentState.filterClassification) {
-        result = result.filter(
-          (img) =>
-            (currentState.classifications[img.name] ?? null) === currentState.filterClassification,
-        );
-      }
-      if (currentState.searchQuery.trim()) {
-        const query = currentState.searchQuery.toLowerCase().trim();
-        result = result.filter((img) => img.name.toLowerCase().includes(query));
-      }
-      const next = new Set(result.map((img) => img.path));
-      return { ...prev, selectedImages: next };
-    });
-  }, []);
-
-  const clearSelection = useCallback(() => {
-    setState((prev) => ({
-      ...prev,
-      selectedImages: new Set<string>(),
-      selectionAnchor: null,
-    }));
-  }, []);
-
   const trashImages = useCallback(async (paths: string[]) => {
     if (paths.length === 0) return;
 
@@ -722,12 +626,10 @@ export function usePhotoStore(): PhotoStoreAPI {
     setState((prev) => {
       const nextImages = prev.images.filter((img) => !trashedSet.has(img.path));
       const nextClassifications = { ...prev.classifications };
-      const nextSelected = new Set(prev.selectedImages);
 
       for (const img of prev.images) {
         if (trashedSet.has(img.path)) {
           delete nextClassifications[img.name];
-          nextSelected.delete(img.path);
         }
       }
 
@@ -739,19 +641,11 @@ export function usePhotoStore(): PhotoStoreAPI {
         nextFocused = nextImg?.path ?? null;
       }
 
-      // Update preview if previewed image was trashed
-      let nextPreviewId = prev.previewImageId;
-      if (prev.previewImageId && trashedSet.has(prev.previewImageId)) {
-        nextPreviewId = nextFocused;
-      }
-
       return {
         ...prev,
         images: nextImages,
         classifications: nextClassifications,
-        selectedImages: nextSelected,
         focusedImageId: nextFocused,
-        previewImageId: nextPreviewId,
       };
     });
 
@@ -785,23 +679,6 @@ export function usePhotoStore(): PhotoStoreAPI {
       };
       await saveResults(current.folderPath, resultsRef.current);
     }
-  }, []);
-
-  const enterPreview = useCallback((path: string) => {
-    setState((prev) => ({
-      ...prev,
-      isPreviewMode: true,
-      previewImageId: path,
-      focusedImageId: path,
-    }));
-  }, []);
-
-  const exitPreview = useCallback(() => {
-    setState((prev) => ({
-      ...prev,
-      isPreviewMode: false,
-      previewImageId: null,
-    }));
   }, []);
 
   const setQualityScore = useCallback(
@@ -1040,13 +917,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     setFocusedImage,
     clearError,
     executeActions,
-    toggleSelect,
-    rangeSelect,
-    selectAll,
-    clearSelection,
     trashImages,
-    enterPreview,
-    exitPreview,
     setQualityScore,
     setFilterScoreRange,
     setScoringProgress,

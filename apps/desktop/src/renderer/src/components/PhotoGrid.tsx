@@ -20,13 +20,10 @@ interface PhotoGridProps {
   rotations: Record<string, number>;
   thumbnailSize: 'small' | 'medium' | 'large';
   focusedImageId: string | null;
-  selectedImages: Set<string>;
   selectOnHover: boolean;
   onImageClick: (filename: string) => void;
   onImageFocus: (path: string) => void;
   onCycleClassification: (filename: string) => void;
-  onToggleSelect: (path: string) => void;
-  onRangeSelect: (path: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   setLastModified?: (id: string, lastModified: number) => void;
@@ -40,13 +37,10 @@ export function PhotoGrid({
   rotations,
   thumbnailSize,
   focusedImageId,
-  selectedImages,
   selectOnHover,
   onImageClick,
   onImageFocus,
   onCycleClassification,
-  onToggleSelect,
-  onRangeSelect,
   getThumbnail,
   requestThumbnail,
   setLastModified,
@@ -147,13 +141,10 @@ export function PhotoGrid({
               qualityScores={qualityScores}
               rotations={rotations}
               focusedImageId={focusedImageId}
-              selectedImages={selectedImages}
               selectOnHover={selectOnHover}
               onImageClick={onImageClick}
               onImageFocus={onImageFocus}
               onCycleClassification={onCycleClassification}
-              onToggleSelect={onToggleSelect}
-              onRangeSelect={onRangeSelect}
               getThumbnail={getThumbnail}
               requestThumbnail={requestThumbnail}
               setLastModified={setLastModified}
