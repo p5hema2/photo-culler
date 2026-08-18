@@ -23,6 +23,12 @@ jobs:
 
       - run: pnpm install
 
+      # The git tag is the source of truth for the release version; the version
+      # committed in package.json is only a placeholder for local builds.
+      - name: Stamp version from tag
+        working-directory: apps/desktop
+        run: node scripts/set-version.mjs
+
       - name: Build Electron app
         working-directory: apps/desktop
         run: pnpm build
@@ -53,6 +59,12 @@ jobs:
           cache: pnpm
 
       - run: pnpm install
+
+      # The git tag is the source of truth for the release version; the version
+      # committed in package.json is only a placeholder for local builds.
+      - name: Stamp version from tag
+        working-directory: apps/desktop
+        run: node scripts/set-version.mjs
 
       - name: Build Electron app
         working-directory: apps/desktop

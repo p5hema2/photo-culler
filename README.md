@@ -70,6 +70,25 @@ pnpm build && pnpm package:win
 
 Built artifacts are output to `apps/desktop/dist/`.
 
+Local builds are versioned `0.0.0-dev`. The version in
+`apps/desktop/package.json` is a placeholder — see Releasing below.
+
+### Releasing
+
+The **git tag is the single source of truth** for the release version. Do not
+bump `apps/desktop/package.json` by hand; CI overwrites it from the tag.
+
+```bash
+# Tag and push — that's the whole release
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+Pushing a `v*` tag triggers `.github/workflows/build.yml`, which stamps the
+version from the tag (`apps/desktop/scripts/set-version.mjs`), builds and
+packages for macOS and Windows, then publishes a GitHub Release with the
+installers attached.
+
 ## Project Structure
 
 ```
