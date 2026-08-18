@@ -89,6 +89,7 @@ export interface PhotoStoreAPI {
   setFilterScoreRange: (range: { min: number; max: number } | null) => void;
   setScoringProgress: (progress: { completed: number; total: number }) => void;
   rotateImage: (filename: string, direction: 'cw' | 'ccw') => void;
+  cancelPendingSave: () => void;
 }
 
 export function usePhotoStore(): PhotoStoreAPI {
@@ -99,6 +100,16 @@ export function usePhotoStore(): PhotoStoreAPI {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const stateRef = useRef(state);
+  /**
+   * Incremented on every openFolder. A save queued under an older epoch belongs
+   * to the folder we have since left and must never be written.
+   */
+  const openEpochRef = useRef(0);
+  const pendingSaveRef = useRef<{
+    folderPath: string;
+    classifications: Record<string, Classification>;
+    epoch: number;
+  } | null>(null);
 
   // Keep stateRef in sync
   stateRef.current = state;
@@ -111,41 +122,86 @@ export function usePhotoStore(): PhotoStoreAPI {
     };
   }, []);
 
+  /** Project current state onto the results file and write it. */
+  const writeResults = useCallback(
+    (folderPath: string, classifications: Record<string, Classification>) => {
+      if (!resultsRef.current) return;
+      const currentState = stateRef.current;
+      const existing = resultsRef.current.images;
+      // Union of known keys: a partial classifications map must never delete
+      // entries (and with them their cached EXIF) from the results file.
+      const names = new Set([...Object.keys(existing), ...Object.keys(classifications)]);
+      const updated: ResultsFile = {
+        ...resultsRef.current,
+        images: Object.fromEntries(
+          [...names].map((k) => [
+            k,
+            {
+              classification: classifications[k] ?? existing[k]?.classification ?? null,
+              userOverride: existing[k]?.userOverride ?? false,
+              qualityScore: currentState.qualityScores[k] ?? existing[k]?.qualityScore,
+              qualitySubscores: currentState.qualitySubscores[k] ?? existing[k]?.qualitySubscores,
+              rotation: currentState.rotations[k] ?? existing[k]?.rotation,
+              exif: existing[k]?.exif,
+            },
+          ]),
+        ),
+      };
+      resultsRef.current = updated;
+      saveResults(folderPath, updated);
+    },
+    [],
+  );
+
   // Debounced save
   const scheduleSave = useCallback(
     (folderPath: string, classifications: Record<string, Classification>) => {
+      pendingSaveRef.current = { folderPath, classifications, epoch: openEpochRef.current };
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
       saveTimerRef.current = setTimeout(() => {
-        if (resultsRef.current) {
-          const currentState = stateRef.current;
-          const updated: ResultsFile = {
-            ...resultsRef.current,
-            images: Object.fromEntries(
-              Object.entries(classifications).map(([k, v]) => [
-                k,
-                {
-                  classification: v,
-                  userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
-                  qualityScore:
-                    currentState.qualityScores[k] ?? resultsRef.current?.images[k]?.qualityScore,
-                  qualitySubscores:
-                    currentState.qualitySubscores[k] ??
-                    resultsRef.current?.images[k]?.qualitySubscores,
-                  rotation: currentState.rotations[k] ?? resultsRef.current?.images[k]?.rotation,
-                  exif: resultsRef.current?.images[k]?.exif,
-                },
-              ]),
-            ),
-          };
-          resultsRef.current = updated;
-          saveResults(folderPath, updated);
-        }
+        saveTimerRef.current = null;
+        const pending = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        if (!pending) return;
+        // The previous folder's EXIF/scoring workers keep delivering after a
+        // folder switch. Writing their queued save now would target the NEW
+        // folder's file with the old folder's data.
+        if (pending.epoch !== openEpochRef.current) return;
+        writeResults(pending.folderPath, pending.classifications);
       }, 500);
     },
-    [],
+    [writeResults],
   );
+
+  /**
+   * Write a queued save immediately instead of waiting out the debounce.
+   * Deliberately ignores the epoch: this runs while leaving a folder, to get
+   * that folder's last edits to disk before its epoch is retired.
+   */
+  const flushPendingSave = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const pending = pendingSaveRef.current;
+    pendingSaveRef.current = null;
+    if (pending) writeResults(pending.folderPath, pending.classifications);
+  }, [writeResults]);
+
+  /**
+   * Drop a queued save without writing it.
+   * Rescan deletes the results file on purpose — a pending debounced write
+   * would otherwise fire afterwards and restore the data we just discarded.
+   */
+  const cancelPendingSave = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    pendingSaveRef.current = null;
+  }, []);
 
   // Flush save on unmount
   useEffect(() => {
@@ -176,6 +232,15 @@ export function usePhotoStore(): PhotoStoreAPI {
 
   const openFolder = useCallback(
     async (folderPath: string) => {
+      // Get the outgoing folder's last edits to disk, then retire its epoch so
+      // its still-running workers cannot write into the new folder's file.
+      // resultsRef is nulled for the duration of the load: state below is reset
+      // to empty and only repopulated after two awaited IPC round trips, and a
+      // save landing in that window would persist images: {}.
+      flushPendingSave();
+      openEpochRef.current += 1;
+      resultsRef.current = null;
+
       setState((prev) => ({
         ...prev,
         isLoading: true,
@@ -360,7 +425,7 @@ export function usePhotoStore(): PhotoStoreAPI {
         }));
       }
     },
-    [thumbnailWorker, exifExtractor, scheduleSave],
+    [thumbnailWorker, exifExtractor, scheduleSave, flushPendingSave],
   );
 
   const setClassification = useCallback(
@@ -714,8 +779,17 @@ export function usePhotoStore(): PhotoStoreAPI {
           qualitySubscores: newQualitySubscores,
         };
       });
+
+      // Persist the score. Without this the only writes came from the EXIF
+      // callbacks, whose debounce window closes ~500ms after the last one —
+      // long before scoring (which starts 2s after open) finishes. Scores then
+      // lived only in memory and the whole analysis re-ran on the next open.
+      const folderPath = stateRef.current.folderPath;
+      if (folderPath) {
+        scheduleSave(folderPath, stateRef.current.classifications);
+      }
     },
-    [],
+    [scheduleSave],
   );
 
   const setFilterScoreRange = useCallback((range: { min: number; max: number } | null) => {
@@ -922,6 +996,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     setFilterScoreRange,
     setScoringProgress,
     rotateImage,
+    cancelPendingSave,
   };
 }
 

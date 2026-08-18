@@ -501,11 +501,14 @@ export function Toolbar({
       {/* Shortcuts help */}
       <button
         onClick={onShowShortcuts}
-        className="px-2 py-1 text-xs text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+        className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-300 border border-gray-600 rounded hover:text-white hover:bg-gray-700 hover:border-gray-500 transition-colors"
         data-testid="shortcuts-btn"
-        title="Keyboard shortcuts (?)"
+        title="Keyboard shortcuts and help (?)"
       >
-        ?
+        <span className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-gray-600 text-[9px] font-bold leading-none">
+          ?
+        </span>
+        Help
       </button>
 
       {/* Spacer */}

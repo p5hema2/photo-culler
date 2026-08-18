@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { scanFolder } from '../scanner';
 import type { Dirent, Stats } from 'node:fs';
+import { join } from 'node:path';
 
 // Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
@@ -12,6 +13,11 @@ import { readdir, stat } from 'node:fs/promises';
 
 const mockReaddir = vi.mocked(readdir);
 const mockStat = vi.mocked(stat);
+
+/** path.join yields '\picks' on Windows and '/picks' elsewhere. */
+function isPicksDir(dirPath: unknown): boolean {
+  return /[/\\]picks$/.test(String(dirPath));
+}
 
 function makeDirent(name: string, isFile = true): Dirent {
   return {
@@ -39,7 +45,7 @@ describe('scanFolder', () => {
 
   it('returns ImageFileInfo[] for supported image types only', async () => {
     mockReaddir.mockImplementation(async (dirPath) => {
-      if (String(dirPath).endsWith('/picks')) {
+      if (isPicksDir(dirPath)) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
@@ -72,7 +78,7 @@ describe('scanFolder', () => {
 
   it('excludes hidden files (names starting with .)', async () => {
     mockReaddir.mockImplementation(async (dirPath) => {
-      if (String(dirPath).endsWith('/picks')) {
+      if (isPicksDir(dirPath)) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
@@ -88,7 +94,7 @@ describe('scanFolder', () => {
 
   it('excludes photo-culler-results.json', async () => {
     mockReaddir.mockImplementation(async (dirPath) => {
-      if (String(dirPath).endsWith('/picks')) {
+      if (isPicksDir(dirPath)) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
@@ -105,7 +111,7 @@ describe('scanFolder', () => {
   it('includes files from picks/ subfolder when it exists', async () => {
     mockReaddir.mockImplementation(async (dirPath) => {
       const dir = String(dirPath);
-      if (dir.endsWith('/picks')) {
+      if (isPicksDir(dir)) {
         return [makeDirent('picked.jpg')] as Dirent[];
       }
       return [makeDirent('main.jpg')] as Dirent[];
@@ -121,7 +127,7 @@ describe('scanFolder', () => {
 
   it('handles picks/ not existing without error', async () => {
     mockReaddir.mockImplementation(async (dirPath) => {
-      if (String(dirPath).endsWith('/picks')) {
+      if (isPicksDir(dirPath)) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
@@ -136,7 +142,7 @@ describe('scanFolder', () => {
 
   it('returns empty array for empty folder', async () => {
     mockReaddir.mockImplementation(async (dirPath) => {
-      if (String(dirPath).endsWith('/picks')) {
+      if (isPicksDir(dirPath)) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
@@ -150,7 +156,7 @@ describe('scanFolder', () => {
 
   it('handles case-insensitive extension matching (.JPG works)', async () => {
     mockReaddir.mockImplementation(async (dirPath) => {
-      if (String(dirPath).endsWith('/picks')) {
+      if (isPicksDir(dirPath)) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
@@ -175,7 +181,7 @@ describe('scanFolder', () => {
 
   it('returns correct ImageFileInfo shape', async () => {
     mockReaddir.mockImplementation(async (dirPath) => {
-      if (String(dirPath).endsWith('/picks')) {
+      if (isPicksDir(dirPath)) {
         const err = new Error('ENOENT') as NodeJS.ErrnoException;
         err.code = 'ENOENT';
         throw err;
@@ -186,7 +192,8 @@ describe('scanFolder', () => {
 
     const result = await scanFolder('/test/folder');
     expect(result[0]).toEqual({
-      path: '/test/folder/photo.jpg',
+      // Built with join() so the assertion holds on Windows too
+      path: join('/test/folder', 'photo.jpg'),
       name: 'photo.jpg',
       extension: 'jpg',
       size: 2048,

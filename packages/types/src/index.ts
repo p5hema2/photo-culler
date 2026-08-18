@@ -1,4 +1,4 @@
-export { IPC_CHANNELS } from './ipc';
+export { IPC_CHANNELS, MENU_COMMANDS } from './ipc';
 export type {
   ElectronAPI,
   TrashResult,
@@ -6,5 +6,6 @@ export type {
   ImageResult,
   QualitySubscores,
   ResultsFile,
+  MenuCommand,
 } from './ipc';
 export type { ImageFileInfo } from './image';

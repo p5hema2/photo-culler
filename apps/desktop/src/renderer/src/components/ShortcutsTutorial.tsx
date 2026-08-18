@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface ShortcutsTutorialProps {
   isOpen: boolean;
@@ -42,15 +42,27 @@ const SECTIONS: ShortcutSection[] = [
       { keys: 'Alt + \u2190', description: 'Rotate counter-clockwise' },
       { keys: 'Backspace / Delete', description: 'Trash focused image' },
       { keys: '\u2318/Ctrl + O', description: 'Open folder' },
+      { keys: 'F5', description: 'Rescan folder (discards cached scores)' },
+      { keys: '\u2318/Ctrl + S', description: 'Save / Delete classified images' },
     ],
   },
   {
     title: 'View',
     shortcuts: [
       { keys: 'V', description: 'Cycle layout: Grid / Loupe / Filmstrip' },
+      { keys: '\u2318/Ctrl + 1 / 2 / 3', description: 'Go straight to Grid / Loupe / Filmstrip' },
       { keys: 'I', description: 'Toggle metadata overlay (Loupe/Filmstrip)' },
+      { keys: '\u2318/Ctrl + I', description: 'Toggle info panel' },
       { keys: 'Scroll wheel', description: 'Zoom in / out (Loupe/Filmstrip)' },
       { keys: 'Double-click', description: 'Toggle fit / 100% zoom' },
+    ],
+  },
+  {
+    title: 'Help',
+    shortcuts: [
+      { keys: '?', description: 'Show / hide this panel' },
+      { keys: '\u2318/Ctrl + /', description: 'Show / hide this panel' },
+      { keys: 'Alt', description: 'Reveal the menu bar (Windows/Linux)' },
     ],
   },
 ];
@@ -60,6 +72,25 @@ export function ShortcutsTutorial({
   onClose,
 }: ShortcutsTutorialProps): React.JSX.Element | null {
   const ref = useRef<HTMLDivElement>(null);
+  const [version, setVersion] = useState<string | null>(null);
+
+  // Fetched lazily on first open — the version comes from the main process,
+  // where it was stamped from the git tag at build time.
+  useEffect(() => {
+    if (!isOpen || version !== null) return;
+    let cancelled = false;
+    window.api
+      ?.getAppVersion()
+      .then((v) => {
+        if (!cancelled) setVersion(v);
+      })
+      .catch(() => {
+        // Version is decorative — a failure must not block the panel
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, version]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -124,10 +155,13 @@ export function ShortcutsTutorial({
           ))}
         </div>
 
-        <div className="px-5 py-3 border-t border-gray-700 text-[10px] text-gray-500 text-center">
-          Press <kbd className="px-1 py-0.5 bg-gray-700 rounded text-gray-400 font-mono">?</kbd> or{' '}
-          <kbd className="px-1 py-0.5 bg-gray-700 rounded text-gray-400 font-mono">Escape</kbd> to
-          close
+        <div className="px-5 py-3 border-t border-gray-700 flex items-center justify-between gap-3 text-[10px] text-gray-500">
+          <span data-testid="app-version">Photo Culler{version ? ` v${version}` : ''}</span>
+          <span>
+            Press <kbd className="px-1 py-0.5 bg-gray-700 rounded text-gray-400 font-mono">?</kbd>{' '}
+            or <kbd className="px-1 py-0.5 bg-gray-700 rounded text-gray-400 font-mono">Escape</kbd>{' '}
+            to close
+          </span>
         </div>
       </div>
     </div>

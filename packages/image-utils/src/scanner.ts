@@ -4,6 +4,9 @@ import type { ImageFileInfo } from '@photo-culler/types';
 
 const SUPPORTED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.webp']);
 
+// Pre-1.2.0 results filename. The current name is a dotfile and so is already
+// covered by the hidden-file skip below; this entry only shields folders that
+// have not been migrated yet.
 const EXCLUDED_FILES = new Set(['photo-culler-results.json']);
 
 /**

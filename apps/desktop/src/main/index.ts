@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, dialog } from 'electron';
 import path from 'node:path';
+import type { MenuCommand } from '@photo-culler/types';
 import { registerSchemes, registerProtocolHandlers } from './protocol';
 import { registerIpcHandlers } from './ipc-handlers';
 
@@ -14,6 +15,9 @@ function createWindow(): BrowserWindow {
     minWidth: 800,
     minHeight: 600,
     show: false,
+    // Keep the menu (and its accelerators) but stay out of the way — press Alt
+    // to reveal it. No effect on macOS, where the menu bar is OS-owned.
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       // contextIsolation: true (default)
@@ -35,6 +39,57 @@ function createWindow(): BrowserWindow {
   return mainWindow;
 }
 
+/** Target the focused window, falling back to the only window if none is focused. */
+function activeWindow(): BrowserWindow | null {
+  return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+}
+
+function sendCommand(command: MenuCommand): void {
+  activeWindow()?.webContents.send('menu:command', command);
+}
+
+/** Command-dispatching menu item. */
+function commandItem(
+  label: string,
+  command: MenuCommand,
+  accelerator?: string,
+): Electron.MenuItemConstructorOptions {
+  return { label, accelerator, click: () => sendCommand(command) };
+}
+
+async function openFolderViaDialog(): Promise<void> {
+  const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
+  if (result.canceled || result.filePaths.length === 0) return;
+  activeWindow()?.webContents.send('menu:open-folder', result.filePaths[0]);
+}
+
+async function showAbout(): Promise<void> {
+  const win = activeWindow();
+  const detail = [
+    `Version ${app.getVersion()}`,
+    '',
+    `Electron ${process.versions.electron}`,
+    `Chromium ${process.versions.chrome}`,
+    `Node ${process.versions.node}`,
+    `${process.platform} ${process.arch}`,
+  ].join('\n');
+
+  const options: Electron.MessageBoxOptions = {
+    type: 'info',
+    title: 'About Photo Culler',
+    message: 'Photo Culler',
+    detail,
+    buttons: ['OK'],
+    defaultId: 0,
+  };
+
+  if (win) {
+    await dialog.showMessageBox(win, options);
+  } else {
+    await dialog.showMessageBox(options);
+  }
+}
+
 function buildMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
@@ -43,23 +98,19 @@ function buildMenu(): void {
         {
           label: 'Open Folder...',
           accelerator: 'CmdOrCtrl+O',
-          click: async (): Promise<void> => {
-            const result = await dialog.showOpenDialog({
-              properties: ['openDirectory'],
-            });
-            if (!result.canceled && result.filePaths.length > 0) {
-              const focusedWindow = BrowserWindow.getFocusedWindow();
-              if (focusedWindow) {
-                focusedWindow.webContents.send('menu:open-folder', result.filePaths[0]);
-              }
-            }
-          },
+          click: openFolderViaDialog,
         },
+        // F5 rather than CmdOrCtrl+Shift+R, which the forceReload role owns
+        commandItem('Rescan Folder', 'rescan', 'F5'),
+        { type: 'separator' },
+        commandItem('Save / Delete...', 'execute', 'CmdOrCtrl+S'),
         { type: 'separator' },
         { role: 'quit' },
       ],
     },
     {
+      // Retained in full: on macOS these roles are what bind Cmd+C/V/X inside
+      // the toolbar's search field. Removing them breaks clipboard there.
       label: 'Edit',
       submenu: [
         { role: 'undo' },
@@ -74,15 +125,36 @@ function buildMenu(): void {
     {
       label: 'View',
       submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' },
+        {
+          label: 'Layout',
+          submenu: [
+            // Modifier accelerators only — bare 1/2/3 and V belong to the
+            // renderer (classification and layout cycling) and a menu
+            // accelerator would swallow them before the window sees them.
+            commandItem('Grid', 'layout:default', 'CmdOrCtrl+1'),
+            commandItem('Loupe', 'layout:loupe', 'CmdOrCtrl+2'),
+            commandItem('Filmstrip', 'layout:filmstrip', 'CmdOrCtrl+3'),
+          ],
+        },
+        {
+          label: 'Thumbnail Size',
+          submenu: [
+            commandItem('Small', 'thumbnail:small'),
+            commandItem('Medium', 'thumbnail:medium'),
+            commandItem('Large', 'thumbnail:large'),
+          ],
+        },
+        commandItem('Toggle Info Panel', 'toggle-info-panel', 'CmdOrCtrl+I'),
         { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },
         { role: 'zoomOut' },
         { type: 'separator' },
         { role: 'togglefullscreen' },
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
       ],
     },
     {
@@ -91,7 +163,11 @@ function buildMenu(): void {
     },
     {
       label: 'Help',
-      submenu: [],
+      submenu: [
+        commandItem('Keyboard Shortcuts', 'show-shortcuts', 'CmdOrCtrl+/'),
+        { type: 'separator' },
+        { label: 'About Photo Culler', click: showAbout },
+      ],
     },
   ];
 
@@ -120,6 +196,12 @@ function buildMenu(): void {
 app.whenReady().then(() => {
   registerProtocolHandlers();
   registerIpcHandlers();
+  // Feeds the macOS "About" panel behind the { role: 'about' } item
+  app.setAboutPanelOptions({
+    applicationName: 'Photo Culler',
+    applicationVersion: app.getVersion(),
+    version: `Electron ${process.versions.electron}`,
+  });
   buildMenu();
   createWindow();
 });

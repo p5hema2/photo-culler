@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from '@photo-culler/types';
-import type { ElectronAPI } from '@photo-culler/types';
+import type { ElectronAPI, MenuCommand } from '@photo-culler/types';
 
 const api: ElectronAPI = {
   selectFolder: () => ipcRenderer.invoke(IPC_CHANNELS.SELECT_FOLDER),
@@ -9,6 +9,7 @@ const api: ElectronAPI = {
   saveResults: (folderPath, data) =>
     ipcRenderer.invoke(IPC_CHANNELS.SAVE_RESULTS, folderPath, data),
   loadResults: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.LOAD_RESULTS, folderPath),
+  clearResults: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.CLEAR_RESULTS, folderPath),
   getSession: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SESSION),
   setSession: (config) => ipcRenderer.invoke(IPC_CHANNELS.SET_SESSION, config),
   moveToPicks: (folderPath, filePaths) =>
@@ -20,6 +21,7 @@ const api: ElectronAPI = {
   saveThumbCache: (filePath, jpegBuffer) =>
     ipcRenderer.invoke(IPC_CHANNELS.SAVE_THUMB_CACHE, filePath, jpegBuffer),
   rotateFiles: (files) => ipcRenderer.invoke(IPC_CHANNELS.ROTATE_FILES, files),
+  getAppVersion: () => ipcRenderer.invoke(IPC_CHANNELS.GET_APP_VERSION),
 };
 
 contextBridge.exposeInMainWorld('api', api);
@@ -31,5 +33,11 @@ contextBridge.exposeInMainWorld('menuEvents', {
   },
   removeOpenFolderListener: () => {
     ipcRenderer.removeAllListeners('menu:open-folder');
+  },
+  onCommand: (callback: (command: MenuCommand) => void) => {
+    ipcRenderer.on('menu:command', (_event, command: MenuCommand) => callback(command));
+  },
+  removeCommandListener: () => {
+    ipcRenderer.removeAllListeners('menu:command');
   },
 });

@@ -6,6 +6,7 @@ export const IPC_CHANNELS = {
   TRASH_FILES: 'fs:trash-files',
   SAVE_RESULTS: 'fs:save-results',
   LOAD_RESULTS: 'fs:load-results',
+  CLEAR_RESULTS: 'fs:clear-results',
   GET_SESSION: 'store:get-session',
   SET_SESSION: 'store:set-session',
   MOVE_TO_PICKS: 'fs:move-to-picks',
@@ -14,7 +15,27 @@ export const IPC_CHANNELS = {
   LOAD_THUMB_CACHE: 'fs:load-thumb-cache',
   SAVE_THUMB_CACHE: 'fs:save-thumb-cache',
   ROTATE_FILES: 'fs:rotate-files',
+  GET_APP_VERSION: 'app:get-version',
 } as const;
+
+/**
+ * Commands the native menu can dispatch to the renderer.
+ * Kept as a closed union so the menu and the renderer handler cannot drift.
+ */
+export const MENU_COMMANDS = [
+  'rescan',
+  'execute',
+  'layout:default',
+  'layout:loupe',
+  'layout:filmstrip',
+  'thumbnail:small',
+  'thumbnail:medium',
+  'thumbnail:large',
+  'toggle-info-panel',
+  'show-shortcuts',
+] as const;
+
+export type MenuCommand = (typeof MENU_COMMANDS)[number];
 
 export interface TrashResult {
   /** Paths that were successfully trashed */
@@ -92,6 +113,8 @@ export interface ElectronAPI {
   trashFiles: (filePaths: string[]) => Promise<TrashResult>;
   saveResults: (folderPath: string, data: string) => Promise<void>;
   loadResults: (folderPath: string) => Promise<string | null>;
+  /** Delete the results file for a folder (used by Rescan). */
+  clearResults: (folderPath: string) => Promise<void>;
   getSession: () => Promise<SessionConfig>;
   setSession: (config: Partial<SessionConfig>) => Promise<void>;
   moveToPicks: (
@@ -105,4 +128,6 @@ export interface ElectronAPI {
   rotateFiles: (
     files: Array<{ path: string; degrees: number }>,
   ) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
+  /** Version of the running app, stamped from the git tag at build time. */
+  getAppVersion: () => Promise<string>;
 }

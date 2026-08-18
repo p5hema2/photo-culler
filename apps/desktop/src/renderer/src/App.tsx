@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import type { MenuCommand } from '@photo-culler/types';
 import { usePhotoStore } from './hooks/usePhotoStore';
 import type { Classification } from './hooks/usePhotoStore';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
@@ -109,11 +110,12 @@ function App(): React.JSX.Element {
   }, [store]);
 
   const handleRescan = useCallback(async () => {
-    if (state.folderPath) {
-      await window.api.saveResults(state.folderPath, '');
-      scoringTriggeredRef.current = null;
-      store.openFolder(state.folderPath);
-    }
+    if (!state.folderPath) return;
+    // Drop any queued write first, or it would rewrite the file we delete
+    store.cancelPendingSave();
+    await window.api.clearResults(state.folderPath);
+    scoringTriggeredRef.current = null;
+    store.openFolder(state.folderPath);
   }, [state.folderPath, store]);
 
   // Listen for Cmd+O from menu (only available in Electron via contextBridge)
@@ -187,9 +189,14 @@ function App(): React.JSX.Element {
     }
   }, [state.isLoading, state.images.length]);
 
-  // Reset scoring trigger when folder changes
+  // Reset scoring trigger when folder changes, and stop the outgoing folder's
+  // run. Without the cancel, a folder that needs no scoring never calls
+  // scoreAll, so the previous folder's worker kept delivering results that were
+  // then attributed to the newly opened folder.
   useEffect(() => {
     scoringTriggeredRef.current = null;
+    scoringWorker.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.folderPath]);
 
   // Trigger quality scoring after folder opens, with a 2-second delay
@@ -198,6 +205,52 @@ function App(): React.JSX.Element {
   storeRef.current = store;
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  // Native menu commands. Dispatched through refs so the listener registers
+  // once — re-registering on every render would stack IPC listeners.
+  const handleRescanRef = useRef(handleRescan);
+  handleRescanRef.current = handleRescan;
+
+  useEffect(() => {
+    if (!window.menuEvents?.onCommand) return;
+    window.menuEvents.onCommand((command: MenuCommand) => {
+      switch (command) {
+        case 'rescan':
+          handleRescanRef.current();
+          break;
+        case 'execute':
+          setShowExecutePanel(true);
+          break;
+        case 'layout:default':
+          setViewLayout('default');
+          break;
+        case 'layout:loupe':
+          setViewLayout('loupe');
+          break;
+        case 'layout:filmstrip':
+          setViewLayout('filmstrip');
+          break;
+        case 'thumbnail:small':
+          storeRef.current.setThumbnailSize('small');
+          break;
+        case 'thumbnail:medium':
+          storeRef.current.setThumbnailSize('medium');
+          break;
+        case 'thumbnail:large':
+          storeRef.current.setThumbnailSize('large');
+          break;
+        case 'toggle-info-panel':
+          setInfoPanelOpen((prev) => !prev);
+          break;
+        case 'show-shortcuts':
+          setShowShortcuts((prev) => !prev);
+          break;
+      }
+    });
+    return () => {
+      window.menuEvents?.removeCommandListener();
+    };
+  }, []);
 
   useEffect(() => {
     if (!state.folderPath || state.isLoading) {
@@ -223,7 +276,11 @@ function App(): React.JSX.Element {
       if (unscoredFiles.length === 0) return;
 
       console.log(`[scoring] Starting scoring for ${unscoredFiles.length} images`);
+      const scoredFolder = currentState.folderPath;
       scoringWorker.scoreAll(unscoredFiles, (filename, score, subscores) => {
+        // Belt-and-braces alongside cancel(): never attribute a result to a
+        // folder other than the one the run was started for.
+        if (stateRef.current.folderPath !== scoredFolder) return;
         storeRef.current.setQualityScore(filename, score, subscores);
       });
     }, 2000);

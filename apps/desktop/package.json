@@ -14,6 +14,7 @@
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "lint": "eslint src/",
+    "test": "vitest run",
     "package": "node scripts/copy-sharp-deps.mjs && electron-builder",
     "package:mac": "node scripts/copy-sharp-deps.mjs && electron-builder --mac",
     "package:win": "node scripts/copy-sharp-deps.mjs && electron-builder --win"

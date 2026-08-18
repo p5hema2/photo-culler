@@ -1,4 +1,4 @@
-import { ipcMain, dialog, shell } from 'electron';
+import { app, ipcMain, dialog, shell } from 'electron';
 import { writeFile, readFile, mkdir, rename, unlink, stat } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -7,8 +7,47 @@ import type { SessionConfig, TrashResult } from '@photo-culler/types';
 import { scanFolder } from '@photo-culler/image-utils';
 import { getSession, updateSession } from './store';
 
-const RESULTS_FILENAME = 'photo-culler-results.json';
+const RESULTS_FILENAME = '.photo-culler-results.json';
+/** Pre-1.2.0 name. Read once and migrated to RESULTS_FILENAME on first load. */
+const LEGACY_RESULTS_FILENAME = 'photo-culler-results.json';
 const THUMB_CACHE_DIR = '.photo-culler-thumbs';
+
+function isEnoent(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
+/**
+ * Read the results file, transparently migrating the pre-1.2.0 filename.
+ *
+ * Folders culled with an earlier version hold `photo-culler-results.json`.
+ * Renaming it on first read means existing work is never lost and the
+ * migration happens exactly once per folder.
+ */
+export async function readResultsFile(folderPath: string): Promise<string | null> {
+  const currentPath = path.join(folderPath, RESULTS_FILENAME);
+  try {
+    return await readFile(currentPath, 'utf-8');
+  } catch (err) {
+    if (!isEnoent(err)) throw err;
+  }
+
+  const legacyPath = path.join(folderPath, LEGACY_RESULTS_FILENAME);
+  let legacyData: string;
+  try {
+    legacyData = await readFile(legacyPath, 'utf-8');
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw err;
+  }
+
+  try {
+    await rename(legacyPath, currentPath);
+  } catch {
+    // Migration is best-effort — a failed rename must not cost the user
+    // their classifications, so fall through and return the data anyway.
+  }
+  return legacyData;
+}
 
 function getThumbCachePath(filePath: string): string {
   const dir = path.dirname(filePath);
@@ -73,15 +112,28 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.LOAD_RESULTS, async (_event, folderPath: string) => {
-    const filePath = path.join(folderPath, RESULTS_FILENAME);
-    try {
-      return await readFile(filePath, 'utf-8');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return null;
+    return readResultsFile(folderPath);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CLEAR_RESULTS, async (_event, folderPath: string) => {
+    // Drop a queued write before unlinking, otherwise the queue drains after
+    // the delete and writes the data straight back. Deleting the map entry
+    // would not help — an in-flight write holds the queue object directly.
+    const queue = writeQueues.get(path.join(folderPath, RESULTS_FILENAME));
+    if (queue) queue.pending = null;
+
+    // Remove both names so a rescan cannot be undone by a lingering legacy file
+    for (const name of [RESULTS_FILENAME, LEGACY_RESULTS_FILENAME]) {
+      try {
+        await unlink(path.join(folderPath, name));
+      } catch (err) {
+        if (!isEnoent(err)) throw err;
       }
-      throw err;
     }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GET_APP_VERSION, async () => {
+    return app.getVersion();
   });
 
   ipcMain.handle(IPC_CHANNELS.GET_SESSION, async () => {

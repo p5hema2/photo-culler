@@ -75,6 +75,12 @@ export function useKeyboardNav({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      // This handler owns bare keys and Alt+Arrow only. Ctrl/Cmd chords belong
+      // to the native menu — without this guard, KeyboardEvent.key for Ctrl+1
+      // is still '1', so the menu's "Layout > Grid" accelerator would also
+      // classify the focused photo as Keep.
+      if (e.ctrlKey || e.metaKey) return;
+
       const currentGroups = groupsRef.current;
       if (currentGroups.length === 0) return;
 
