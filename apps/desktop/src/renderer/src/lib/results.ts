@@ -1,5 +1,34 @@
 import { useEffect, useRef, useCallback } from 'react';
-import type { ResultsFile } from '@photo-culler/types';
+import type { ImageResult, ResultsFile } from '@photo-culler/types';
+
+/**
+ * Rebuild the results map, keeping only `keepNames` and carrying every
+ * per-image field forward.
+ *
+ * This exists because the projection used to be hand-rolled in two places that
+ * drifted: the copy in `trashImages` listed four of the six fields, so a single
+ * Delete keypress silently stripped `qualitySubscores` and `rotation` from every
+ * remaining image in the folder. Spreading the existing entry means a field
+ * added to `ImageResult` later cannot be dropped here by omission.
+ */
+export function rebuildResults(
+  results: ResultsFile,
+  keepNames: Iterable<string>,
+  classifications: Record<string, ImageResult['classification'] | undefined>,
+): ResultsFile {
+  const images: Record<string, ImageResult> = {};
+
+  for (const name of keepNames) {
+    const existing = results.images[name];
+    images[name] = {
+      ...existing,
+      classification: classifications[name] ?? existing?.classification ?? null,
+      userOverride: existing?.userOverride ?? false,
+    };
+  }
+
+  return { ...results, images };
+}
 
 /**
  * Load results file from disk via IPC.

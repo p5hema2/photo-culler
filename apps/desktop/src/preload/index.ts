@@ -16,11 +16,13 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.MOVE_TO_PICKS, folderPath, filePaths),
   deleteFiles: (filePaths) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_FILES, filePaths),
   readFile: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.READ_FILE, filePath),
-  loadThumbCache: (filePath, lastModified) =>
-    ipcRenderer.invoke(IPC_CHANNELS.LOAD_THUMB_CACHE, filePath, lastModified),
+  loadThumbCache: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.LOAD_THUMB_CACHE, filePath),
   saveThumbCache: (filePath, jpegBuffer) =>
     ipcRenderer.invoke(IPC_CHANNELS.SAVE_THUMB_CACHE, filePath, jpegBuffer),
   rotateFiles: (files) => ipcRenderer.invoke(IPC_CHANNELS.ROTATE_FILES, files),
+  readDetailedMetadata: (filePath) =>
+    ipcRenderer.invoke(IPC_CHANNELS.READ_DETAILED_METADATA, filePath),
+  vacuumThumbCache: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.VACUUM_THUMB_CACHE, folderPath),
   getAppVersion: () => ipcRenderer.invoke(IPC_CHANNELS.GET_APP_VERSION),
 };
 

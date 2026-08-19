@@ -9,7 +9,7 @@ import { sortImages } from '@photo-culler/image-utils/sorting';
 import type { SortField, SortDirection } from '@photo-culler/image-utils/sorting';
 import { groupByTimestamp } from '@photo-culler/image-utils/grouping';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
-import { loadResults, saveResults } from '../lib/results';
+import { loadResults, saveResults, rebuildResults } from '../lib/results';
 import { useExifExtractor } from './useExifExtractor';
 import { useThumbnailWorker } from './useThumbnailWorker';
 import type { ExecuteOptions, ExecuteResult } from '../components/ExecutePanel';
@@ -37,12 +37,6 @@ export interface PhotoState {
 }
 
 export type Classification = 'keep' | 'review' | 'delete' | null;
-
-const THUMBNAIL_SIZE_MAP: Record<string, number> = {
-  small: 120,
-  medium: 200,
-  large: 300,
-};
 
 const initialState: PhotoState = {
   folderPath: null,
@@ -590,6 +584,14 @@ export function usePhotoStore(): PhotoStoreAPI {
             }
           }
         }
+
+        // The file on disk changed, so its cached thumbnail is now wrong.
+        // Deliberately after the rotation state is cleared: invalidating first
+        // would let the cell redraw the freshly rotated file with the old
+        // rotation still applied, double-rotating it.
+        for (const filePath of rotatedSet) {
+          thumbnailWorkerRef.current.invalidate(filePath);
+        }
       }
     }
 
@@ -651,30 +653,23 @@ export function usePhotoStore(): PhotoStoreAPI {
 
     // Save updated results file immediately (not debounced)
     if (resultsRef.current) {
-      // Build new results from remaining images
+      // Build new results from remaining images.
+      // Only deletions prune an entry. A moved pick keeps its record: the file
+      // still exists under picks/, scanFolder reads that folder too, and the
+      // results map is keyed by filename — so its classification, scores and
+      // cached EXIF survive the move and are found again on the next open.
       const remainingClassifications: Record<string, Classification> = {};
       for (const img of stateRef.current.images) {
-        if (!succeededDeletePaths.has(img.path) && !succeededMovePaths.has(img.path)) {
+        if (!succeededDeletePaths.has(img.path)) {
           remainingClassifications[img.name] = stateRef.current.classifications[img.name] ?? null;
         }
       }
 
-      resultsRef.current = {
-        ...resultsRef.current,
-        images: Object.fromEntries(
-          Object.entries(remainingClassifications).map(([k, v]) => [
-            k,
-            {
-              classification: v,
-              userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
-              qualityScore: resultsRef.current?.images[k]?.qualityScore,
-              qualitySubscores: resultsRef.current?.images[k]?.qualitySubscores,
-              rotation: resultsRef.current?.images[k]?.rotation,
-              exif: resultsRef.current?.images[k]?.exif,
-            },
-          ]),
-        ),
-      };
+      resultsRef.current = rebuildResults(
+        resultsRef.current,
+        Object.keys(remainingClassifications),
+        remainingClassifications,
+      );
       await saveResults(folderPath, resultsRef.current);
     }
 
@@ -728,20 +723,11 @@ export function usePhotoStore(): PhotoStoreAPI {
           remainingClassifications[img.name] = current.classifications[img.name] ?? null;
         }
       }
-      resultsRef.current = {
-        ...resultsRef.current,
-        images: Object.fromEntries(
-          Object.entries(remainingClassifications).map(([k, v]) => [
-            k,
-            {
-              classification: v,
-              userOverride: resultsRef.current?.images[k]?.userOverride ?? false,
-              qualityScore: resultsRef.current?.images[k]?.qualityScore,
-              exif: resultsRef.current?.images[k]?.exif,
-            },
-          ]),
-        ),
-      };
+      resultsRef.current = rebuildResults(
+        resultsRef.current,
+        Object.keys(remainingClassifications),
+        remainingClassifications,
+      );
       await saveResults(current.folderPath, resultsRef.current);
     }
   }, []);
@@ -892,6 +878,8 @@ export function usePhotoStore(): PhotoStoreAPI {
   // Keep a ref to filteredImages for use in callbacks (e.g., executeActions)
   const filteredImagesRef = useRef(filteredImages);
   filteredImagesRef.current = filteredImages;
+  const thumbnailWorkerRef = useRef(thumbnailWorker);
+  thumbnailWorkerRef.current = thumbnailWorker;
 
   const sortedImages = useMemo(() => {
     // When sorting by qualityScore, sort by timestamp first so grouping works correctly
@@ -1000,5 +988,4 @@ export function usePhotoStore(): PhotoStoreAPI {
   };
 }
 
-export { THUMBNAIL_SIZE_MAP };
 export type { SortField, SortDirection, PhotoGroup };

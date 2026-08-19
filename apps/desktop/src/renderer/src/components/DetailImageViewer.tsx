@@ -4,6 +4,11 @@ import type { Classification } from './ThumbnailCell';
 import { useZoomPan } from '../hooks/useZoomPan';
 import { FocusPeakingOverlay } from './FocusPeakingOverlay';
 import { ExposureClippingOverlay } from './ExposureClippingOverlay';
+import { RotatedImageStage } from './RotatedImageStage';
+import { AfPointOverlay } from './AfPointOverlay';
+import { OverlayControls } from './OverlayControls';
+import type { OverlaySettings, OverlayActions } from '../hooks/useOverlaySettings';
+import type { DetailedMetadataState } from '../hooks/useDetailedMetadata';
 
 const mimeMap: Record<string, string> = {
   jpg: 'image/jpeg',
@@ -116,8 +121,9 @@ interface DetailImageViewerProps {
   qualitySubscores: Record<string, QualitySubscores>;
   allImages: ImageFileInfo[];
   getThumbnail: (id: string) => ThumbnailStatus;
-  showFocusPeaking: boolean;
-  showClipping: boolean;
+  overlaySettings: OverlaySettings;
+  overlayActions: OverlayActions;
+  detailedMeta: DetailedMetadataState;
 }
 
 export function DetailImageViewer({
@@ -129,9 +135,12 @@ export function DetailImageViewer({
   qualitySubscores,
   allImages,
   getThumbnail,
-  showFocusPeaking,
-  showClipping,
+  overlaySettings,
+  overlayActions,
+  detailedMeta,
 }: DetailImageViewerProps): React.JSX.Element {
+  const { showFocusPeaking, showClipping, showAfPoint, focusPeakingThreshold } = overlaySettings;
+  const focus = detailedMeta.status === 'ready' ? detailedMeta.data.focus : null;
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
@@ -336,30 +345,40 @@ export function DetailImageViewer({
       onDoubleClick={handleDoubleClick}
     >
       {/* Zoom controls */}
-      <div className="absolute top-2 left-2 flex gap-1 z-20">
-        <button
-          onClick={fitToWindow}
-          className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 rounded text-xs text-white"
-        >
-          Fit
-        </button>
-        <button
-          onClick={zoomTo100}
-          className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 rounded text-xs text-white"
-        >
-          100%
-        </button>
-        <button
-          onClick={() => setShowMetadata((p) => !p)}
-          className={`px-2 py-1 rounded text-xs transition-colors ${
-            showMetadata
-              ? 'bg-blue-600/80 hover:bg-blue-500 text-white'
-              : 'bg-gray-800/80 hover:bg-gray-700 text-gray-400'
-          }`}
-          title="Toggle metadata overlay (I)"
-        >
-          Info
-        </button>
+      <div className="absolute top-2 left-2 flex flex-col gap-1 items-start z-20 max-w-[240px]">
+        <div className="flex gap-1">
+          <button
+            onClick={fitToWindow}
+            className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 rounded text-xs text-white"
+          >
+            Fit
+          </button>
+          <button
+            onClick={zoomTo100}
+            className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 rounded text-xs text-white"
+          >
+            100%
+          </button>
+          <button
+            onClick={() => setShowMetadata((p) => !p)}
+            className={`px-2 py-1 rounded text-xs transition-colors ${
+              showMetadata
+                ? 'bg-blue-600/80 hover:bg-blue-500 text-white'
+                : 'bg-gray-800/80 hover:bg-gray-700 text-gray-400'
+            }`}
+            title="Toggle metadata overlay (I)"
+          >
+            Info
+          </button>
+        </div>
+        {/* Overlay toggles — previously only reachable from the grid's info
+            panel, which does not mount in loupe or filmstrip. */}
+        <OverlayControls
+          settings={overlaySettings}
+          actions={overlayActions}
+          surface="hud"
+          afAvailable={detailedMeta.status !== 'unsupported'}
+        />
       </div>
 
       {/* Blurred placeholder */}
@@ -384,28 +403,42 @@ export function DetailImageViewer({
             display: 'inline-block',
           }}
         >
-          <img
-            src={imageUrl}
-            alt=""
-            onLoad={handleImageLoad}
-            className="max-w-none select-none"
-            style={focusedRotation ? { transform: `rotate(${focusedRotation}deg)` } : undefined}
-            draggable={false}
-          />
-          {showFocusPeaking && (
-            <FocusPeakingOverlay
-              imageUrl={imageUrl}
-              imageDimensions={imageDimensions}
-              visible={showFocusPeaking}
+          <RotatedImageStage
+            width={imageDimensions.width}
+            height={imageDimensions.height}
+            rotation={focusedRotation}
+          >
+            <img
+              src={imageUrl}
+              alt=""
+              onLoad={handleImageLoad}
+              className="max-w-none select-none"
+              draggable={false}
             />
-          )}
-          {showClipping && (
-            <ExposureClippingOverlay
-              imageUrl={imageUrl}
-              imageDimensions={imageDimensions}
-              visible={showClipping}
-            />
-          )}
+            {showFocusPeaking && (
+              <FocusPeakingOverlay
+                imageUrl={imageUrl}
+                imageDimensions={imageDimensions}
+                visible={showFocusPeaking}
+                threshold={focusPeakingThreshold}
+              />
+            )}
+            {showClipping && (
+              <ExposureClippingOverlay
+                imageUrl={imageUrl}
+                imageDimensions={imageDimensions}
+                visible={showClipping}
+              />
+            )}
+            {showAfPoint && (
+              <AfPointOverlay
+                focus={focus}
+                imageDimensions={imageDimensions}
+                zoom={zoom}
+                visible={showAfPoint}
+              />
+            )}
+          </RotatedImageStage>
         </div>
       )}
 

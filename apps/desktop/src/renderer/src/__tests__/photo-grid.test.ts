@@ -1,27 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
-import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
+import { describe, it, expect } from 'vitest';
 import type { ImageFileInfo } from '@photo-culler/types';
-import { useGrouping, HEADER_HEIGHT, DIVIDER_HEIGHT } from '../hooks/useGrouping';
-import { THUMBNAIL_SIZE_MAP } from '../components/PhotoGrid';
-
-// Mock thumbnail worker and exif extractor
-vi.mock('../hooks/useThumbnailWorker', () => ({
-  useThumbnailWorker: () => ({
-    requestThumbnail: vi.fn(),
-    getThumbnail: () => 'loading' as const,
-    updateVisibleRange: vi.fn(),
-    clearAll: vi.fn(),
-  }),
-}));
-
-vi.mock('../hooks/useExifExtractor', () => ({
-  useExifExtractor: () => ({
-    extractAll: vi.fn(),
-    isExtracting: false,
-    progress: { completed: 0, total: 0 },
-  }),
-}));
+import { groupByTimestamp } from '@photo-culler/image-utils/grouping';
+import {
+  THUMBNAIL_SIZE_MAP,
+  HEADER_HEIGHT,
+  DIVIDER_HEIGHT,
+  GRID_GAP,
+  imagesPerRow,
+  groupHeight,
+} from '../components/PhotoGrid';
 
 function makeImage(name: string, dateTaken?: number): ImageFileInfo {
   return {
@@ -29,18 +16,9 @@ function makeImage(name: string, dateTaken?: number): ImageFileInfo {
     name,
     extension: 'jpg',
     size: 1000,
-    lastModified: dateTaken ?? Date.now(),
+    lastModified: dateTaken ?? 0,
     dateTaken,
   };
-}
-
-function makeGroup(
-  id: string,
-  images: ImageFileInfo[],
-  startTime: number | null = null,
-  endTime: number | null = null,
-): PhotoGroup {
-  return { id, images, startTime, endTime };
 }
 
 describe('PhotoGrid', () => {
@@ -58,78 +36,67 @@ describe('PhotoGrid', () => {
     });
   });
 
-  describe('useGrouping', () => {
-    it('computes group heights based on images per row', () => {
+  // These two formulas are the layout contract. Cells are a fixed square box,
+  // so aspect-correct thumbnails must not change either of them.
+  describe('imagesPerRow', () => {
+    it('accounts for the gap between cells', () => {
+      // floor((800 + 8) / (200 + 8)) = 3
+      expect(imagesPerRow(800, 200)).toBe(3);
+      // 600px fits only 2 once the gap is charged: floor(608 / 208) = 2
+      expect(imagesPerRow(600, 200)).toBe(2);
+      expect(imagesPerRow(360, 120)).toBe(2);
+    });
+
+    it('never drops below one cell per row', () => {
+      expect(imagesPerRow(100, 300)).toBe(1);
+      expect(imagesPerRow(0, 300)).toBe(1);
+    });
+  });
+
+  describe('groupHeight', () => {
+    it('is header + one row + divider for a single row', () => {
+      // The trailing gap is subtracted, so a single row costs exactly cellSize.
+      expect(groupHeight(3, 3, 200)).toBe(HEADER_HEIGHT + 200 + DIVIDER_HEIGHT);
+    });
+
+    it('charges a gap between rows but not after the last one', () => {
+      // 7 images at 2 per row = 4 rows
+      expect(groupHeight(7, 2, 120)).toBe(
+        HEADER_HEIGHT + 4 * (120 + GRID_GAP) - GRID_GAP + DIVIDER_HEIGHT,
+      );
+      expect(groupHeight(7, 2, 120)).toBe(552);
+    });
+
+    it('handles a container narrower than one cell', () => {
+      expect(groupHeight(1, imagesPerRow(100, 300), 300)).toBe(
+        HEADER_HEIGHT + 300 + DIVIDER_HEIGHT,
+      );
+    });
+  });
+
+  describe('grouping feeding the grid', () => {
+    it('creates one group when timestamps are close together', () => {
       const images = [makeImage('a.jpg', 1000), makeImage('b.jpg', 2000), makeImage('c.jpg', 3000)];
+      const groups = groupByTimestamp(images, 60000);
 
-      const { result } = renderHook(() => useGrouping(images, 60000, 200, 600));
-
-      // 600px width / 200px cell = 3 per row
-      // 3 images = 1 row
-      // Height = 32 (header) + 1 * 200 (row) + 16 (divider) = 248
-      expect(result.current.groups.length).toBe(1);
-      expect(result.current.getGroupHeight(0)).toBe(HEADER_HEIGHT + 200 + DIVIDER_HEIGHT);
+      expect(groups.length).toBe(1);
+      expect(groups[0]!.images.length).toBe(3);
+      expect(groups[0]!.startTime).toBe(1000);
+      expect(groups[0]!.endTime).toBe(3000);
     });
 
-    it('handles multi-row groups', () => {
-      const images = Array.from({ length: 7 }, (_, i) => makeImage(`img${i}.jpg`, 1000 + i * 100));
-
-      const { result } = renderHook(() => useGrouping(images, 60000, 120, 360));
-
-      // 360 / 120 = 3 per row, 7 images = ceil(7/3) = 3 rows
-      // Height = 32 + 3*120 + 16 = 408
-      expect(result.current.getGroupHeight(0)).toBe(HEADER_HEIGHT + 3 * 120 + DIVIDER_HEIGHT);
-    });
-
-    it('creates multiple groups when timestamps are far apart', () => {
+    it('splits into multiple groups when timestamps are far apart', () => {
       const images = [
         makeImage('a.jpg', 1000),
         makeImage('b.jpg', 2000),
-        makeImage('c.jpg', 100000), // far apart
+        makeImage('c.jpg', 100000),
       ];
 
-      const { result } = renderHook(() => useGrouping(images, 5000, 200, 600));
-
-      expect(result.current.groups.length).toBe(2);
+      expect(groupByTimestamp(images, 5000).length).toBe(2);
     });
 
-    it('ensures minimum 1 image per row even with narrow container', () => {
-      const images = [makeImage('a.jpg', 1000)];
-
-      const { result } = renderHook(
-        () => useGrouping(images, 60000, 300, 100), // container narrower than cell
-      );
-
-      // imagesPerRow = max(1, floor(100/300)) = 1
-      expect(result.current.getGroupHeight(0)).toBe(HEADER_HEIGHT + 300 + DIVIDER_HEIGHT);
-    });
-  });
-
-  describe('Group header display', () => {
-    it('generates groups with correct photo count', () => {
-      const images = Array.from({ length: 5 }, (_, i) => makeImage(`img${i}.jpg`, 1000 + i * 100));
-
-      const { result } = renderHook(() => useGrouping(images, 60000, 200, 800));
-
-      expect(result.current.groups[0]!.images.length).toBe(5);
-    });
-
-    it('generates groups with start and end time', () => {
-      const images = [makeImage('a.jpg', 1000), makeImage('b.jpg', 5000)];
-
-      const { result } = renderHook(() => useGrouping(images, 60000, 200, 800));
-
-      const group = result.current.groups[0]!;
-      expect(group.startTime).toBe(1000);
-      expect(group.endTime).toBe(5000);
-    });
-  });
-
-  describe('Empty state', () => {
-    it('returns no groups for empty image array', () => {
-      const { result } = renderHook(() => useGrouping([], 5000, 200, 800));
-
-      expect(result.current.groups.length).toBe(0);
+    it('returns no groups for an empty image array', () => {
+      expect(groupByTimestamp([], 5000).length).toBe(0);
     });
   });
 });

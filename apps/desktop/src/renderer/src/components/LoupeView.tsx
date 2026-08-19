@@ -1,4 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react';
+import type { OverlaySettings, OverlayActions } from '../hooks/useOverlaySettings';
+import type { DetailedMetadataState } from '../hooks/useDetailedMetadata';
 import type { QualitySubscores } from '@photo-culler/types';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { Classification } from './ThumbnailCell';
@@ -20,8 +22,9 @@ export interface DetailViewProps {
   onCycleClassification: (filename: string) => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number) => void;
-  showFocusPeaking: boolean;
-  showClipping: boolean;
+  overlaySettings: OverlaySettings;
+  overlayActions: OverlayActions;
+  detailedMeta: DetailedMetadataState;
 }
 
 // ─── Grouped Filmstrip (horizontal) ─────────────────────────────────
@@ -120,8 +123,9 @@ export function LoupeView(props: DetailViewProps): React.JSX.Element {
     onCycleClassification,
     getThumbnail,
     requestThumbnail,
-    showFocusPeaking,
-    showClipping,
+    overlaySettings,
+    overlayActions,
+    detailedMeta,
   } = props;
 
   const flatImages = useMemo(() => groups.flatMap((g) => g.images), [groups]);
@@ -160,8 +164,9 @@ export function LoupeView(props: DetailViewProps): React.JSX.Element {
         qualitySubscores={qualitySubscores}
         allImages={flatImages}
         getThumbnail={getThumbnail}
-        showFocusPeaking={showFocusPeaking}
-        showClipping={showClipping}
+        overlaySettings={overlaySettings}
+        overlayActions={overlayActions}
+        detailedMeta={detailedMeta}
       />
 
       <LoupeFilmstrip

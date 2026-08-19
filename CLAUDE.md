@@ -26,7 +26,8 @@ Run from the repo root unless noted.
 | `pnpm typecheck` | **No-op — see Traps below** |
 
 Packaging (from `apps/desktop`): `pnpm build && pnpm package:win` (or `package:mac`, or `package`
-for the current platform). Artifacts land in `apps/desktop/dist/`, versioned `0.0.0-dev`.
+for the current platform). Each of those vendors the target's native binaries first — see the
+vendoring trap below. Artifacts land in `apps/desktop/dist/`, versioned `0.0.0-dev`.
 
 Toolchain: pnpm 10.32.1 (`packageManager` field), Node >= 20.19.0 locally, Node 22 in CI.
 
@@ -70,11 +71,37 @@ The reason it was left that way is documented in `.github/workflows/ci.yml`: mak
 6 to 8, which breaks electron-vite's peer range. **Do not trust it — verify types by other means
 before claiming a change typechecks.**
 
-**`sharp` packaging is hand-rolled and fragile.** `scripts/copy-sharp-deps.mjs` walks pnpm's virtual
-store to flatten sharp and its `@img/*` binaries into `sharp-vendor/`, because electron-builder
-can't follow pnpm symlinks. This is why `electron-builder.yml` sets `asar: false` and
-`npmRebuild: false`, and why `.npmrc` public-hoists `sharp` and `@img/*`. Commits `cbe4229`,
-`8cf68b2`, and `f465675` are the convergence on this arrangement.
+**Native dependencies are vendored per target.** `scripts/vendor-native-deps.mjs` flattens `sharp`
+and `exiftool-vendored` out of pnpm's virtual store into `vendor/<os>-<arch>/node_modules/`, because
+electron-builder can't follow pnpm symlinks. `electron-builder.yml` picks the right one with the
+`${os}-${arch}` macro, which is expanded **per pack pass** — that is what keeps a Windows installer
+from carrying macOS and Linux libvips (it used to, ~115 MB of it).
+
+Three things to know before touching it:
+- Use `${os}` (`mac`/`win`/`linux`), **never `${platform}`** — that macro expands to the *host*
+  platform, so a build would be correct only on the machine that produced it.
+- Pruning is a **deny-list**: only names matching `@img/sharp-*`, `@img/sharp-libvips-*` and
+  `exiftool-vendored.{exe,pl}` are filtered. A new platform-neutral dependency is carried along
+  automatically.
+- `scripts/verify-pack.mjs` runs as `afterPack` and fails the build if foreign-platform binaries
+  slipped in. **Keep it.** A miss here builds and installs fine and only dies at runtime with
+  `Could not load the "sharp" module`.
+
+This is also why `electron-builder.yml` sets `asar: false` and `npmRebuild: false`. Commits
+`cbe4229`, `8cf68b2`, and `f465675` are the original convergence on the sharp arrangement.
+
+**`pnpm.overrides` pins vite to 6.4.1, and that pin is load-bearing.** `vite` is not a direct
+dependency anywhere — it arrives only as a peer of `electron-vite`, `@vitejs/plugin-react`,
+`@tailwindcss/vite` and `vitest`. Of those, only vitest allows vite 8, so any `pnpm add` re-resolves
+the tree to vite 8 and the build dies with
+`The requested module 'vite' does not provide an export named 'splitVendorChunk'`. electron-vite 3.1
+supports vite 6 at most. Remove the override only when electron-vite supports a newer vite.
+
+**pnpm ignores negated `os` fields.** `exiftool-vendored.pl` declares `"os": ["!win32"]`, and
+`pnpm.supportedArchitectures` does **not** force it onto a Windows host the way it does for sharp's
+positively-declared platform packages. So a mac bundle cannot be vendored from Windows — the script
+exits 1 with an explanation rather than shipping a broken package. CI builds macOS on `macos-latest`,
+where `.pl` installs normally.
 
 **CI blocks new native addons.** `ci.yml` greps the dependency tree for
 `node-gyp|prebuild-install|node-pre-gyp|cmake-js` and fails the build on a hit. `sharp` passes only
@@ -89,6 +116,17 @@ reason — the menu and the renderer handler cannot drift.
 belong to the renderer; a menu accelerator swallows them before the window ever sees the keypress.
 See the comments in `src/main/index.ts`. The Edit menu's roles are also load-bearing on macOS — they
 bind Cmd+C/V/X inside the toolbar search field.
+
+**Two EXIF paths, deliberately.** `exifr` runs in a renderer worker over every image in the folder
+for the fields sorting and grouping need. `exiftool` runs as a long-lived child process in the main
+process, on demand, for the ONE focused image — that is where the maker-note data lives (AF point,
+face detection), which exifr returns as an undecoded blob. Don't merge them: the bulk path must stay
+cheap, and exiftool must stay off the per-image hot path.
+
+**Thumbnails are cached per format version.** `.photo-culler-thumbs/v2/<name>.thumb.jpg`. Bump
+`THUMB_CACHE_VERSION` in `ipc-handlers.ts` whenever the pixel format changes; the vacuum then deletes
+everything that is not the current version directory. Freshness is decided in the main process
+against the source file's *current* mtime, so a rotation invalidates the thumbnail automatically.
 
 **Quality-score weights are a persisted contract.** Sharpness 40% / exposure 25% / contrast 20% /
 noise 15%, in `src/renderer/src/workers/scoring.worker.ts` and documented in the README. Scores are

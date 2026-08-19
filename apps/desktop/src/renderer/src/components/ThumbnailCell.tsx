@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
+import { fitRotated } from '../lib/thumbnail-geometry';
 
 export type Classification = 'keep' | 'review' | 'delete' | null;
 type ThumbnailStatus = ImageBitmap | 'loading' | 'error';
@@ -17,7 +18,6 @@ interface ThumbnailCellProps {
   onCycleClassification: () => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
-  setLastModified?: (id: string, lastModified: number) => void;
   groupIndex: number;
 }
 
@@ -41,7 +41,6 @@ export function ThumbnailCell({
   onCycleClassification,
   getThumbnail,
   requestThumbnail,
-  setLastModified,
   groupIndex,
 }: ThumbnailCellProps): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -54,13 +53,6 @@ export function ThumbnailCell({
       cellRef.current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
   }, [isFocused]);
-
-  // Register lastModified for disk cache validation
-  useEffect(() => {
-    if (setLastModified && image.lastModified) {
-      setLastModified(image.path, image.lastModified);
-    }
-  }, [image.path, image.lastModified, setLastModified]);
 
   // Request thumbnail if not yet requested
   useEffect(() => {
@@ -79,21 +71,28 @@ export function ThumbnailCell({
     if (!ctx) return;
 
     // Account for border (2px) + gap (2px) on each side = 8px total
-    const displaySize = cellSize - 8;
-    canvas.width = displaySize;
-    canvas.height = displaySize;
+    const box = cellSize - 8;
+    const {
+      canvas: size,
+      draw,
+      radians,
+    } = fitRotated(thumbnail.width, thumbnail.height, box, rotation);
 
-    ctx.clearRect(0, 0, displaySize, displaySize);
+    // The canvas takes the rotated footprint, so a portrait thumbnail rendered
+    // at 90 degrees gets a landscape canvas rather than overflowing a square one.
+    canvas.width = size.width;
+    canvas.height = size.height;
 
-    if (rotation !== 0) {
-      ctx.save();
-      ctx.translate(displaySize / 2, displaySize / 2);
-      ctx.rotate((rotation * Math.PI) / 180);
-      ctx.drawImage(thumbnail, -displaySize / 2, -displaySize / 2, displaySize, displaySize);
-      ctx.restore();
-    } else {
-      ctx.drawImage(thumbnail, 0, 0, displaySize, displaySize);
-    }
+    ctx.clearRect(0, 0, size.width, size.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    // Uniform for all four angles: draw centred in the canvas, in the bitmap's
+    // own axes, and let the rotation carry it into place.
+    ctx.translate(size.width / 2, size.height / 2);
+    if (radians !== 0) ctx.rotate(radians);
+    ctx.drawImage(thumbnail, -draw.width / 2, -draw.height / 2, draw.width, draw.height);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }, [thumbnail, cellSize, rotation]);
 
   const handleClick = (): void => {
@@ -153,7 +152,7 @@ export function ThumbnailCell({
       {/* Classification border */}
       <div className={`absolute inset-0 border-2 ${borderColor}`}>
         {/* 2px gap with dark background for separation */}
-        <div className="absolute inset-[2px] bg-gray-900 overflow-hidden">
+        <div className="absolute inset-[2px] bg-gray-900 overflow-hidden flex items-center justify-center">
           {thumbnail === 'loading' && (
             <div
               className="absolute inset-0 bg-gray-700 animate-pulse"
@@ -182,7 +181,7 @@ export function ThumbnailCell({
             </div>
           )}
           {thumbnail !== 'loading' && thumbnail !== 'error' && (
-            <canvas ref={canvasRef} className="w-full h-full" />
+            <canvas ref={canvasRef} className="block max-w-full max-h-full" />
           )}
         </div>
       </div>

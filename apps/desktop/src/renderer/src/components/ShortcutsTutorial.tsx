@@ -58,6 +58,18 @@ const SECTIONS: ShortcutSection[] = [
     ],
   },
   {
+    title: 'Overlays',
+    shortcuts: [
+      { keys: 'P', description: 'Toggle focus peaking (threshold adjustable)' },
+      { keys: 'C', description: 'Toggle exposure clipping' },
+      { keys: 'A', description: 'Toggle AF point — where the camera focused' },
+      {
+        keys: '⌘/Ctrl + Shift + P / K / A',
+        description: 'Same three, from the View › Overlays menu',
+      },
+    ],
+  },
+  {
     title: 'Help',
     shortcuts: [
       { keys: '?', description: 'Show / hide this panel' },

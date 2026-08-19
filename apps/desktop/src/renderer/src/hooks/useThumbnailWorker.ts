@@ -15,7 +15,8 @@ interface ThumbnailWorkerAPI {
   getThumbnail: (id: string) => ThumbnailStatus;
   updateVisibleRange: (first: number, last: number) => void;
   clearAll: () => void;
-  setLastModified: (id: string, lastModified: number) => void;
+  /** Drop a cached thumbnail so the next render re-requests it. */
+  invalidate: (id: string) => void;
 }
 
 function createWorker(): Worker {
@@ -31,7 +32,12 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
   const queueRef = useRef<PendingRequest[]>([]);
   const busyRef = useRef<Set<number>>(new Set());
   const visibleRangeRef = useRef<{ first: number; last: number }>({ first: 0, last: 10 });
-  const lastModifiedRef = useRef<Map<string, number>>(new Map());
+  /**
+   * Per-id generation counter. A worker response stamped with an older epoch
+   * belongs to a thumbnail we have since invalidated (e.g. by rotating the file)
+   * and must not overwrite the fresh one.
+   */
+  const epochRef = useRef<Map<string, number>>(new Map());
   const [, setVersion] = useState(0);
 
   const dispatchNext = useCallback((workerIndex: number) => {
@@ -63,10 +69,11 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
   const loadThumbnail = useCallback(
     async (workerIndex: number, id: string, _url: string, size: number) => {
       try {
-        // Try disk cache first
-        const lastModified = lastModifiedRef.current.get(id);
-        if (lastModified !== undefined && window.api.loadThumbCache) {
-          const cached = await window.api.loadThumbCache(id, lastModified);
+        // Try disk cache first. Freshness is decided in the main process, so
+        // this no longer depends on the caller having registered an mtime —
+        // which is why loupe and filmstrip used to skip the cache entirely.
+        if (window.api.loadThumbCache) {
+          const cached = await window.api.loadThumbCache(id);
           if (cached) {
             // Cache hit — create ImageBitmap from JPEG buffer
             const blob = new Blob([cached], { type: 'image/jpeg' });
@@ -93,7 +100,8 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
         const mimeType = mimeMap[ext] ?? 'image/jpeg';
         const worker = workersRef.current[workerIndex];
         if (worker) {
-          worker.postMessage({ id, buffer, mimeType, size }, [buffer]);
+          const epoch = epochRef.current.get(id) ?? 0;
+          worker.postMessage({ id, buffer, mimeType, size, epoch }, [buffer]);
         }
       } catch {
         // IPC read failed — report error directly
@@ -109,7 +117,15 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
 
   const handleWorkerMessage = useCallback(
     (workerIndex: number, event: MessageEvent<ThumbnailResponse>) => {
-      const { id, bitmap, jpegBuffer, error } = event.data;
+      const { id, bitmap, jpegBuffer, error, epoch } = event.data;
+
+      // Discard a response for a generation we have already invalidated.
+      if (epoch !== undefined && epoch < (epochRef.current.get(id) ?? 0)) {
+        if (bitmap) bitmap.close();
+        dispatchNext(workerIndex);
+        return;
+      }
+
       pendingRef.current.delete(id);
 
       if (error || !bitmap) {
@@ -196,8 +212,17 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
     visibleRangeRef.current = { first, last };
   }, []);
 
-  const setLastModified = useCallback((id: string, lastModified: number) => {
-    lastModifiedRef.current.set(id, lastModified);
+  /**
+   * Forget a thumbnail so it is regenerated. Bumping the epoch first means an
+   * in-flight worker response for the old bitmap is dropped on arrival.
+   */
+  const invalidate = useCallback((id: string) => {
+    epochRef.current.set(id, (epochRef.current.get(id) ?? 0) + 1);
+    const existing = cacheRef.current.get(id);
+    if (existing && existing !== 'error') existing.close();
+    cacheRef.current.delete(id);
+    pendingRef.current.delete(id);
+    setVersion((v) => v + 1);
   }, []);
 
   const clearAll = useCallback(() => {
@@ -217,12 +242,12 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
     pendingRef.current.clear();
     queueRef.current = [];
     busyRef.current.clear();
-    lastModifiedRef.current.clear();
+    epochRef.current.clear();
 
     // Create fresh workers
     initWorkers();
     setVersion((v) => v + 1);
   }, [initWorkers]);
 
-  return { requestThumbnail, getThumbnail, updateVisibleRange, clearAll, setLastModified };
+  return { requestThumbnail, getThumbnail, updateVisibleRange, clearAll, invalidate };
 }

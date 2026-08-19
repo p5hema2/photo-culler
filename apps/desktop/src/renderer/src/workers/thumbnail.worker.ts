@@ -1,17 +1,24 @@
 /**
  * Thumbnail generation Web Worker.
- * Receives image data as ArrayBuffer, generates 256x256 center-cropped JPEG
+ * Receives image data as ArrayBuffer, generates aspect-preserving JPEG
  * thumbnails using createImageBitmap + OffscreenCanvas, and transfers back as ImageBitmap.
  *
  * The main thread handles fetching (which requires app:// protocol access)
  * and passes raw image data to the worker for heavy processing.
  */
+import { fitWithin } from '../lib/thumbnail-geometry';
 
 export interface ThumbnailRequest {
   id: string;
   buffer: ArrayBuffer;
   mimeType: string;
+  /**
+   * Longest edge in px. The output is `size` on its long side and
+   * proportionally smaller on the short side — it is NOT a square edge.
+   */
   size: number;
+  /** Generation counter, echoed back so the host can drop stale responses. */
+  epoch?: number;
 }
 
 export interface ThumbnailResponse {
@@ -19,40 +26,46 @@ export interface ThumbnailResponse {
   bitmap?: ImageBitmap;
   jpegBuffer?: ArrayBuffer;
   error?: boolean;
+  epoch?: number;
 }
 
 self.onmessage = async (event: MessageEvent<ThumbnailRequest>) => {
-  const { id, buffer, mimeType, size } = event.data;
+  const { id, buffer, mimeType, size, epoch } = event.data;
 
   try {
     const blob = new Blob([buffer], { type: mimeType });
-    const bitmap = await createImageBitmap(blob);
+    // Explicit, though it is Chromium's default: this decides whether a
+    // portrait-EXIF file yields 256x171 or 171x256, and the full-size <img> in
+    // DetailImageViewer always honours EXIF orientation. If these two disagree,
+    // the thumbnail and the preview disagree about which way is up.
+    const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
 
-    // Center-crop with object-fit:cover math
-    const scale = Math.max(size / bitmap.width, size / bitmap.height);
-    const sw = size / scale;
-    const sh = size / scale;
-    const sx = (bitmap.width - sw) / 2;
-    const sy = (bitmap.height - sh) / 2;
+    // object-fit: contain — preserve the aspect ratio instead of centre-cropping
+    // to a square, which misrepresented the framing of every non-square photo.
+    const { width: tw, height: th } = fitWithin(bitmap.width, bitmap.height, size);
 
-    const canvas = new OffscreenCanvas(size, size);
+    const canvas = new OffscreenCanvas(tw, th);
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       bitmap.close();
       throw new Error('Could not get 2d context');
     }
 
-    ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, size, size);
+    // A single 6000 -> 256 downscale aliases badly at the default quality, and
+    // the artefact is more visible on a letterboxed thumb than on a cropped one.
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, 0, 0, tw, th);
     bitmap.close();
 
     const thumbnailBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
     const jpegBuffer = await thumbnailBlob.arrayBuffer();
     const thumbnailBitmap = await createImageBitmap(thumbnailBlob);
 
-    self.postMessage({ id, bitmap: thumbnailBitmap, jpegBuffer } as ThumbnailResponse, {
+    self.postMessage({ id, bitmap: thumbnailBitmap, jpegBuffer, epoch } as ThumbnailResponse, {
       transfer: [thumbnailBitmap, jpegBuffer],
     });
   } catch {
-    self.postMessage({ id, error: true } as ThumbnailResponse);
+    self.postMessage({ id, error: true, epoch } as ThumbnailResponse);
   }
 };

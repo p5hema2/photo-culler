@@ -9,3 +9,15 @@ export type {
   MenuCommand,
 } from './ipc';
 export type { ImageFileInfo } from './image';
+export type {
+  FocusVendor,
+  FocusModeKind,
+  FocusFrame,
+  FocusRegionKind,
+  NormRect,
+  FocusRegion,
+  FocusInfo,
+  LensInfo,
+  MetadataTag,
+  DetailedMetadata,
+} from './focus';

@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { MenuCommand } from '@photo-culler/types';
 import { registerSchemes, registerProtocolHandlers } from './protocol';
 import { registerIpcHandlers } from './ipc-handlers';
+import { endExifTool } from './exiftool';
 
 // Ensure store module is initialized early
 import './store';
@@ -105,6 +106,8 @@ function buildMenu(): void {
         { type: 'separator' },
         commandItem('Save / Delete...', 'execute', 'CmdOrCtrl+S'),
         { type: 'separator' },
+        commandItem('Clean Thumbnail Cache', 'vacuum-thumbs'),
+        { type: 'separator' },
         { role: 'quit' },
       ],
     },
@@ -145,6 +148,17 @@ function buildMenu(): void {
           ],
         },
         commandItem('Toggle Info Panel', 'toggle-info-panel', 'CmdOrCtrl+I'),
+        {
+          label: 'Overlays',
+          submenu: [
+            // Modifier accelerators only — bare p/c/a belong to the renderer.
+            // Shift+K rather than the obvious Shift+C: Chromium's DevTools
+            // grabs Ctrl+Shift+C whenever the inspector is open.
+            commandItem('Focus Peaking', 'toggle-focus-peaking', 'CmdOrCtrl+Shift+P'),
+            commandItem('Exposure Clipping', 'toggle-clipping', 'CmdOrCtrl+Shift+K'),
+            commandItem('AF Point', 'toggle-af-point', 'CmdOrCtrl+Shift+A'),
+          ],
+        },
         { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },
@@ -204,6 +218,23 @@ app.whenReady().then(() => {
   });
   buildMenu();
   createWindow();
+});
+
+/**
+ * Shut the exiftool child process down before quitting.
+ *
+ * will-quit handlers are synchronous, so the only way to await an async
+ * teardown is to cancel this quit and re-issue it once the work is done.
+ * Without this, a -stay_open exiftool.exe outlives the app on Windows.
+ */
+let exiftoolStopped = false;
+app.on('will-quit', (event) => {
+  if (exiftoolStopped) return;
+  event.preventDefault();
+  void endExifTool().finally(() => {
+    exiftoolStopped = true;
+    app.quit();
+  });
 });
 
 app.on('window-all-closed', () => {

@@ -101,8 +101,9 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
     onCycleClassification,
     getThumbnail,
     requestThumbnail,
-    showFocusPeaking,
-    showClipping,
+    overlaySettings,
+    overlayActions,
+    detailedMeta,
   } = props;
 
   const flatImages = useMemo(() => groups.flatMap((g) => g.images), [groups]);
@@ -155,8 +156,9 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
         qualitySubscores={qualitySubscores}
         allImages={flatImages}
         getThumbnail={getThumbnail}
-        showFocusPeaking={showFocusPeaking}
-        showClipping={showClipping}
+        overlaySettings={overlaySettings}
+        overlayActions={overlayActions}
+        detailedMeta={detailedMeta}
       />
     </div>
   );

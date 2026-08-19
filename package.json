@@ -33,6 +33,9 @@
         "x64",
         "arm64"
       ]
+    },
+    "overrides": {
+      "vite": "6.4.1"
     }
   },
   "lint-staged": {

@@ -9,8 +9,14 @@ files:
   - out/**
   - package.json
   - '!node_modules'
-  - from: sharp-vendor/node_modules
+  # ${os}-${arch} is expanded per pack pass, so each artifact gets only its own
+  # native binaries. Use ${os} (mac/win/linux), NEVER ${platform} — that one
+  # expands to the HOST platform and would be correct only on the build machine.
+  - from: vendor/${os}-${arch}/node_modules
     to: node_modules
+
+# Assertion-only: fails the build if foreign-platform binaries slipped in.
+afterPack: ./scripts/verify-pack.mjs
 
 npmRebuild: false
 asar: false

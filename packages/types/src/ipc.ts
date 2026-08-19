@@ -1,4 +1,5 @@
 import type { ImageFileInfo } from './image';
+import type { DetailedMetadata } from './focus';
 
 export const IPC_CHANNELS = {
   SELECT_FOLDER: 'dialog:select-folder',
@@ -15,6 +16,8 @@ export const IPC_CHANNELS = {
   LOAD_THUMB_CACHE: 'fs:load-thumb-cache',
   SAVE_THUMB_CACHE: 'fs:save-thumb-cache',
   ROTATE_FILES: 'fs:rotate-files',
+  VACUUM_THUMB_CACHE: 'fs:vacuum-thumb-cache',
+  READ_DETAILED_METADATA: 'meta:read-detailed',
   GET_APP_VERSION: 'app:get-version',
 } as const;
 
@@ -33,6 +36,10 @@ export const MENU_COMMANDS = [
   'thumbnail:large',
   'toggle-info-panel',
   'show-shortcuts',
+  'vacuum-thumbs',
+  'toggle-focus-peaking',
+  'toggle-clipping',
+  'toggle-af-point',
 ] as const;
 
 export type MenuCommand = (typeof MENU_COMMANDS)[number];
@@ -51,6 +58,18 @@ export interface SessionConfig {
   thumbnailSize: 'small' | 'medium' | 'large';
   /** Grouping threshold in milliseconds */
   groupingThresholdMs: number;
+  /** Focus-peaking overlay visible */
+  showFocusPeaking: boolean;
+  /** Exposure-clipping overlay visible */
+  showClipping: boolean;
+  /** AF-point overlay visible */
+  showAfPoint: boolean;
+  /**
+   * Sobel gradient magnitude above which a pixel counts as in focus.
+   * 8-bit input yields magnitudes up to ~1442, so the old hardcoded 30 marked
+   * essentially every texture as sharp.
+   */
+  focusPeakingThreshold: number;
 }
 
 export interface QualitySubscores {
@@ -123,11 +142,24 @@ export interface ElectronAPI {
   ) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
   deleteFiles: (filePaths: string[]) => Promise<TrashResult>;
   readFile: (filePath: string) => Promise<ArrayBuffer>;
-  loadThumbCache: (filePath: string, lastModified: number) => Promise<ArrayBuffer | null>;
+  /**
+   * Cached thumbnail for a file, or null when absent or stale.
+   * Freshness is decided in the main process against the source file's current
+   * mtime — the renderer's scan-time value went stale after a rotation.
+   */
+  loadThumbCache: (filePath: string) => Promise<ArrayBuffer | null>;
   saveThumbCache: (filePath: string, jpegBuffer: ArrayBuffer) => Promise<void>;
   rotateFiles: (
     files: Array<{ path: string; degrees: number }>,
   ) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
+  /**
+   * Deep metadata for one image, read on demand via exiftool in the main
+   * process. Resolves null when exiftool is unavailable or the file yields
+   * nothing usable.
+   */
+  readDetailedMetadata: (filePath: string) => Promise<DetailedMetadata | null>;
+  /** Delete orphaned and outdated cached thumbnails for a folder. */
+  vacuumThumbCache: (folderPath: string) => Promise<{ removed: number }>;
   /** Version of the running app, stamped from the git tag at build time. */
   getAppVersion: () => Promise<string>;
 }

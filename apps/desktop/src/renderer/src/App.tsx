@@ -4,6 +4,8 @@ import { usePhotoStore } from './hooks/usePhotoStore';
 import type { Classification } from './hooks/usePhotoStore';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useScoringWorker } from './hooks/useScoringWorker';
+import { useOverlaySettings } from './hooks/useOverlaySettings';
+import { useDetailedMetadata } from './hooks/useDetailedMetadata';
 import { DropZone } from './components/DropZone';
 import { Toolbar } from './components/Toolbar';
 import { PhotoGrid } from './components/PhotoGrid';
@@ -74,11 +76,11 @@ function App(): React.JSX.Element {
   const scoringTriggeredRef = useRef<string | null>(null);
   const [showExecutePanel, setShowExecutePanel] = useState(false);
   const [infoPanelOpen, setInfoPanelOpen] = useState(true);
-  const [showFocusPeaking, setShowFocusPeaking] = useState(false);
-  const [showClipping, setShowClipping] = useState(false);
   const [selectOnHover, setSelectOnHover] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [viewLayout, setViewLayout] = useState<'default' | 'loupe' | 'filmstrip'>('default');
+
+  const { settings: overlaySettings, actions: overlayActions } = useOverlaySettings();
 
   const sortedFlatImages = useMemo(() => groups.flatMap((g) => g.images), [groups]);
 
@@ -144,6 +146,18 @@ function App(): React.JSX.Element {
           prev === 'default' ? 'loupe' : prev === 'loupe' ? 'filmstrip' : 'default',
         );
       }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        if (e.key === 'p') {
+          e.preventDefault();
+          overlayActionsRef.current.toggleFocusPeaking();
+        } else if (e.key === 'c') {
+          e.preventDefault();
+          overlayActionsRef.current.toggleClipping();
+        } else if (e.key === 'a') {
+          e.preventDefault();
+          overlayActionsRef.current.toggleAfPoint();
+        }
+      }
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
@@ -174,14 +188,6 @@ function App(): React.JSX.Element {
     );
   }, []);
 
-  const handleToggleFocusPeaking = useCallback(() => {
-    setShowFocusPeaking((prev) => !prev);
-  }, []);
-
-  const handleToggleClipping = useCallback(() => {
-    setShowClipping((prev) => !prev);
-  }, []);
-
   // Focus the container after folder loads so keyboard nav works immediately
   useEffect(() => {
     if (!state.isLoading && state.images.length > 0 && gridContainerRef.current) {
@@ -210,6 +216,8 @@ function App(): React.JSX.Element {
   // once — re-registering on every render would stack IPC listeners.
   const handleRescanRef = useRef(handleRescan);
   handleRescanRef.current = handleRescan;
+  const overlayActionsRef = useRef(overlayActions);
+  overlayActionsRef.current = overlayActions;
 
   useEffect(() => {
     if (!window.menuEvents?.onCommand) return;
@@ -245,6 +253,24 @@ function App(): React.JSX.Element {
         case 'show-shortcuts':
           setShowShortcuts((prev) => !prev);
           break;
+        case 'toggle-focus-peaking':
+          overlayActionsRef.current.toggleFocusPeaking();
+          break;
+        case 'toggle-clipping':
+          overlayActionsRef.current.toggleClipping();
+          break;
+        case 'toggle-af-point':
+          overlayActionsRef.current.toggleAfPoint();
+          break;
+        case 'vacuum-thumbs': {
+          const folder = stateRef.current.folderPath;
+          if (folder) {
+            void window.api.vacuumThumbCache(folder).catch(() => {
+              // Housekeeping is best-effort; never interrupt the user for it.
+            });
+          }
+          break;
+        }
       }
     });
     return () => {
@@ -337,6 +363,12 @@ function App(): React.JSX.Element {
     return state.rotations[focusedImage.name] ?? 0;
   }, [focusedImage, state.rotations]);
 
+  // Only read deep metadata when something on screen will use it — without the
+  // gate every arrow key would cost an exiftool read.
+  const needsDetailedMeta =
+    (viewLayout === 'default' && infoPanelOpen) || overlaySettings.showAfPoint;
+  const detailedMeta = useDetailedMetadata(focusedImage?.path ?? null, needsDetailedMeta);
+
   const renderContent = (): React.JSX.Element => {
     if (state.isLoading) {
       return <LoadingState progress={state.exifProgress} />;
@@ -363,8 +395,9 @@ function App(): React.JSX.Element {
           onCycleClassification={store.cycleClassification}
           getThumbnail={thumbnailWorker.getThumbnail}
           requestThumbnail={thumbnailWorker.requestThumbnail}
-          showFocusPeaking={showFocusPeaking}
-          showClipping={showClipping}
+          overlaySettings={overlaySettings}
+          overlayActions={overlayActions}
+          detailedMeta={detailedMeta}
         />
       );
     }
@@ -382,7 +415,6 @@ function App(): React.JSX.Element {
         onCycleClassification={store.cycleClassification}
         getThumbnail={thumbnailWorker.getThumbnail}
         requestThumbnail={thumbnailWorker.requestThumbnail}
-        setLastModified={thumbnailWorker.setLastModified}
         updateVisibleRange={thumbnailWorker.updateVisibleRange}
       />
     );
@@ -453,10 +485,9 @@ function App(): React.JSX.Element {
               rotation={focusedRotation}
               isOpen={infoPanelOpen}
               onToggle={handleToggleInfoPanel}
-              showFocusPeaking={showFocusPeaking}
-              onToggleFocusPeaking={handleToggleFocusPeaking}
-              showClipping={showClipping}
-              onToggleClipping={handleToggleClipping}
+              overlaySettings={overlaySettings}
+              overlayActions={overlayActions}
+              detailedMeta={detailedMeta}
             />
           )}
         </div>

@@ -4,14 +4,31 @@ import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import { GroupRow } from './GroupRow';
 import type { Classification } from './ThumbnailCell';
 
-const HEADER_HEIGHT = 32;
-const DIVIDER_HEIGHT = 16;
+export const HEADER_HEIGHT = 32;
+export const DIVIDER_HEIGHT = 16;
+/** Matches the `gap-2` (0.5rem) between cells in GroupRow. */
+export const GRID_GAP = 8;
 
 export const THUMBNAIL_SIZE_MAP: Record<string, number> = {
   small: 120,
   medium: 200,
   large: 300,
 };
+
+/**
+ * How many cells fit on one row. Exported so the layout contract is testable:
+ * cells stay a fixed square box, so aspect-correct thumbnails must not change
+ * either of these two formulas.
+ */
+export function imagesPerRow(containerWidth: number, cellSize: number): number {
+  return Math.max(1, Math.floor((containerWidth + GRID_GAP) / (cellSize + GRID_GAP)));
+}
+
+/** Pixel height of one group: header + wrapped rows of cells + divider. */
+export function groupHeight(imageCount: number, perRow: number, cellSize: number): number {
+  const rows = Math.ceil(imageCount / Math.max(1, perRow));
+  return HEADER_HEIGHT + rows * (cellSize + GRID_GAP) - GRID_GAP + DIVIDER_HEIGHT;
+}
 
 interface PhotoGridProps {
   groups: PhotoGroup[];
@@ -26,7 +43,6 @@ interface PhotoGridProps {
   onCycleClassification: (filename: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
-  setLastModified?: (id: string, lastModified: number) => void;
   updateVisibleRange: (first: number, last: number) => void;
 }
 
@@ -43,24 +59,21 @@ export function PhotoGrid({
   onCycleClassification,
   getThumbnail,
   requestThumbnail,
-  setLastModified,
   updateVisibleRange,
 }: PhotoGridProps): React.JSX.Element {
   const parentRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(800);
 
   const cellSize = THUMBNAIL_SIZE_MAP[thumbnailSize] ?? 200;
-  const GAP = 8; // matches gap-2 (0.5rem = 8px)
-  const imagesPerRow = Math.max(1, Math.floor((containerWidth + GAP) / (cellSize + GAP)));
+  const perRow = imagesPerRow(containerWidth, cellSize);
 
   const getGroupHeight = useCallback(
     (index: number): number => {
       const group = groups[index];
       if (!group) return HEADER_HEIGHT + cellSize + DIVIDER_HEIGHT;
-      const rows = Math.ceil(group.images.length / imagesPerRow);
-      return HEADER_HEIGHT + rows * (cellSize + GAP) - GAP + DIVIDER_HEIGHT;
+      return groupHeight(group.images.length, perRow, cellSize);
     },
-    [groups, cellSize, imagesPerRow],
+    [groups, cellSize, perRow],
   );
 
   const virtualizer = useVirtualizer({
@@ -147,7 +160,6 @@ export function PhotoGrid({
               onCycleClassification={onCycleClassification}
               getThumbnail={getThumbnail}
               requestThumbnail={requestThumbnail}
-              setLastModified={setLastModified}
               groupIndex={virtualItem.index}
             />
           </div>

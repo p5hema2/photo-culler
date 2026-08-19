@@ -29,7 +29,7 @@ const rawVersion = process.argv[2] ?? process.env.GITHUB_REF_NAME;
 
 if (!rawVersion) {
   console.error(
-    'No version given. Pass one as an argument or set GITHUB_REF_NAME (e.g. "v1.2.0").'
+    'No version given. Pass one as an argument or set GITHUB_REF_NAME (e.g. "v1.2.0").',
   );
   process.exit(1);
 }

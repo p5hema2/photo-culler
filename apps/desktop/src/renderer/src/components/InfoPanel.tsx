@@ -5,6 +5,12 @@ import { Histogram } from './Histogram';
 import { useZoomPan } from '../hooks/useZoomPan';
 import { FocusPeakingOverlay } from './FocusPeakingOverlay';
 import { ExposureClippingOverlay } from './ExposureClippingOverlay';
+import { RotatedImageStage } from './RotatedImageStage';
+import { AfPointOverlay } from './AfPointOverlay';
+import { OverlayControls } from './OverlayControls';
+import { CollapsibleSection } from './CollapsibleSection';
+import type { OverlaySettings, OverlayActions } from '../hooks/useOverlaySettings';
+import type { DetailedMetadataState } from '../hooks/useDetailedMetadata';
 
 interface InfoPanelProps {
   image: ImageFileInfo | null;
@@ -14,10 +20,9 @@ interface InfoPanelProps {
   rotation?: number;
   isOpen: boolean;
   onToggle: () => void;
-  showFocusPeaking?: boolean;
-  onToggleFocusPeaking?: () => void;
-  showClipping?: boolean;
-  onToggleClipping?: () => void;
+  overlaySettings: OverlaySettings;
+  overlayActions: OverlayActions;
+  detailedMeta: DetailedMetadataState;
 }
 
 const CLASSIFICATION_BADGES: Record<string, { label: string; className: string }> = {
@@ -106,11 +111,18 @@ export function InfoPanel({
   rotation = 0,
   isOpen,
   onToggle,
-  showFocusPeaking,
-  onToggleFocusPeaking,
-  showClipping,
-  onToggleClipping,
+  overlaySettings,
+  overlayActions,
+  detailedMeta,
 }: InfoPanelProps): React.JSX.Element {
+  const { showFocusPeaking, showClipping, showAfPoint, focusPeakingThreshold } = overlaySettings;
+  const focus = detailedMeta.status === 'ready' ? detailedMeta.data.focus : null;
+  const lens = detailedMeta.status === 'ready' ? detailedMeta.data.lens : null;
+  const extraTags = detailedMeta.status === 'ready' ? detailedMeta.data.tags : [];
+  const afPoint = focus?.regions.find((r) => r.kind === 'af-point') ?? null;
+  const faceCount =
+    focus?.facesDetected ?? focus?.regions.filter((r) => r.kind === 'face').length ?? 0;
+  const [tagFilter, setTagFilter] = useState('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const previewImgRef = useRef<HTMLImageElement | null>(null);
@@ -262,39 +274,56 @@ export function InfoPanel({
                       display: 'inline-block',
                     }}
                   >
-                    <img
-                      ref={(el) => {
-                        previewImgRef.current = el;
-                      }}
-                      src={previewUrl}
-                      alt={image.name}
-                      className="max-w-none select-none"
-                      style={rotation ? { transform: `rotate(${rotation}deg)` } : undefined}
-                      crossOrigin="anonymous"
-                      draggable={false}
-                      data-testid="info-panel-preview"
-                      onLoad={() => {
-                        const el = previewImgRef.current;
-                        if (el) {
-                          setImageDimensions({ width: el.naturalWidth, height: el.naturalHeight });
-                        }
-                        setPreviewImgElement(previewImgRef.current);
-                      }}
-                    />
-                    {showFocusPeaking && (
-                      <FocusPeakingOverlay
-                        imageUrl={previewUrl}
-                        imageDimensions={imageDimensions}
-                        visible={showFocusPeaking}
+                    <RotatedImageStage
+                      width={imageDimensions.width}
+                      height={imageDimensions.height}
+                      rotation={rotation ?? 0}
+                    >
+                      <img
+                        ref={(el) => {
+                          previewImgRef.current = el;
+                        }}
+                        src={previewUrl}
+                        alt={image.name}
+                        className="max-w-none select-none"
+                        crossOrigin="anonymous"
+                        draggable={false}
+                        data-testid="info-panel-preview"
+                        onLoad={() => {
+                          const el = previewImgRef.current;
+                          if (el) {
+                            setImageDimensions({
+                              width: el.naturalWidth,
+                              height: el.naturalHeight,
+                            });
+                          }
+                          setPreviewImgElement(previewImgRef.current);
+                        }}
                       />
-                    )}
-                    {showClipping && (
-                      <ExposureClippingOverlay
-                        imageUrl={previewUrl}
-                        imageDimensions={imageDimensions}
-                        visible={showClipping}
-                      />
-                    )}
+                      {showFocusPeaking && (
+                        <FocusPeakingOverlay
+                          imageUrl={previewUrl}
+                          imageDimensions={imageDimensions}
+                          visible={showFocusPeaking}
+                          threshold={focusPeakingThreshold}
+                        />
+                      )}
+                      {showClipping && (
+                        <ExposureClippingOverlay
+                          imageUrl={previewUrl}
+                          imageDimensions={imageDimensions}
+                          visible={showClipping}
+                        />
+                      )}
+                      {showAfPoint && (
+                        <AfPointOverlay
+                          focus={focus}
+                          imageDimensions={imageDimensions}
+                          zoom={zoomPan.zoom}
+                          visible={showAfPoint}
+                        />
+                      )}
+                    </RotatedImageStage>
                   </div>
                 )}
                 {/* Zoom controls */}
@@ -315,42 +344,25 @@ export function InfoPanel({
               </div>
 
               {/* Info section — fixed height, no shrink */}
-              <div className="flex-shrink-0 overflow-y-auto">
+              <div className="flex-shrink-0 overflow-y-auto" style={{ scrollbarGutter: 'stable' }}>
                 {/* RGB Histogram — fixed height to prevent layout shift */}
                 <div className="px-5 pt-3" style={{ height: '92px' }}>
                   <Histogram imageElement={previewImgElement} />
                 </div>
 
-                {/* Overlay toggle buttons */}
-                {previewUrl && onToggleFocusPeaking && onToggleClipping && (
-                  <div className="px-5 pt-3 flex gap-2">
-                    <button
-                      onClick={onToggleFocusPeaking}
-                      className={`px-3 py-1 text-xs rounded-full border transition-colors ${
-                        showFocusPeaking
-                          ? 'bg-cyan-900 text-cyan-300 border-cyan-500'
-                          : 'bg-gray-800 text-gray-400 border-gray-600 hover:border-gray-500'
-                      }`}
-                      data-testid="toggle-focus-peaking"
-                    >
-                      Focus Peaking
-                    </button>
-                    <button
-                      onClick={onToggleClipping}
-                      className={`px-3 py-1 text-xs rounded-full border transition-colors ${
-                        showClipping
-                          ? 'bg-red-900 text-red-300 border-red-500'
-                          : 'bg-gray-800 text-gray-400 border-gray-600 hover:border-gray-500'
-                      }`}
-                      data-testid="toggle-clipping"
-                    >
-                      Clipping
-                    </button>
-                  </div>
-                )}
+                {/* Overlay toggles — kept mounted so the layout does not jump
+                    while the preview loads */}
+                <div className="px-5 pt-3">
+                  <OverlayControls
+                    settings={overlaySettings}
+                    actions={overlayActions}
+                    surface="panel"
+                    afAvailable={detailedMeta.status !== 'unsupported'}
+                  />
+                </div>
 
                 {/* Info content */}
-                <div className="p-5 flex flex-col gap-4">
+                <div className="p-5 pr-3 flex flex-col gap-4">
                   {/* Header: filename + badge */}
                   <div className="flex items-center gap-3">
                     <h2
@@ -429,10 +441,92 @@ export function InfoPanel({
                     </div>
                   )}
 
-                  {/* Two-column layout */}
-                  <div className="grid grid-cols-2 gap-5 text-xs text-gray-400">
-                    {/* LEFT COLUMN: Camera & Exposure */}
-                    <div className="flex flex-col gap-3">
+                  {/* Details, behind disclosures. The panel opens on the
+                      histogram, score and exposure line; everything else is
+                      one click away. */}
+                  <CollapsibleSection title="Focus" testId="info-section-focus-group">
+                    <div className="flex flex-col gap-3 text-xs text-gray-400">
+                      {/* Focus — from the maker note via exiftool. Sits next to
+                            the lens info it relates to. */}
+                      {(focus || lens?.id || detailedMeta.status === 'loading') && (
+                        <div className="flex flex-col gap-1.5" data-testid="info-panel-focus">
+                          <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
+                            Focus
+                          </div>
+                          {detailedMeta.status === 'loading' && (
+                            <div className="text-gray-600 animate-pulse">Reading…</div>
+                          )}
+                          {focus?.modeLabel && (
+                            <div
+                              className="flex justify-between"
+                              data-testid="info-panel-focus-mode"
+                            >
+                              <span className="text-gray-500">Mode</span>
+                              <span className="text-right">{focus.modeLabel}</span>
+                            </div>
+                          )}
+                          {focus?.areaMode && (
+                            <div className="flex justify-between" data-testid="info-panel-af-area">
+                              <span className="text-gray-500">AF Area</span>
+                              <span className="text-right">{focus.areaMode}</span>
+                            </div>
+                          )}
+                          {focus?.subjectDetection && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Subject</span>
+                              <span className="text-right">{focus.subjectDetection}</span>
+                            </div>
+                          )}
+                          {afPoint && (
+                            <div className="flex justify-between" data-testid="info-panel-af-point">
+                              <span className="text-gray-500">AF Point</span>
+                              <span className="text-right font-mono">
+                                {Math.round(afPoint.rect.cx * 100)}%,{' '}
+                                {Math.round(afPoint.rect.cy * 100)}%
+                              </span>
+                            </div>
+                          )}
+                          {faceCount > 0 && (
+                            <div className="flex justify-between" data-testid="info-panel-faces">
+                              <span className="text-gray-500">Faces</span>
+                              <span className="text-right">{faceCount}</span>
+                            </div>
+                          )}
+                          {focus?.assistLamp && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">AF Assist</span>
+                              <span className="text-right">{focus.assistLamp}</span>
+                            </div>
+                          )}
+                          {lens?.id && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Lens ID</span>
+                              <span className="text-right max-w-[70%] truncate" title={lens.id}>
+                                {lens.id}
+                              </span>
+                            </div>
+                          )}
+                          {lens?.serial && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Lens S/N</span>
+                              <span className="text-right font-mono">{lens.serial}</span>
+                            </div>
+                          )}
+                          {detailedMeta.status === 'unsupported' && (
+                            <div className="text-gray-600">
+                              No focus data (manual focus or unsupported camera)
+                            </div>
+                          )}
+                          {detailedMeta.status === 'error' && (
+                            <div className="text-gray-600">Could not read metadata</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Camera" testId="info-section-camera">
+                    <div className="flex flex-col gap-3 text-xs text-gray-400">
                       {/* Camera & Lens */}
                       {(image.cameraMake || image.cameraModel || image.lensModel) && (
                         <div className="flex flex-col gap-1.5">
@@ -497,9 +591,10 @@ export function InfoPanel({
                         </div>
                       )}
                     </div>
+                  </CollapsibleSection>
 
-                    {/* RIGHT COLUMN: File Info */}
-                    <div className="flex flex-col gap-3">
+                  <CollapsibleSection title="File" testId="info-section-file">
+                    <div className="flex flex-col gap-3 text-xs text-gray-400">
                       <div className="flex flex-col gap-1.5">
                         <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
                           File
@@ -576,7 +671,58 @@ export function InfoPanel({
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </CollapsibleSection>
+
+                  {/* All metadata — height-capped: the info section is
+                      flex-shrink-0, so an uncapped 300-tag dump would grow
+                      without bound and crush the preview above it. */}
+                  {extraTags.length > 0 && (
+                    <CollapsibleSection
+                      title="All metadata"
+                      badge={extraTags.length}
+                      testId="info-section-all-tags"
+                    >
+                      <div className="flex flex-col gap-1.5">
+                        <input
+                          value={tagFilter}
+                          onChange={(e) => setTagFilter(e.target.value)}
+                          placeholder="Filter tags…"
+                          className="px-2 py-1 text-xs bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                          data-testid="info-panel-tag-filter"
+                        />
+                        <div
+                          className="max-h-64 overflow-y-auto flex flex-col gap-1 text-xs text-gray-400 pr-3"
+                          style={{ scrollbarGutter: 'stable' }}
+                          data-testid="info-panel-all-tags"
+                        >
+                          {extraTags
+                            .filter((t) =>
+                              tagFilter
+                                ? `${t.group}:${t.name}`
+                                    .toLowerCase()
+                                    .includes(tagFilter.toLowerCase())
+                                : true,
+                            )
+                            .map((t) => (
+                              <div
+                                key={`${t.group}:${t.name}`}
+                                className="flex justify-between gap-2"
+                              >
+                                <span
+                                  className="text-gray-500 truncate"
+                                  title={`${t.group}:${t.name}`}
+                                >
+                                  {t.name}
+                                </span>
+                                <span className="text-right max-w-[55%] truncate" title={t.value}>
+                                  {t.value}
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    </CollapsibleSection>
+                  )}
                 </div>
               </div>
               {/* end flex-shrink-0 info section */}

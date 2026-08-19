@@ -56,6 +56,12 @@ describe('store', () => {
         lastFolderPath: undefined,
         thumbnailSize: 'medium',
         groupingThresholdMs: 5000,
+        showFocusPeaking: false,
+        showClipping: false,
+        showAfPoint: false,
+        // Sobel magnitudes reach ~1442 on 8-bit input, so the previous
+        // hardcoded 30 flagged nearly every texture as in focus.
+        focusPeakingThreshold: 80,
       });
     });
 
