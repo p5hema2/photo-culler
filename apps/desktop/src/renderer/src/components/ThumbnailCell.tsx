@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
+import type { FocusOrigin } from '../lib/focus-scroll';
 import { fitRotated } from '../lib/thumbnail-geometry';
 
 export type Classification = 'keep' | 'review' | 'delete' | null;
@@ -14,15 +15,14 @@ interface ThumbnailCellProps {
   isFocused: boolean;
   selectOnHover: boolean;
   onClick: () => void;
-  onFocus: () => void;
+  /**
+   * Focus this cell. The origin travels with it because the containing view
+   * scrolls the focused cell into place, and must not do that when the pointer
+   * is what moved the focus — see FocusOrigin.
+   */
+  onFocus: (origin: FocusOrigin) => void;
   onCycleClassification: () => void;
   getThumbnail: (id: string) => ThumbnailStatus;
-  /**
-   * Scroll self into view when focused. The loupe and filmstrip strips scroll
-   * the focused cell themselves, and two scrolls racing on one node made the
-   * selection jump. Set false wherever a parent already owns it.
-   */
-  autoScrollIntoView?: boolean;
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   groupIndex: number;
 }
@@ -48,18 +48,9 @@ export function ThumbnailCell({
   getThumbnail,
   requestThumbnail,
   groupIndex,
-  autoScrollIntoView = true,
 }: ThumbnailCellProps): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const cellRef = useRef<HTMLDivElement>(null);
   const thumbnail = getThumbnail(image.path);
-
-  // Auto-scroll into view when focused via keyboard
-  useEffect(() => {
-    if (autoScrollIntoView && isFocused && cellRef.current) {
-      cellRef.current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    }
-  }, [isFocused, autoScrollIntoView]);
 
   // Request thumbnail if not yet requested
   useEffect(() => {
@@ -104,7 +95,7 @@ export function ThumbnailCell({
 
   const handleClick = (): void => {
     if (!selectOnHover) {
-      onFocus();
+      onFocus('click');
     }
   };
 
@@ -115,7 +106,7 @@ export function ThumbnailCell({
 
   const handleMouseEnter = (): void => {
     if (selectOnHover) {
-      onFocus();
+      onFocus('hover');
     }
   };
 
@@ -123,7 +114,6 @@ export function ThumbnailCell({
 
   return (
     <div
-      ref={cellRef}
       className="relative cursor-pointer flex-shrink-0"
       style={{ width: cellSize, height: cellSize }}
       onClick={handleClick}

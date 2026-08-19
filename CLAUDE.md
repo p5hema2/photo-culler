@@ -159,6 +159,29 @@ folder headers and timestamp groups into one array so a single virtualizer keeps
 thousands of images spread over many shoots; a nested virtualizer per folder would wreck scroll
 estimation. A collapsed folder contributes only its header row.
 
+The row model is also a **pixel contract**, because it is what positions cells. Rows are absolutely
+placed at offsets summed from `groupHeight`, so `cellOffsetInGrid` can say where any image sits —
+including one whose row is not rendered, which is how returning from the loupe re-centres on the
+focused image. That only holds while the DOM matches the model: `GroupRow` pins its header to
+`HEADER_HEIGHT` for exactly this reason. Let the header size itself again and every cell in the
+grid sits a few pixels above where the model says it does.
+
+The model is also the only thing worth trusting in the commit where the row heights change.
+`virtualizer.measure()` invalidates the size cache and *schedules* a render: until that render
+commits, every row in the DOM still sits at its old offset and the sizer is still its old height.
+So the re-centre that follows a thumbnail-size change reads `cellOffsetInGrid` and
+`getTotalSize()`, never rects, and hands a clamped offset to a layout effect that re-applies it
+once the taller sizer commits.
+
+**The container scrolls the focused image, never the cell itself.** Grid, loupe strip and vertical
+filmstrip each centre it — `lib/focus-scroll.ts`, assigning `scrollTop`/`scrollLeft` rather than
+calling `scrollIntoView`, which walks every scrollable ancestor. Two things are load-bearing:
+scrolling is **instant**, because Chromium's smooth scroll restarts on each call and never catches
+up under key repeat; and a **pointer-driven** focus change does not scroll at all
+(`usePointerFocus`). That second rule is not cosmetic — with select-on-hover, centring drags the
+next thumbnail under a resting cursor, which selects it, which scrolls again, and the list runs to
+one end.
+
 **Thumbnails are cached per format version.** `.photo-culler-thumbs/v2/<name>.thumb.jpg`. Bump
 `THUMB_CACHE_VERSION` in `ipc-handlers.ts` whenever the pixel format changes; the vacuum then deletes
 everything that is not the current version directory. Freshness is decided in the main process

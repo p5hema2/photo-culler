@@ -7,6 +7,8 @@ import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { Classification } from './ThumbnailCell';
 import { ThumbnailCell } from './ThumbnailCell';
 import { DetailImageViewer } from './DetailImageViewer';
+import { centerElementHorizontally } from '../lib/focus-scroll';
+import { usePointerFocus } from '../hooks/usePointerFocus';
 
 type ThumbnailStatus = ImageBitmap | 'loading' | 'error';
 
@@ -58,18 +60,20 @@ function LoupeFilmstrip({
   requestThumbnail: (id: string, url: string, size: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const { handleImageFocus, consumePointerFocus } = usePointerFocus(onImageFocus);
 
+  /** Keep the focused image in the middle of the strip. */
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !focusedImageId) return;
-    const el = container.querySelector(`[data-image-path="${CSS.escape(focusedImageId)}"]`);
-    if (el) {
-      // Instant, not smooth: Chromium's smooth scroll runs ~300-500ms and
-      // restarts on every call, so holding an arrow key left the strip
-      // permanently chasing a selection it never caught.
-      el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'instant' });
-    }
-  }, [focusedImageId]);
+    // The pointer put the cell where the user wanted it — see FocusOrigin.
+    if (consumePointerFocus(focusedImageId)) return;
+
+    const el = container.querySelector<HTMLElement>(
+      `[data-image-path="${CSS.escape(focusedImageId)}"]`,
+    );
+    if (el) centerElementHorizontally(container, el);
+  }, [focusedImageId, consumePointerFocus]);
 
   return (
     <div
@@ -97,12 +101,11 @@ function LoupeFilmstrip({
                 isFocused={image.path === focusedImageId}
                 selectOnHover={selectOnHover}
                 onClick={() => onImageClick(image.path)}
-                onFocus={() => onImageFocus(image.path)}
+                onFocus={(origin) => handleImageFocus(image.path, origin)}
                 onCycleClassification={() => onCycleClassification(image.path)}
                 getThumbnail={getThumbnail}
                 requestThumbnail={requestThumbnail}
                 groupIndex={gi}
-                autoScrollIntoView={false}
               />
             </div>
           ))}

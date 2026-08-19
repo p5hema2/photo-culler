@@ -1,11 +1,15 @@
-import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { FolderSection } from '@photo-culler/image-utils/folders';
-import { GroupRow } from './GroupRow';
+import { GroupRow, HEADER_HEIGHT } from './GroupRow';
 import type { Classification } from './ThumbnailCell';
+import { centeredScrollOffset, centerElementVertically, setScrollTop } from '../lib/focus-scroll';
+import { usePointerFocus } from '../hooks/usePointerFocus';
 
-export const HEADER_HEIGHT = 32;
+// Owned by GroupRow, which has to render exactly this; re-exported because the
+// row model below is the other half of that contract.
+export { HEADER_HEIGHT };
 export const DIVIDER_HEIGHT = 16;
 /** Matches the `gap-2` (0.5rem) between cells in GroupRow. */
 export const GRID_GAP = 8;
@@ -66,6 +70,40 @@ export function buildRows(
   return rows;
 }
 
+/**
+ * Where the cell for `imagePath` sits in the grid's scrollable content.
+ *
+ * Read off the same row model the virtualizer lays out with — rows are
+ * absolutely positioned from these numbers — so it is exact, and it answers for
+ * images whose row is not currently rendered. That is the case that matters:
+ * coming back from the loupe, the focused image is nowhere in the DOM.
+ *
+ * Null for an image inside a collapsed folder, which has no cell at all.
+ */
+export function cellOffsetInGrid(
+  rows: readonly GridRow[],
+  imagePath: string,
+  perRow: number,
+  cellSize: number,
+): { top: number; height: number } | null {
+  let top = 0;
+
+  for (const row of rows) {
+    if (row.kind === 'folder') {
+      top += FOLDER_HEADER_HEIGHT;
+      continue;
+    }
+    const index = row.group.images.findIndex((img) => img.path === imagePath);
+    if (index !== -1) {
+      const line = Math.floor(index / Math.max(1, perRow));
+      return { top: top + HEADER_HEIGHT + line * (cellSize + GRID_GAP), height: cellSize };
+    }
+    top += groupHeight(row.group.images.length, perRow, cellSize);
+  }
+
+  return null;
+}
+
 interface PhotoGridProps {
   folders: FolderSection[];
   classifications: Record<string, Classification>;
@@ -103,6 +141,9 @@ export function PhotoGrid({
 }: PhotoGridProps): React.JSX.Element {
   const parentRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(800);
+  /** A centring offset the scroll range was too short to accept — see below. */
+  const pendingScrollRef = useRef<number | null>(null);
+  const { handleImageFocus, consumePointerFocus } = usePointerFocus(onImageFocus);
 
   const cellSize = THUMBNAIL_SIZE_MAP[thumbnailSize] ?? 200;
   const perRow = imagesPerRow(containerWidth, cellSize);
@@ -115,6 +156,11 @@ export function PhotoGrid({
     () => buildRows(folders, collapsedFolders, showFolderHeaders),
     [folders, collapsedFolders, showFolderHeaders],
   );
+  // The row model, held in a ref so that reading it does not tie an effect to
+  // it. The rows churn constantly — scoring rebuilds them — and re-centring on
+  // that would yank the grid out from under someone scrolling with the wheel.
+  const modelRef = useRef({ rows, perRow, cellSize });
+  modelRef.current = { rows, perRow, cellSize };
 
   const getRowHeight = useCallback(
     (index: number): number => {
@@ -158,6 +204,97 @@ export function PhotoGrid({
 
     return () => observer.disconnect();
   }, []);
+
+  /**
+   * Scroll the focused image to the middle from the row model rather than the
+   * DOM, returning the offset it asked for. Stable, so that neither effect
+   * below re-runs on the other's trigger.
+   */
+  const centerFromModel = useCallback(
+    (container: HTMLElement, imagePath: string): number | null => {
+      const model = modelRef.current;
+      const cell = cellOffsetInGrid(model.rows, imagePath, model.perRow, model.cellSize);
+      if (!cell) return null;
+
+      const target = centeredScrollOffset({
+        itemStart: cell.top,
+        itemSize: cell.height,
+        viewportSize: container.clientHeight,
+        // The model's own total rather than scrollHeight, which lags a commit
+        // behind it whenever the row heights have just changed.
+        contentSize: virtualizer.getTotalSize(),
+      });
+      setScrollTop(container, target);
+      return target;
+    },
+    [virtualizer],
+  );
+
+  /**
+   * Keep the focused image in the vertical middle as the focus moves.
+   *
+   * Layout is settled here — nothing but the focus changed in this commit — so
+   * the rendered cell is measured directly when there is one. There usually is;
+   * the model is for the image that is virtualized away, which is exactly the
+   * case that matters when the view switches back to the grid.
+   */
+  useEffect(() => {
+    const container = parentRef.current;
+    if (!container || !focusedImageId) return;
+
+    // The pointer put the cell where the user wanted it; scrolling now would
+    // only fight them. See usePointerFocus.
+    if (consumePointerFocus(focusedImageId)) return;
+
+    const rendered = container.querySelector<HTMLElement>(
+      `[data-image-path="${CSS.escape(focusedImageId)}"]`,
+    );
+    if (rendered) {
+      centerElementVertically(container, rendered);
+      return;
+    }
+    centerFromModel(container, focusedImageId);
+  }, [focusedImageId, consumePointerFocus, centerFromModel]);
+
+  /**
+   * Re-centre after the layout itself moves — a thumbnail-size change, or a
+   * resize that fits a different number of cells per row.
+   *
+   * Model-derived, never measured: `virtualizer.measure()` above only
+   * invalidates the size cache and schedules a render, so until that render
+   * commits every row in the DOM still sits at its old offset. The model and
+   * getTotalSize() are already the new geometry; the DOM is a commit behind.
+   */
+  useEffect(() => {
+    const container = parentRef.current;
+    if (!container || !focusedImageId) return;
+
+    const target = centerFromModel(container, focusedImageId);
+    // Growing the cells makes the content taller, and the browser clamps a
+    // scroll the sizer has no room for yet. Nothing to race against: the render
+    // that grows it is already scheduled, so hand the offset on and let the
+    // layout effect below re-apply it the moment that render commits.
+    if (target != null && Math.round(container.scrollTop) !== target) {
+      pendingScrollRef.current = target;
+    }
+    // focusedImageId is read, not watched: a focus change is the effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perRow, cellSize, centerFromModel]);
+
+  /**
+   * Second half of that: re-apply a clamped offset once, against the grown
+   * scroll range. A layout effect so it lands before the frame is painted.
+   */
+  useLayoutEffect(() => {
+    const container = parentRef.current;
+    const target = pendingScrollRef.current;
+    if (!container || target == null) return;
+
+    // One attempt only. A target the content can never reach must not turn into
+    // a scroll the user cannot escape.
+    pendingScrollRef.current = null;
+    setScrollTop(container, target);
+  });
 
   // Update visible range for thumbnail priority
   useEffect(() => {
@@ -234,7 +371,7 @@ export function PhotoGrid({
                   focusedImageId={focusedImageId}
                   selectOnHover={selectOnHover}
                   onImageClick={onImageClick}
-                  onImageFocus={onImageFocus}
+                  onImageFocus={handleImageFocus}
                   onCycleClassification={onCycleClassification}
                   getThumbnail={getThumbnail}
                   requestThumbnail={requestThumbnail}

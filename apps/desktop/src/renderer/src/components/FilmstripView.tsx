@@ -2,6 +2,8 @@ import { useEffect, useRef, useMemo } from 'react';
 import type { Classification } from './ThumbnailCell';
 import { ThumbnailCell } from './ThumbnailCell';
 import { DetailImageViewer } from './DetailImageViewer';
+import { centerElementVertically } from '../lib/focus-scroll';
+import { usePointerFocus } from '../hooks/usePointerFocus';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { DetailViewProps } from './LoupeView';
 
@@ -37,16 +39,20 @@ function VerticalFilmstrip({
   requestThumbnail: (id: string, url: string, size: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const { handleImageFocus, consumePointerFocus } = usePointerFocus(onImageFocus);
 
+  /** Keep the focused image in the vertical middle, the way a loupe does. */
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !focusedImageId) return;
-    const el = container.querySelector(`[data-image-path="${CSS.escape(focusedImageId)}"]`);
-    if (el) {
-      // See LoupeView: smooth scrolling cannot keep up with key repeat.
-      el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
-    }
-  }, [focusedImageId]);
+    // The pointer put the cell where the user wanted it — see FocusOrigin.
+    if (consumePointerFocus(focusedImageId)) return;
+
+    const el = container.querySelector<HTMLElement>(
+      `[data-image-path="${CSS.escape(focusedImageId)}"]`,
+    );
+    if (el) centerElementVertically(container, el);
+  }, [focusedImageId, consumePointerFocus]);
 
   return (
     <div
@@ -72,12 +78,11 @@ function VerticalFilmstrip({
                 isFocused={image.path === focusedImageId}
                 selectOnHover={selectOnHover}
                 onClick={() => onImageClick(image.path)}
-                onFocus={() => onImageFocus(image.path)}
+                onFocus={(origin) => handleImageFocus(image.path, origin)}
                 onCycleClassification={() => onCycleClassification(image.path)}
                 getThumbnail={getThumbnail}
                 requestThumbnail={requestThumbnail}
                 groupIndex={gi}
-                autoScrollIntoView={false}
               />
             </div>
           ))}

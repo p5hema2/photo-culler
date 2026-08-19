@@ -1,7 +1,17 @@
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { ImageFileInfo } from '@photo-culler/types';
+import type { FocusOrigin } from '../lib/focus-scroll';
 import { ThumbnailCell } from './ThumbnailCell';
 import type { Classification } from './ThumbnailCell';
+
+/**
+ * Height of the group's time-range header, pinned rather than left to the text.
+ *
+ * PhotoGrid's virtualizer budgets exactly this much for it, and positions cells
+ * from the row's top edge — an unpinned header that rendered shorter would put
+ * every cell a few pixels above where the row model says it is.
+ */
+export const HEADER_HEIGHT = 32;
 
 interface GroupRowProps {
   group: PhotoGroup;
@@ -12,7 +22,7 @@ interface GroupRowProps {
   focusedImageId: string | null;
   selectOnHover: boolean;
   onImageClick: (imagePath: string) => void;
-  onImageFocus: (path: string) => void;
+  onImageFocus: (path: string, origin: FocusOrigin) => void;
   onCycleClassification: (imagePath: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
@@ -99,7 +109,8 @@ export function GroupRow({
     <div data-testid="group-row" data-group-id={group.id}>
       {/* Group header */}
       <div
-        className="text-xs text-gray-400 px-2 py-1 flex items-center gap-2"
+        className="text-xs text-gray-400 px-2 flex items-center gap-2"
+        style={{ height: HEADER_HEIGHT }}
         data-testid="group-header"
       >
         <span>
@@ -122,7 +133,7 @@ export function GroupRow({
             isFocused={focusedImageId === image.path}
             selectOnHover={selectOnHover}
             onClick={() => onImageClick(image.path)}
-            onFocus={() => onImageFocus(image.path)}
+            onFocus={(origin) => onImageFocus(image.path, origin)}
             onCycleClassification={() => onCycleClassification(image.path)}
             getThumbnail={getThumbnail}
             requestThumbnail={requestThumbnail}
