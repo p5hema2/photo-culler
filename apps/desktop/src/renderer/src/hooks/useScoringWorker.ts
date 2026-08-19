@@ -5,7 +5,7 @@ import type { QualitySubscores } from '@photo-culler/types';
 export interface ScoringWorkerAPI {
   scoreAll: (
     files: Array<{ path: string; name: string }>,
-    onResult: (filename: string, score: number, subscores: QualitySubscores) => void,
+    onResult: (imagePath: string, score: number, subscores: QualitySubscores) => void,
   ) => void;
   /** Stop an in-progress run. Required on folder change — see cancel(). */
   cancel: () => void;
@@ -21,7 +21,7 @@ export function useScoringWorker(): ScoringWorkerAPI {
   const scoreAll = useCallback(
     (
       files: Array<{ path: string; name: string }>,
-      onResult: (filename: string, score: number, subscores: QualitySubscores) => void,
+      onResult: (imagePath: string, score: number, subscores: QualitySubscores) => void,
     ) => {
       // Terminate previous worker if re-scoring (folder change)
       if (workerRef.current) {
@@ -74,7 +74,7 @@ export function useScoringWorker(): ScoringWorkerAPI {
         // Find the filename from the path
         const file = files.find((f) => f.path === data.path);
         if (file) {
-          onResult(file.name, data.qualityScore, {
+          onResult(file.path, data.qualityScore, {
             sharpness: data.sharpness,
             exposure: data.exposure,
             contrast: data.contrast,

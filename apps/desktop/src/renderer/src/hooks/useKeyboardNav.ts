@@ -14,14 +14,17 @@ interface KeyboardNavOptions {
   groups: PhotoGroup[];
   focusedImageId: string | null;
   onFocusChange: (path: string | null) => void;
-  onCycleClassification: (filename: string) => void;
+  /** Takes the image's ABSOLUTE PATH — renderer state is keyed by path. */
+  onCycleClassification: (imagePath: string) => void;
+  /** Takes the image's ABSOLUTE PATH — renderer state is keyed by path. */
   onSetClassification: (
-    filename: string,
+    imagePath: string,
     classification: 'keep' | 'review' | 'delete' | null,
   ) => void;
   containerRef: React.RefObject<HTMLElement | null>;
   onTrashFocused: () => void;
-  onRotate: (filename: string, direction: 'cw' | 'ccw') => void;
+  /** Takes the image's ABSOLUTE PATH — renderer state is keyed by path. */
+  onRotate: (imagePath: string, direction: 'cw' | 'ccw') => void;
   sortedFlatImages: ImageFileInfo[];
   thumbnailSize: 'small' | 'medium' | 'large';
   viewLayout: ViewLayout;
@@ -106,7 +109,7 @@ export function useKeyboardNav({
         if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
           e.preventDefault();
           const image = flatImages[flatIndex];
-          if (image) onRotate(image.name, e.key === 'ArrowRight' ? 'cw' : 'ccw');
+          if (image) onRotate(image.path, e.key === 'ArrowRight' ? 'cw' : 'ccw');
           return;
         }
 
@@ -136,7 +139,7 @@ export function useKeyboardNav({
         const pos = findImagePosition(currentGroups, focused);
         if (pos) {
           const image = currentGroups[pos.groupIndex]!.images[pos.imageIndex]!;
-          onRotate(image.name, e.key === 'ArrowRight' ? 'cw' : 'ccw');
+          onRotate(image.path, e.key === 'ArrowRight' ? 'cw' : 'ccw');
         }
         return;
       }
@@ -252,7 +255,7 @@ export function useKeyboardNav({
           e.preventDefault();
           const image = currentGroup.images[imageIndex];
           if (image) {
-            onCycleClassification(image.name);
+            onCycleClassification(image.path);
           }
           break;
         }
@@ -260,28 +263,28 @@ export function useKeyboardNav({
         case '1': {
           e.preventDefault();
           const img1 = currentGroup.images[imageIndex];
-          if (img1) onSetClassification(img1.name, 'keep');
+          if (img1) onSetClassification(img1.path, 'keep');
           break;
         }
 
         case '2': {
           e.preventDefault();
           const img2 = currentGroup.images[imageIndex];
-          if (img2) onSetClassification(img2.name, 'review');
+          if (img2) onSetClassification(img2.path, 'review');
           break;
         }
 
         case '3': {
           e.preventDefault();
           const img3 = currentGroup.images[imageIndex];
-          if (img3) onSetClassification(img3.name, 'delete');
+          if (img3) onSetClassification(img3.path, 'delete');
           break;
         }
 
         case '0': {
           e.preventDefault();
           const img0 = currentGroup.images[imageIndex];
-          if (img0) onSetClassification(img0.name, null);
+          if (img0) onSetClassification(img0.path, null);
           break;
         }
 

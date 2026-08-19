@@ -447,8 +447,8 @@ export function DetailImageViewer({
         <MetadataOverlay
           image={focusedImage}
           classification={focusedClassification}
-          qualityScore={qualityScores[focusedImage.name]}
-          qualitySubscores={qualitySubscores[focusedImage.name]}
+          qualityScore={qualityScores[focusedImage.path]}
+          qualitySubscores={qualitySubscores[focusedImage.path]}
           rotation={focusedRotation}
         />
       )}

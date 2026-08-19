@@ -58,7 +58,9 @@ describe('useScoringWorker', () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]![0]).toBe('good.jpg');
+    // The ABSOLUTE PATH, not the basename: renderer state is keyed by path, and
+    // reporting the name meant every score landed under a key nothing reads.
+    expect(calls[0]![0]).toBe('/A/good.jpg');
     expect(calls[0]![1]).toBe(77);
   });
 

@@ -332,7 +332,7 @@ function App(): React.JSX.Element {
     const timer = setTimeout(() => {
       const currentState = stateRef.current;
       const unscoredFiles = currentState.images
-        .filter((img) => currentState.qualityScores[img.name] == null)
+        .filter((img) => currentState.qualityScores[img.path] == null)
         .map((img) => ({ path: img.path, name: img.name }));
 
       console.log(
@@ -343,11 +343,11 @@ function App(): React.JSX.Element {
 
       console.log(`[scoring] Starting scoring for ${unscoredFiles.length} images`);
       const scoredFolder = currentState.folderPath;
-      scoringWorker.scoreAll(unscoredFiles, (filename, score, subscores) => {
+      scoringWorker.scoreAll(unscoredFiles, (imagePath, score, subscores) => {
         // Belt-and-braces alongside cancel(): never attribute a result to a
         // folder other than the one the run was started for.
         if (stateRef.current.folderPath !== scoredFolder) return;
-        storeRef.current.setQualityScore(filename, score, subscores);
+        storeRef.current.setQualityScore(imagePath, score, subscores);
       });
     }, 2000);
 
@@ -363,7 +363,7 @@ function App(): React.JSX.Element {
   const filteredClassifications = useMemo(() => {
     const result: Record<string, Classification> = {};
     for (const img of store.filteredImages) {
-      result[img.name] = state.classifications[img.name] ?? null;
+      result[img.path] = state.classifications[img.path] ?? null;
     }
     return result;
   }, [store.filteredImages, state.classifications]);
@@ -385,22 +385,22 @@ function App(): React.JSX.Element {
 
   const focusedClassification = useMemo(() => {
     if (!focusedImage) return null;
-    return state.classifications[focusedImage.name] ?? null;
+    return state.classifications[focusedImage.path] ?? null;
   }, [focusedImage, state.classifications]);
 
   const focusedQualityScore = useMemo(() => {
     if (!focusedImage) return undefined;
-    return state.qualityScores[focusedImage.name];
+    return state.qualityScores[focusedImage.path];
   }, [focusedImage, state.qualityScores]);
 
   const focusedQualitySubscores = useMemo(() => {
     if (!focusedImage) return undefined;
-    return state.qualitySubscores[focusedImage.name];
+    return state.qualitySubscores[focusedImage.path];
   }, [focusedImage, state.qualitySubscores]);
 
   const focusedRotation = useMemo(() => {
     if (!focusedImage) return 0;
-    return state.rotations[focusedImage.name] ?? 0;
+    return state.rotations[focusedImage.path] ?? 0;
   }, [focusedImage, state.rotations]);
 
   // Only read deep metadata when something on screen will use it — without the
