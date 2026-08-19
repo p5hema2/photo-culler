@@ -1,8 +1,8 @@
 import { useEffect, useRef, useMemo } from 'react';
-import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { Classification } from './ThumbnailCell';
 import { ThumbnailCell } from './ThumbnailCell';
 import { DetailImageViewer } from './DetailImageViewer';
+import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { DetailViewProps } from './LoupeView';
 
 type ThumbnailStatus = ImageBitmap | 'loading' | 'error';
@@ -30,9 +30,9 @@ function VerticalFilmstrip({
   qualityScores: Record<string, number>;
   rotations: Record<string, number>;
   selectOnHover: boolean;
-  onImageClick: (filename: string) => void;
+  onImageClick: (imagePath: string) => void;
   onImageFocus: (path: string) => void;
-  onCycleClassification: (filename: string) => void;
+  onCycleClassification: (imagePath: string) => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number) => void;
 }) {
@@ -66,14 +66,14 @@ function VerticalFilmstrip({
               <ThumbnailCell
                 image={image}
                 cellSize={FILMSTRIP_THUMB_SIZE}
-                classification={classifications[image.name] ?? null}
-                qualityScore={qualityScores[image.name]}
-                rotation={rotations[image.name]}
+                classification={classifications[image.path] ?? null}
+                qualityScore={qualityScores[image.path]}
+                rotation={rotations[image.path]}
                 isFocused={image.path === focusedImageId}
                 selectOnHover={selectOnHover}
-                onClick={() => onImageClick(image.name)}
+                onClick={() => onImageClick(image.path)}
                 onFocus={() => onImageFocus(image.path)}
-                onCycleClassification={() => onCycleClassification(image.name)}
+                onCycleClassification={() => onCycleClassification(image.path)}
                 getThumbnail={getThumbnail}
                 requestThumbnail={requestThumbnail}
                 groupIndex={gi}
@@ -91,7 +91,7 @@ function VerticalFilmstrip({
 
 export function FilmstripView(props: DetailViewProps): React.JSX.Element {
   const {
-    groups,
+    folders,
     focusedImageId,
     classifications,
     qualityScores,
@@ -108,7 +108,12 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
     detailedMeta,
   } = props;
 
-  const flatImages = useMemo(() => groups.flatMap((g) => g.images), [groups]);
+  const flatImages = useMemo(
+    () => folders.flatMap((section) => section.groups.flatMap((g) => g.images)),
+    [folders],
+  );
+  /** The strip is a flat ribbon — folder structure is a grid-view concern. */
+  const stripGroups = useMemo(() => folders.flatMap((section) => section.groups), [folders]);
 
   const focusedImage = useMemo(() => {
     if (!focusedImageId) return null;
@@ -117,12 +122,12 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
 
   const focusedClassification = useMemo(() => {
     if (!focusedImage) return null;
-    return classifications[focusedImage.name] ?? null;
+    return classifications[focusedImage.path] ?? null;
   }, [focusedImage, classifications]);
 
   const focusedRotation = useMemo(() => {
     if (!focusedImage) return 0;
-    return rotations[focusedImage.name] ?? 0;
+    return rotations[focusedImage.path] ?? 0;
   }, [focusedImage, rotations]);
 
   if (!focusedImageId) {
@@ -136,7 +141,7 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
   return (
     <div className="flex h-full" data-testid="filmstrip-view">
       <VerticalFilmstrip
-        groups={groups}
+        groups={stripGroups}
         focusedImageId={focusedImageId}
         classifications={classifications}
         qualityScores={qualityScores}

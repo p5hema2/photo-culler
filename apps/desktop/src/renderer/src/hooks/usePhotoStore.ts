@@ -7,9 +7,16 @@ import type {
 } from '@photo-culler/types';
 import { sortImages } from '@photo-culler/image-utils/sorting';
 import type { SortField, SortDirection } from '@photo-culler/image-utils/sorting';
-import { groupByTimestamp } from '@photo-culler/image-utils/grouping';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
-import { loadResults, saveResults, rebuildResults } from '../lib/results';
+import { groupByFolder, foldersOf } from '@photo-culler/image-utils/folders';
+import type { FolderSection } from '@photo-culler/image-utils/folders';
+import {
+  loadAllResults,
+  saveResults,
+  emptyResults,
+  projectFolderResults,
+  rebuildResults,
+} from '../lib/results';
 import { useExifExtractor } from './useExifExtractor';
 import { useThumbnailWorker } from './useThumbnailWorker';
 import type { ExecuteOptions, ExecuteResult } from '../components/ExecutePanel';
@@ -62,12 +69,13 @@ const initialState: PhotoState = {
 
 export interface PhotoStoreAPI {
   state: PhotoState;
-  groups: PhotoGroup[];
+  /** Folder sections, each with its own timestamp groups. */
+  folders: FolderSection[];
   filteredImages: ImageFileInfo[];
   thumbnailWorker: ReturnType<typeof useThumbnailWorker>;
   openFolder: (folderPath: string) => Promise<void>;
-  setClassification: (filename: string, classification: Classification) => void;
-  cycleClassification: (filename: string) => void;
+  setClassification: (imagePath: string, classification: Classification) => void;
+  cycleClassification: (imagePath: string) => void;
   setSortField: (field: SortField) => void;
   setSortDirection: (direction: SortDirection) => void;
   setFilterExtensions: (extensions: Set<string>) => void;
@@ -79,10 +87,10 @@ export interface PhotoStoreAPI {
   clearError: () => void;
   executeActions: (options: ExecuteOptions) => Promise<ExecuteResult>;
   trashImages: (paths: string[]) => Promise<void>;
-  setQualityScore: (filename: string, score: number, subscores?: QualitySubscores) => void;
+  setQualityScore: (imagePath: string, score: number, subscores?: QualitySubscores) => void;
   setFilterScoreRange: (range: { min: number; max: number } | null) => void;
   setScoringProgress: (progress: { completed: number; total: number }) => void;
-  rotateImage: (filename: string, direction: 'cw' | 'ccw') => void;
+  rotateImage: (imagePath: string, direction: 'cw' | 'ccw') => void;
   cancelPendingSave: () => void;
 }
 
@@ -90,20 +98,23 @@ export function usePhotoStore(): PhotoStoreAPI {
   const [state, setState] = useState<PhotoState>(initialState);
   const thumbnailWorker = useThumbnailWorker();
   const exifExtractor = useExifExtractor();
-  const resultsRef = useRef<ResultsFile | null>(null);
+  /**
+   * One results file per directory, keyed by absolute directory path. Opening a
+   * parent folder pulls in every shoot below it, and each keeps its own
+   * `.photo-culler-results.json` beside its photos.
+   */
+  const resultsRef = useRef<Map<string, ResultsFile>>(new Map());
+  /** Folders whose on-disk file no longer matches state. */
+  const dirtyFoldersRef = useRef<Set<string>>(new Set());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const stateRef = useRef(state);
   /**
    * Incremented on every openFolder. A save queued under an older epoch belongs
-   * to the folder we have since left and must never be written.
+   * to the tree we have since left and must never be written.
    */
   const openEpochRef = useRef(0);
-  const pendingSaveRef = useRef<{
-    folderPath: string;
-    classifications: Record<string, Classification>;
-    epoch: number;
-  } | null>(null);
+  const pendingEpochRef = useRef(0);
 
   // Keep stateRef in sync
   stateRef.current = state;
@@ -116,77 +127,73 @@ export function usePhotoStore(): PhotoStoreAPI {
     };
   }, []);
 
-  /** Project current state onto the results file and write it. */
-  const writeResults = useCallback(
-    (folderPath: string, classifications: Record<string, Classification>) => {
-      if (!resultsRef.current) return;
-      const currentState = stateRef.current;
-      const existing = resultsRef.current.images;
-      // Union of known keys: a partial classifications map must never delete
-      // entries (and with them their cached EXIF) from the results file.
-      const names = new Set([...Object.keys(existing), ...Object.keys(classifications)]);
-      const updated: ResultsFile = {
-        ...resultsRef.current,
-        images: Object.fromEntries(
-          [...names].map((k) => [
-            k,
-            {
-              classification: classifications[k] ?? existing[k]?.classification ?? null,
-              userOverride: existing[k]?.userOverride ?? false,
-              qualityScore: currentState.qualityScores[k] ?? existing[k]?.qualityScore,
-              qualitySubscores: currentState.qualitySubscores[k] ?? existing[k]?.qualitySubscores,
-              rotation: currentState.rotations[k] ?? existing[k]?.rotation,
-              exif: existing[k]?.exif,
-            },
-          ]),
-        ),
-      };
-      resultsRef.current = updated;
-      saveResults(folderPath, updated);
-    },
-    [],
-  );
+  /**
+   * Project current state onto one folder's file and write it.
+   *
+   * State is keyed by absolute path; the file on disk stays keyed by bare
+   * filename, which is only unambiguous because there is one file per folder.
+   */
+  const writeFolder = useCallback((folderPath: string) => {
+    const current = stateRef.current;
+    const existing = resultsRef.current.get(folderPath) ?? emptyResults(folderPath);
+    const folderImages = current.images.filter((img) => img.folder === folderPath);
+    const updated = projectFolderResults(existing, folderPath, folderImages, current);
+    resultsRef.current.set(folderPath, updated);
+    void saveResults(folderPath, updated);
+  }, []);
 
-  // Debounced save
-  const scheduleSave = useCallback(
-    (folderPath: string, classifications: Record<string, Classification>) => {
-      pendingSaveRef.current = { folderPath, classifications, epoch: openEpochRef.current };
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
+  /** Write every folder that has pending changes. */
+  const writeDirtyFolders = useCallback(() => {
+    const dirty = [...dirtyFoldersRef.current];
+    dirtyFoldersRef.current.clear();
+    for (const folderPath of dirty) writeFolder(folderPath);
+  }, [writeFolder]);
+
+  /**
+   * Note that a folder changed and schedule a write.
+   *
+   * Folder-level rather than image-level: a burst of classifications in one
+   * shoot collapses into a single file write, and edits spread across shoots
+   * still each land in the right file.
+   */
+  const markDirty = useCallback(
+    (folderPath: string | undefined) => {
+      if (!folderPath) return;
+      dirtyFoldersRef.current.add(folderPath);
+      pendingEpochRef.current = openEpochRef.current;
+
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
         saveTimerRef.current = null;
-        const pending = pendingSaveRef.current;
-        pendingSaveRef.current = null;
-        if (!pending) return;
-        // The previous folder's EXIF/scoring workers keep delivering after a
-        // folder switch. Writing their queued save now would target the NEW
-        // folder's file with the old folder's data.
-        if (pending.epoch !== openEpochRef.current) return;
-        writeResults(pending.folderPath, pending.classifications);
+        // The previous tree's EXIF and scoring workers keep delivering after a
+        // folder switch. Writing their queued save now would target the new
+        // tree's files with the old tree's data.
+        if (pendingEpochRef.current !== openEpochRef.current) {
+          dirtyFoldersRef.current.clear();
+          return;
+        }
+        writeDirtyFolders();
       }, 500);
     },
-    [writeResults],
+    [writeDirtyFolders],
   );
 
   /**
-   * Write a queued save immediately instead of waiting out the debounce.
-   * Deliberately ignores the epoch: this runs while leaving a folder, to get
-   * that folder's last edits to disk before its epoch is retired.
+   * Write queued changes immediately instead of waiting out the debounce.
+   * Deliberately ignores the epoch: this runs while leaving a tree, to get its
+   * last edits to disk before the epoch is retired.
    */
   const flushPendingSave = useCallback(() => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
-    const pending = pendingSaveRef.current;
-    pendingSaveRef.current = null;
-    if (pending) writeResults(pending.folderPath, pending.classifications);
-  }, [writeResults]);
+    writeDirtyFolders();
+  }, [writeDirtyFolders]);
 
   /**
-   * Drop a queued save without writing it.
-   * Rescan deletes the results file on purpose — a pending debounced write
+   * Drop queued changes without writing them.
+   * Rescan deletes the results files on purpose — a pending debounced write
    * would otherwise fire afterwards and restore the data we just discarded.
    */
   const cancelPendingSave = useCallback(() => {
@@ -194,7 +201,7 @@ export function usePhotoStore(): PhotoStoreAPI {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
-    pendingSaveRef.current = null;
+    dirtyFoldersRef.current.clear();
   }, []);
 
   // Flush save on unmount
@@ -209,16 +216,16 @@ export function usePhotoStore(): PhotoStoreAPI {
   // Flush save on beforeunload
   useEffect(() => {
     const handleBeforeUnload = (): void => {
-      if (saveTimerRef.current && resultsRef.current && stateRef.current.folderPath) {
+      if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
-        // Best-effort save -- IPC call fires but page may unload before completion
-        saveResults(stateRef.current.folderPath, resultsRef.current);
+        // Best-effort — the IPC calls fire but the page may unload first.
+        writeDirtyFolders();
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
+  }, [writeDirtyFolders]);
 
   // Exif progress is read directly from the hook — no sync needed.
   // Overwrite the state field at return time to avoid stale values without triggering re-renders.
@@ -233,7 +240,7 @@ export function usePhotoStore(): PhotoStoreAPI {
       // save landing in that window would persist images: {}.
       flushPendingSave();
       openEpochRef.current += 1;
-      resultsRef.current = null;
+      resultsRef.current = new Map();
 
       setState((prev) => ({
         ...prev,
@@ -254,8 +261,13 @@ export function usePhotoStore(): PhotoStoreAPI {
       try {
         const images = await window.api.scanFolder(folderPath);
 
-        // Load existing results
-        const results = await loadResults(folderPath);
+        // One results file per folder in the tree, loaded in parallel.
+        const folders = foldersOf(images);
+        const allResults = await loadAllResults(folders);
+
+        // Keyed by absolute PATH, not filename: with subfolders in play the
+        // same basename can occur in several shoots, and name keying would
+        // silently merge two different photos.
         const classifications: Record<string, Classification> = {};
         const qualityScores: Record<string, number> = {};
         const qualitySubscores: Record<string, QualitySubscores> = {};
@@ -263,61 +275,50 @@ export function usePhotoStore(): PhotoStoreAPI {
 
         const imagesNeedingExif: typeof images = [];
         for (const img of images) {
-          if (results?.images[img.name]) {
-            classifications[img.name] = results.images[img.name].classification;
-            if (results.images[img.name].qualityScore != null) {
-              qualityScores[img.name] = results.images[img.name].qualityScore!;
-            }
-            if (results.images[img.name].qualitySubscores) {
-              qualitySubscores[img.name] = results.images[img.name].qualitySubscores!;
-            }
-            if (results.images[img.name].rotation) {
-              rotations[img.name] = results.images[img.name].rotation!;
-            }
-            // Apply cached EXIF data if available
-            const cachedExif = results.images[img.name].exif;
-            if (cachedExif) {
-              if (cachedExif.dateTaken != null) img.dateTaken = cachedExif.dateTaken;
-              if (cachedExif.dateTakenLocal != null) img.dateTakenLocal = cachedExif.dateTakenLocal;
-              if (cachedExif.timezoneOffset != null) img.timezoneOffset = cachedExif.timezoneOffset;
-              if (cachedExif.width != null) img.width = cachedExif.width;
-              if (cachedExif.height != null) img.height = cachedExif.height;
-              if (cachedExif.cameraMake != null) img.cameraMake = cachedExif.cameraMake;
-              if (cachedExif.cameraModel != null) img.cameraModel = cachedExif.cameraModel;
-              if (cachedExif.lensModel != null) img.lensModel = cachedExif.lensModel;
-              if (cachedExif.focalLength != null) img.focalLength = cachedExif.focalLength;
-              if (cachedExif.aperture != null) img.aperture = cachedExif.aperture;
-              if (cachedExif.shutterSpeed != null) img.shutterSpeed = cachedExif.shutterSpeed;
-              if (cachedExif.iso != null) img.iso = cachedExif.iso;
-              if (cachedExif.exposureCompensation != null)
-                img.exposureCompensation = cachedExif.exposureCompensation;
-              if (cachedExif.flash != null) img.flash = cachedExif.flash;
-              if (cachedExif.whiteBalance != null) img.whiteBalance = cachedExif.whiteBalance;
-              if (cachedExif.meteringMode != null) img.meteringMode = cachedExif.meteringMode;
-              if (cachedExif.exposureProgram != null)
-                img.exposureProgram = cachedExif.exposureProgram;
-              if (cachedExif.colorSpace != null) img.colorSpace = cachedExif.colorSpace;
-            } else {
-              imagesNeedingExif.push(img);
-            }
+          const stored = allResults.get(img.folder)?.images[img.name];
+          if (!stored) {
+            classifications[img.path] = null;
+            imagesNeedingExif.push(img);
+            continue;
+          }
+
+          classifications[img.path] = stored.classification;
+          if (stored.qualityScore != null) qualityScores[img.path] = stored.qualityScore;
+          if (stored.qualitySubscores) qualitySubscores[img.path] = stored.qualitySubscores;
+          if (stored.rotation) rotations[img.path] = stored.rotation;
+
+          const cachedExif = stored.exif;
+          if (cachedExif) {
+            if (cachedExif.dateTaken != null) img.dateTaken = cachedExif.dateTaken;
+            if (cachedExif.dateTakenLocal != null) img.dateTakenLocal = cachedExif.dateTakenLocal;
+            if (cachedExif.timezoneOffset != null) img.timezoneOffset = cachedExif.timezoneOffset;
+            if (cachedExif.width != null) img.width = cachedExif.width;
+            if (cachedExif.height != null) img.height = cachedExif.height;
+            if (cachedExif.cameraMake != null) img.cameraMake = cachedExif.cameraMake;
+            if (cachedExif.cameraModel != null) img.cameraModel = cachedExif.cameraModel;
+            if (cachedExif.lensModel != null) img.lensModel = cachedExif.lensModel;
+            if (cachedExif.focalLength != null) img.focalLength = cachedExif.focalLength;
+            if (cachedExif.aperture != null) img.aperture = cachedExif.aperture;
+            if (cachedExif.shutterSpeed != null) img.shutterSpeed = cachedExif.shutterSpeed;
+            if (cachedExif.iso != null) img.iso = cachedExif.iso;
+            if (cachedExif.exposureCompensation != null)
+              img.exposureCompensation = cachedExif.exposureCompensation;
+            if (cachedExif.flash != null) img.flash = cachedExif.flash;
+            if (cachedExif.whiteBalance != null) img.whiteBalance = cachedExif.whiteBalance;
+            if (cachedExif.meteringMode != null) img.meteringMode = cachedExif.meteringMode;
+            if (cachedExif.exposureProgram != null)
+              img.exposureProgram = cachedExif.exposureProgram;
+            if (cachedExif.colorSpace != null) img.colorSpace = cachedExif.colorSpace;
           } else {
-            classifications[img.name] = null;
             imagesNeedingExif.push(img);
           }
         }
 
-        // Create or update results file
-        resultsRef.current = results ?? {
-          version: 1,
-          folderPath,
-          updatedAt: new Date().toISOString(),
-          images: Object.fromEntries(
-            Object.entries(classifications).map(([k, v]) => [
-              k,
-              { classification: v, userOverride: false },
-            ]),
-          ),
-        };
+        // Every folder gets an entry, so a shoot that has never been culled
+        // still has somewhere to record into.
+        for (const folder of folders) {
+          resultsRef.current.set(folder, allResults.get(folder) ?? emptyResults(folder));
+        }
 
         if (!mountedRef.current) return;
 
@@ -338,9 +339,10 @@ export function usePhotoStore(): PhotoStoreAPI {
           (path, metadata) => {
             if (!mountedRef.current) return;
 
-            // Cache EXIF data in the results ref for persistence
-            const filename = images.find((img) => img.path === path)?.name;
-            if (filename && resultsRef.current) {
+            // Cache EXIF in the file belonging to this image's own folder
+            const source = images.find((img) => img.path === path);
+            const folderResults = source ? resultsRef.current.get(source.folder) : undefined;
+            if (source && folderResults) {
               const exifData = {
                 dateTaken: metadata.dateTaken ?? undefined,
                 dateTakenLocal: metadata.dateTakenLocal ?? undefined,
@@ -361,20 +363,14 @@ export function usePhotoStore(): PhotoStoreAPI {
                 exposureProgram: metadata.exposureProgram ?? undefined,
                 colorSpace: metadata.colorSpace ?? undefined,
               };
-              resultsRef.current = {
-                ...resultsRef.current,
+              resultsRef.current.set(source.folder, {
+                ...folderResults,
                 images: {
-                  ...resultsRef.current.images,
-                  [filename]: {
-                    ...resultsRef.current.images[filename],
-                    exif: exifData,
-                  },
+                  ...folderResults.images,
+                  [source.name]: { ...folderResults.images[source.name], exif: exifData },
                 },
-              };
-              // Trigger debounced save so EXIF cache persists
-              if (stateRef.current.folderPath) {
-                scheduleSave(stateRef.current.folderPath, stateRef.current.classifications);
-              }
+              });
+              markDirty(source.folder);
             }
 
             setState((prev) => ({
@@ -419,78 +415,43 @@ export function usePhotoStore(): PhotoStoreAPI {
         }));
       }
     },
-    [thumbnailWorker, exifExtractor, scheduleSave, flushPendingSave],
+    [thumbnailWorker, exifExtractor, markDirty, flushPendingSave],
   );
 
+  /** Look up which folder an image belongs to, for dirty-marking. */
+  const folderOf = useCallback((imagePath: string): string | undefined => {
+    return stateRef.current.images.find((img) => img.path === imagePath)?.folder;
+  }, []);
+
   const setClassification = useCallback(
-    (filename: string, classification: Classification) => {
-      setState((prev) => {
-        const next = {
-          ...prev,
-          classifications: { ...prev.classifications, [filename]: classification },
-        };
-        if (prev.folderPath) {
-          // Update results ref
-          if (resultsRef.current) {
-            resultsRef.current = {
-              ...resultsRef.current,
-              images: {
-                ...resultsRef.current.images,
-                [filename]: {
-                  classification,
-                  userOverride: true,
-                  qualityScore: resultsRef.current.images[filename]?.qualityScore,
-                  qualitySubscores: resultsRef.current.images[filename]?.qualitySubscores,
-                  rotation: resultsRef.current.images[filename]?.rotation,
-                  exif: resultsRef.current.images[filename]?.exif,
-                },
-              },
-            };
-          }
-          scheduleSave(prev.folderPath, next.classifications);
-        }
-        return next;
-      });
+    (imagePath: string, classification: Classification) => {
+      setState((prev) => ({
+        ...prev,
+        classifications: { ...prev.classifications, [imagePath]: classification },
+      }));
+      markDirty(folderOf(imagePath));
     },
-    [scheduleSave],
+    [folderOf, markDirty],
   );
 
   const cycleClassification = useCallback(
-    (filename: string) => {
+    (imagePath: string) => {
       setState((prev) => {
-        const current = prev.classifications[filename] ?? null;
+        const current = prev.classifications[imagePath] ?? null;
+        // review -> keep -> delete -> review
         const next: Classification =
           current === null
-            ? 'keep'
-            : current === 'keep'
-              ? 'review'
-              : current === 'review'
+            ? 'review'
+            : current === 'review'
+              ? 'keep'
+              : current === 'keep'
                 ? 'delete'
-                : null;
-        const newClassifications = { ...prev.classifications, [filename]: next };
-        if (prev.folderPath) {
-          if (resultsRef.current) {
-            resultsRef.current = {
-              ...resultsRef.current,
-              images: {
-                ...resultsRef.current.images,
-                [filename]: {
-                  classification: next,
-                  userOverride: true,
-                  qualityScore: resultsRef.current.images[filename]?.qualityScore,
-                  qualitySubscores: resultsRef.current.images[filename]?.qualitySubscores,
-                  rotation: resultsRef.current.images[filename]?.rotation,
-                  exif: resultsRef.current.images[filename]?.exif,
-                },
-              },
-            };
-          }
-          scheduleSave(prev.folderPath, newClassifications);
-        }
-        return { ...prev, classifications: newClassifications };
+                : 'review';
+        return { ...prev, classifications: { ...prev.classifications, [imagePath]: next } };
       });
+      markDirty(folderOf(imagePath));
     },
-    [scheduleSave],
+    [folderOf, markDirty],
   );
 
   const setSortField = useCallback((field: SortField) => {
@@ -534,147 +495,161 @@ export function usePhotoStore(): PhotoStoreAPI {
     setState((prev) => ({ ...prev, error: null }));
   }, []);
 
-  const executeActions = useCallback(async (options: ExecuteOptions): Promise<ExecuteResult> => {
-    const current = stateRef.current;
-    if (!current.folderPath) {
-      return { trashedCount: 0, movedCount: 0, rotatedCount: 0, failedPaths: [] };
-    }
+  const executeActions = useCallback(
+    async (options: ExecuteOptions): Promise<ExecuteResult> => {
+      const current = stateRef.current;
+      if (!current.folderPath) {
+        return { trashedCount: 0, movedCount: 0, rotatedCount: 0, failedPaths: [] };
+      }
 
-    const folderPath = current.folderPath;
-    const executeResult: ExecuteResult = {
-      trashedCount: 0,
-      movedCount: 0,
-      rotatedCount: 0,
-      failedPaths: [],
-    };
+      const folderPath = current.folderPath;
+      const executeResult: ExecuteResult = {
+        trashedCount: 0,
+        movedCount: 0,
+        rotatedCount: 0,
+        failedPaths: [],
+      };
 
-    // Only operate on currently visible (filtered) images
-    const visibleImages = filteredImagesRef.current;
+      // Only operate on currently visible (filtered) images
+      const visibleImages = filteredImagesRef.current;
 
-    // Apply rotations to files on disk if requested
-    if (options.applyRotations) {
-      const rotatedFiles = visibleImages
-        .filter((img) => (current.rotations[img.name] ?? 0) !== 0)
-        .map((img) => ({ path: img.path, name: img.name, degrees: current.rotations[img.name]! }));
+      // Apply rotations to files on disk if requested
+      if (options.applyRotations) {
+        const rotatedFiles = visibleImages
+          .filter((img) => (current.rotations[img.path] ?? 0) !== 0)
+          .map((img) => ({
+            path: img.path,
+            folder: img.folder,
+            degrees: current.rotations[img.path]!,
+          }));
 
-      if (rotatedFiles.length > 0) {
-        const rotateResult = await window.api.rotateFiles(
-          rotatedFiles.map((f) => ({ path: f.path, degrees: f.degrees })),
-        );
-        executeResult.failedPaths.push(...rotateResult.failed);
-        executeResult.rotatedCount = rotateResult.succeeded.length;
+        if (rotatedFiles.length > 0) {
+          const rotateResult = await window.api.rotateFiles(
+            rotatedFiles.map((f) => ({ path: f.path, degrees: f.degrees })),
+          );
+          executeResult.failedPaths.push(...rotateResult.failed);
+          executeResult.rotatedCount = rotateResult.succeeded.length;
 
-        // Clear rotation state for successfully rotated images
-        const rotatedSet = new Set(rotateResult.succeeded);
-        setState((prev) => {
-          const newRotations = { ...prev.rotations };
-          for (const file of rotatedFiles) {
-            if (rotatedSet.has(file.path)) {
-              delete newRotations[file.name];
+          // Clear rotation state for successfully rotated images
+          const rotatedSet = new Set<string>(rotateResult.succeeded);
+          setState((prev) => {
+            const newRotations = { ...prev.rotations };
+            for (const file of rotatedFiles) {
+              if (rotatedSet.has(file.path)) {
+                delete newRotations[file.path];
+              }
             }
-          }
-          return { ...prev, rotations: newRotations };
-        });
+            return { ...prev, rotations: newRotations };
+          });
 
-        // Also clear rotation in resultsRef
-        if (resultsRef.current) {
+          // The projection reads rotations from state, which we just cleared, so
+          // marking the affected folders dirty is enough to drop them on disk.
           for (const file of rotatedFiles) {
-            if (rotatedSet.has(file.path) && resultsRef.current.images[file.name]) {
-              delete resultsRef.current.images[file.name].rotation;
-            }
+            if (rotatedSet.has(file.path)) markDirty(file.folder);
           }
-        }
 
-        // The file on disk changed, so its cached thumbnail is now wrong.
-        // Deliberately after the rotation state is cleared: invalidating first
-        // would let the cell redraw the freshly rotated file with the old
-        // rotation still applied, double-rotating it.
-        for (const filePath of rotatedSet) {
-          thumbnailWorkerRef.current.invalidate(filePath);
+          // The file on disk changed, so its cached thumbnail is now wrong.
+          // Deliberately after the rotation state is cleared: invalidating first
+          // would let the cell redraw the freshly rotated file with the old
+          // rotation still applied, double-rotating it.
+          for (const filePath of rotatedSet) {
+            thumbnailWorkerRef.current.invalidate(filePath);
+          }
         }
       }
-    }
 
-    // Get paths of delete-classified images (within visible set only)
-    const deletePaths = visibleImages
-      .filter((img) => (current.classifications[img.name] ?? null) === 'delete')
-      .map((img) => img.path);
-
-    // Execute delete/trash
-    if (deletePaths.length > 0) {
-      const deleteResult =
-        options.deleteMode === 'trash'
-          ? await window.api.trashFiles(deletePaths)
-          : await window.api.deleteFiles(deletePaths);
-
-      executeResult.trashedCount = deleteResult.succeeded.length;
-      executeResult.failedPaths.push(...deleteResult.failed);
-    }
-
-    // Move keep images to picks/ if requested (within visible set only)
-    let moveSucceeded: string[] = [];
-    if (options.movePicks) {
-      const keepPaths = visibleImages
-        .filter((img) => (current.classifications[img.name] ?? null) === 'keep')
+      // Get paths of delete-classified images (within visible set only)
+      const deletePaths = visibleImages
+        .filter((img) => (current.classifications[img.path] ?? null) === 'delete')
         .map((img) => img.path);
 
-      if (keepPaths.length > 0) {
-        const moveResult = await window.api.moveToPicks(folderPath, keepPaths);
-        executeResult.movedCount = moveResult.succeeded.length;
-        executeResult.failedPaths.push(...moveResult.failed);
-        moveSucceeded = moveResult.succeeded;
+      // Execute delete/trash
+      if (deletePaths.length > 0) {
+        const deleteResult =
+          options.deleteMode === 'trash'
+            ? await window.api.trashFiles(deletePaths)
+            : await window.api.deleteFiles(deletePaths);
+
+        executeResult.trashedCount = deleteResult.succeeded.length;
+        executeResult.failedPaths.push(...deleteResult.failed);
       }
-    }
 
-    // Collect paths that were successfully processed (not in failedPaths)
-    const failedPathSet = new Set(executeResult.failedPaths.map((f) => f.path));
-    const succeededDeletePaths = new Set(deletePaths.filter((p) => !failedPathSet.has(p)));
-    const succeededMovePaths = new Set(moveSucceeded);
+      // Move keep images to picks/ if requested (within visible set only)
+      let moveSucceeded: string[] = [];
+      if (options.movePicks) {
+        const keepPaths = visibleImages
+          .filter((img) => (current.classifications[img.path] ?? null) === 'keep')
+          .map((img) => img.path);
 
-    // Remove succeeded images from state
-    setState((prev) => {
-      const nextImages = prev.images.filter(
-        (img) => !succeededDeletePaths.has(img.path) && !succeededMovePaths.has(img.path),
-      );
-      const nextClassifications = { ...prev.classifications };
-      for (const img of prev.images) {
-        if (succeededDeletePaths.has(img.path) || succeededMovePaths.has(img.path)) {
-          delete nextClassifications[img.name];
-        }
-      }
-      return { ...prev, images: nextImages, classifications: nextClassifications };
-    });
-
-    // Cancel any pending debounced save
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-
-    // Save updated results file immediately (not debounced)
-    if (resultsRef.current) {
-      // Build new results from remaining images.
-      // Only deletions prune an entry. A moved pick keeps its record: the file
-      // still exists under picks/, scanFolder reads that folder too, and the
-      // results map is keyed by filename — so its classification, scores and
-      // cached EXIF survive the move and are found again on the next open.
-      const remainingClassifications: Record<string, Classification> = {};
-      for (const img of stateRef.current.images) {
-        if (!succeededDeletePaths.has(img.path)) {
-          remainingClassifications[img.name] = stateRef.current.classifications[img.name] ?? null;
+        if (keepPaths.length > 0) {
+          const moveResult = await window.api.moveToPicks(folderPath, keepPaths);
+          executeResult.movedCount = moveResult.succeeded.length;
+          executeResult.failedPaths.push(...moveResult.failed);
+          moveSucceeded = moveResult.succeeded;
         }
       }
 
-      resultsRef.current = rebuildResults(
-        resultsRef.current,
-        Object.keys(remainingClassifications),
-        remainingClassifications,
-      );
-      await saveResults(folderPath, resultsRef.current);
-    }
+      // Collect paths that were successfully processed (not in failedPaths)
+      const failedPathSet = new Set(executeResult.failedPaths.map((f) => f.path));
+      const succeededDeletePaths = new Set(deletePaths.filter((p) => !failedPathSet.has(p)));
+      const succeededMovePaths = new Set(moveSucceeded);
 
-    return executeResult;
-  }, []);
+      // Remove succeeded images from state
+      setState((prev) => {
+        const nextImages = prev.images.filter(
+          (img) => !succeededDeletePaths.has(img.path) && !succeededMovePaths.has(img.path),
+        );
+        const nextClassifications = { ...prev.classifications };
+        for (const img of prev.images) {
+          if (succeededDeletePaths.has(img.path) || succeededMovePaths.has(img.path)) {
+            delete nextClassifications[img.path];
+          }
+        }
+        return { ...prev, images: nextImages, classifications: nextClassifications };
+      });
+
+      // Cancel any pending debounced save
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+
+      // Rewrite each affected folder's file immediately (not debounced).
+      // Only deletions prune an entry: a moved pick keeps its record, because the
+      // file still exists under picks/ and the scanner attributes it back to this
+      // same folder.
+      const remaining = stateRef.current.images.filter(
+        (img) => !succeededDeletePaths.has(img.path),
+      );
+      const touched = new Set<string>();
+      for (const path of succeededDeletePaths) {
+        const folder = current.images.find((img) => img.path === path)?.folder;
+        if (folder) touched.add(folder);
+      }
+
+      for (const folderPath of touched) {
+        const existing = resultsRef.current.get(folderPath);
+        if (!existing) continue;
+        const keepNames = remaining
+          .filter((img) => img.folder === folderPath)
+          .map((img) => img.name);
+        const byName: Record<string, Classification> = {};
+        for (const img of remaining) {
+          if (img.folder === folderPath) {
+            byName[img.name] = stateRef.current.classifications[img.path] ?? null;
+          }
+        }
+        const rebuilt = rebuildResults(existing, keepNames, byName);
+        resultsRef.current.set(folderPath, rebuilt);
+        await saveResults(folderPath, rebuilt);
+      }
+
+      return executeResult;
+      // markDirty is referentially stable (writeFolder has no deps), so naming it
+      // here does not change this callback's identity.
+    },
+    [markDirty],
+  );
 
   const trashImages = useCallback(async (paths: string[]) => {
     if (paths.length === 0) return;
@@ -689,7 +664,7 @@ export function usePhotoStore(): PhotoStoreAPI {
 
       for (const img of prev.images) {
         if (trashedSet.has(img.path)) {
-          delete nextClassifications[img.name];
+          delete nextClassifications[img.path];
         }
       }
 
@@ -716,66 +691,38 @@ export function usePhotoStore(): PhotoStoreAPI {
     }
 
     const current = stateRef.current;
-    if (resultsRef.current && current.folderPath) {
-      const remainingClassifications: Record<string, Classification> = {};
-      for (const img of current.images) {
-        if (!trashedSet.has(img.path)) {
-          remainingClassifications[img.name] = current.classifications[img.name] ?? null;
-        }
+    const remaining = current.images.filter((img) => !trashedSet.has(img.path));
+    const touched = new Set<string>();
+    for (const img of current.images) {
+      if (trashedSet.has(img.path)) touched.add(img.folder);
+    }
+
+    for (const folderPath of touched) {
+      const existing = resultsRef.current.get(folderPath);
+      if (!existing) continue;
+      const keepNames = remaining.filter((img) => img.folder === folderPath).map((img) => img.name);
+      const byName: Record<string, Classification> = {};
+      for (const img of remaining) {
+        if (img.folder === folderPath) byName[img.name] = current.classifications[img.path] ?? null;
       }
-      resultsRef.current = rebuildResults(
-        resultsRef.current,
-        Object.keys(remainingClassifications),
-        remainingClassifications,
-      );
-      await saveResults(current.folderPath, resultsRef.current);
+      const rebuilt = rebuildResults(existing, keepNames, byName);
+      resultsRef.current.set(folderPath, rebuilt);
+      await saveResults(folderPath, rebuilt);
     }
   }, []);
 
   const setQualityScore = useCallback(
-    (filename: string, score: number, subscores?: QualitySubscores) => {
-      setState((prev) => {
-        const newQualityScores = { ...prev.qualityScores, [filename]: score };
-        const newQualitySubscores = subscores
-          ? { ...prev.qualitySubscores, [filename]: subscores }
-          : prev.qualitySubscores;
-
-        // Update results ref (score only — classification is user-driven)
-        if (resultsRef.current) {
-          const existing = resultsRef.current.images[filename];
-          resultsRef.current = {
-            ...resultsRef.current,
-            images: {
-              ...resultsRef.current.images,
-              [filename]: {
-                classification: existing?.classification ?? null,
-                userOverride: existing?.userOverride ?? false,
-                qualityScore: score,
-                qualitySubscores: subscores ?? existing?.qualitySubscores,
-                rotation: existing?.rotation,
-                exif: existing?.exif,
-              },
-            },
-          };
-        }
-
-        return {
-          ...prev,
-          qualityScores: newQualityScores,
-          qualitySubscores: newQualitySubscores,
-        };
-      });
-
-      // Persist the score. Without this the only writes came from the EXIF
-      // callbacks, whose debounce window closes ~500ms after the last one —
-      // long before scoring (which starts 2s after open) finishes. Scores then
-      // lived only in memory and the whole analysis re-ran on the next open.
-      const folderPath = stateRef.current.folderPath;
-      if (folderPath) {
-        scheduleSave(folderPath, stateRef.current.classifications);
-      }
+    (imagePath: string, score: number, subscores?: QualitySubscores) => {
+      setState((prev) => ({
+        ...prev,
+        qualityScores: { ...prev.qualityScores, [imagePath]: score },
+        qualitySubscores: subscores
+          ? { ...prev.qualitySubscores, [imagePath]: subscores }
+          : prev.qualitySubscores,
+      }));
+      markDirty(folderOf(imagePath));
     },
-    [scheduleSave],
+    [folderOf, markDirty],
   );
 
   const setFilterScoreRange = useCallback((range: { min: number; max: number } | null) => {
@@ -795,39 +742,17 @@ export function usePhotoStore(): PhotoStoreAPI {
   }, []);
 
   const rotateImage = useCallback(
-    (filename: string, direction: 'cw' | 'ccw') => {
-      const delta = direction === 'cw' ? 90 : -90;
+    (imagePath: string, direction: 'cw' | 'ccw') => {
       setState((prev) => {
-        const current = prev.rotations[filename] ?? 0;
-        const next = (current + delta + 360) % 360;
-
-        // Persist to results ref
-        if (resultsRef.current) {
-          resultsRef.current = {
-            ...resultsRef.current,
-            images: {
-              ...resultsRef.current.images,
-              [filename]: {
-                ...resultsRef.current.images[filename],
-                rotation: next || undefined,
-              },
-            },
-          };
-        }
-
-        if (prev.folderPath) {
-          scheduleSave(prev.folderPath, prev.classifications);
-        }
-
-        return {
-          ...prev,
-          rotations: { ...prev.rotations, [filename]: next },
-        };
+        const current = prev.rotations[imagePath] ?? 0;
+        const delta = direction === 'cw' ? 90 : -90;
+        const next = (((current + delta) % 360) + 360) % 360;
+        return { ...prev, rotations: { ...prev.rotations, [imagePath]: next } };
       });
+      markDirty(folderOf(imagePath));
     },
-    [scheduleSave],
+    [folderOf, markDirty],
   );
-
   // Derived state
   const filteredImages = useMemo(() => {
     let result = state.images;
@@ -840,10 +765,10 @@ export function usePhotoStore(): PhotoStoreAPI {
     // Classification filter
     if (state.filterClassification != null) {
       if (state.filterClassification === 'unclassified') {
-        result = result.filter((img) => (state.classifications[img.name] ?? null) === null);
+        result = result.filter((img) => (state.classifications[img.path] ?? null) === null);
       } else {
         result = result.filter(
-          (img) => (state.classifications[img.name] ?? null) === state.filterClassification,
+          (img) => (state.classifications[img.path] ?? null) === state.filterClassification,
         );
       }
     }
@@ -852,7 +777,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     if (state.filterScoreRange != null) {
       const { min, max } = state.filterScoreRange;
       result = result.filter((img) => {
-        const score = state.qualityScores[img.name];
+        const score = state.qualityScores[img.path];
         if (score == null) return false;
         return score >= min && score <= max;
       });
@@ -893,42 +818,50 @@ export function usePhotoStore(): PhotoStoreAPI {
     });
   }, [filteredImages, state.sortField, state.sortDirection, state.qualityScores]);
 
-  const groups = useMemo(() => {
-    const baseGroups = groupByTimestamp(sortedImages, state.groupingThresholdMs);
+  /**
+   * Folder sections, each holding its own timestamp groups.
+   *
+   * Two levels rather than one: a shoot is the unit the user thinks in, but
+   * burst detection is what makes a shoot reviewable, so folders wrap groups
+   * instead of replacing them.
+   */
+  const folders = useMemo(() => {
+    const sections = groupByFolder(sortedImages, state.groupingThresholdMs, state.folderPath ?? '');
 
-    // When sorting by qualityScore, sort groups by best score and images within groups by score
+    // When sorting by quality, order images within a group and groups within a
+    // folder by score. Folder order still follows the image sort.
     if (state.sortField === 'qualityScore') {
       const qualityScores = state.qualityScores;
       const direction = state.sortDirection;
 
-      // Sort images within each group by score
-      for (const group of baseGroups) {
-        group.images.sort((a, b) => {
-          const scoreA = qualityScores[a.name] ?? -1;
-          const scoreB = qualityScores[b.name] ?? -1;
-          return direction === 'desc' ? scoreB - scoreA : scoreA - scoreB;
+      for (const section of sections) {
+        for (const group of section.groups) {
+          group.images.sort((a, b) => {
+            const scoreA = qualityScores[a.path] ?? -1;
+            const scoreB = qualityScores[b.path] ?? -1;
+            return direction === 'desc' ? scoreB - scoreA : scoreA - scoreB;
+          });
+        }
+        section.groups.sort((a, b) => {
+          const maxA = Math.max(...a.images.map((img) => qualityScores[img.path] ?? -1));
+          const maxB = Math.max(...b.images.map((img) => qualityScores[img.path] ?? -1));
+          return direction === 'desc' ? maxB - maxA : maxA - maxB;
         });
       }
-
-      // Sort groups by best (max) score within group
-      baseGroups.sort((a, b) => {
-        const maxA = Math.max(...a.images.map((img) => qualityScores[img.name] ?? -1));
-        const maxB = Math.max(...b.images.map((img) => qualityScores[img.name] ?? -1));
-        return direction === 'desc' ? maxB - maxA : maxA - maxB;
-      });
     }
 
-    return baseGroups;
+    return sections;
   }, [
     sortedImages,
+    state.folderPath,
     state.groupingThresholdMs,
     state.sortField,
     state.sortDirection,
     state.qualityScores,
   ]);
 
-  const groupsRef = useRef(groups);
-  groupsRef.current = groups;
+  const foldersRef = useRef(folders);
+  foldersRef.current = folders;
 
   // Auto-open last folder on mount
   useEffect(() => {
@@ -963,7 +896,7 @@ export function usePhotoStore(): PhotoStoreAPI {
 
   return {
     state: stateWithProgress,
-    groups,
+    folders,
     filteredImages,
     thumbnailWorker,
     openFolder,

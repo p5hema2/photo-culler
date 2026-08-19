@@ -23,6 +23,10 @@ export default defineConfig({
         '../../packages/image-utils/src/grouping',
       ),
       '@photo-culler/image-utils/focus': resolve(__dirname, '../../packages/image-utils/src/focus'),
+      '@photo-culler/image-utils/folders': resolve(
+        __dirname,
+        '../../packages/image-utils/src/folders',
+      ),
       '@photo-culler/image-utils': resolve(__dirname, '../../packages/image-utils/src'),
     },
   },

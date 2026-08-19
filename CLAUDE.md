@@ -6,9 +6,13 @@
 review images, classify them keep/review/delete, then batch-execute: trash the rejects, move the
 picks to a `picks/` subfolder, apply rotations to disk.
 
+Opening a folder scans it **recursively**, so a parent holding several shoots can be culled in one
+session; the grid shows one collapsible section per folder.
+
 No server, no accounts, no network calls. All state lives beside the user's photos:
 `.photo-culler-results.json` (classifications, scores, rotations, cached EXIF) and a
-`.photo-culler-thumbs/` cache dir. Treat both as user data — losing them costs real culling work.
+`.photo-culler-thumbs/` cache dir — **one of each per directory**, beside the photos they describe.
+Treat both as user data; losing them costs real culling work.
 
 Stack: Electron 41 + React 19 + TypeScript + Tailwind 4, in a pnpm/Turborepo monorepo.
 
@@ -59,10 +63,27 @@ blocks of `apps/desktop/electron.vite.config.ts`, plus `apps/desktop/vitest.conf
 package or a new deep import and you must register it in every relevant one — a miss fails at
 runtime, not build time.
 
+**Renderer state is keyed by absolute PATH; results files are keyed by basename.** Both matter.
+With subfolders in play `IMG_001.JPG` is not unique, so every in-memory map (`classifications`,
+`qualityScores`, `qualitySubscores`, `rotations`) keys by full path. The files on disk keep their
+original basename keying, which is only unambiguous because there is one file per directory — and
+which is why every results file written before recursive scanning still loads unchanged.
+`projectFolderResults` in `lib/results.ts` is the single place that translates between the two.
+
+**Mutations do not write the results file; they mark a folder dirty.** `markDirty(folder)` queues a
+debounced flush that projects state onto that folder's file. Setters used to mirror each field into
+the results object by hand, which is how `trashImages` came to drop two of six fields. Do not
+reintroduce inline writes.
+
+**`picks/` is scanned but folded into its parent folder.** The scanner attributes those images to
+the directory above, so a shot moved by Execute stays in the section it was culled in rather than
+reappearing as its own folder.
+
 **The renderer must never import the `image-utils` barrel.** It aliases
-`@photo-culler/image-utils/sorting` and `/grouping` deep, on purpose: the barrel re-exports
-`scanner.ts`, which imports `node:fs/promises` and would break the browser bundle. Import deep paths
-in renderer code.
+`@photo-culler/image-utils/sorting`, `/grouping`, `/focus` and `/folders` deep, on purpose: the
+barrel re-exports `scanner.ts`, which imports `node:fs/promises` and would break the browser bundle.
+Import deep paths in renderer code, and register each new one in **both** `electron.vite.config.ts`
+and `vitest.config.ts`.
 
 **`pnpm typecheck` cannot fail.** No package defines a `typecheck` script, so Turbo resolves every
 task to nothing. It runs in CI and in the `pre-push` hook and is green regardless of type errors.
@@ -126,6 +147,11 @@ for the fields sorting and grouping need. `exiftool` runs as a long-lived child 
 process, on demand, for the ONE focused image — that is where the maker-note data lives (AF point,
 face detection), which exifr returns as an undecoded blob. Don't merge them: the bulk path must stay
 cheap, and exiftool must stay off the per-image hot path.
+
+**The grid virtualizes a flat row list, not a tree.** `buildRows` in `PhotoGrid.tsx` flattens
+folder headers and timestamp groups into one array so a single virtualizer keeps working across
+thousands of images spread over many shoots; a nested virtualizer per folder would wreck scroll
+estimation. A collapsed folder contributes only its header row.
 
 **Thumbnails are cached per format version.** `.photo-culler-thumbs/v2/<name>.thumb.jpg`. Bump
 `THUMB_CACHE_VERSION` in `ipc-handlers.ts` whenever the pixel format changes; the vacuum then deletes

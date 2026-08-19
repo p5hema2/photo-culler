@@ -3,6 +3,14 @@ export interface ImageFileInfo {
   path: string;
   /** File name with extension (e.g., "IMG_1234.jpg") */
   name: string;
+  /**
+   * Absolute path of the directory this image is filed under.
+   *
+   * Normally `dirname(path)`, with one exception: images inside a `picks/`
+   * subfolder report their PARENT directory, so a shot that has been moved to
+   * picks/ stays in the folder the user culled it in.
+   */
+  folder: string;
   /** File extension without dot, lowercase (e.g., "jpg") */
   extension: string;
   /** File size in bytes */

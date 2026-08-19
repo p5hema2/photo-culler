@@ -48,7 +48,24 @@ function handlerFor(channel: string): (event: unknown, ...args: never[]) => Prom
 
 /** Normalise separators so assertions work on both Windows and POSIX. */
 function norm(p: unknown): string {
-  return String(p).replace(/\\/g, '/');
+  return String(p).split(String.fromCharCode(92)).join('/');
+}
+
+/**
+ * readdir is called two ways: with `withFileTypes` while walking directories,
+ * and without it to list image names. The helper serves both from one map of
+ * directory -> entry names.
+ */
+function readdirFrom(tree: Record<string, string[]>, dirs: ReadonlySet<string>) {
+  return async (dirPath: string, options?: { withFileTypes?: boolean }) => {
+    const names = tree[norm(dirPath)];
+    if (!names) throw new Error('ENOENT');
+    if (!options?.withFileTypes) return names;
+    return names.map((name) => ({
+      name,
+      isDirectory: () => dirs.has(`${norm(dirPath)}/${name}`),
+    }));
+  };
 }
 
 beforeEach(() => {
@@ -158,11 +175,14 @@ describe('cache freshness', () => {
 
 describe('vacuumThumbCache', () => {
   it('deletes nothing when the image directory cannot be listed', async () => {
-    mockReaddir.mockImplementation(async (p: string) => {
-      if (norm(p).endsWith('.photo-culler-thumbs'))
-        return [{ name: 'v2', isDirectory: () => true }];
-      throw new Error('EPERM');
-    });
+    mockReaddir.mockImplementation(
+      async (dirPath: string, options?: { withFileTypes?: boolean }) => {
+        if (norm(dirPath).endsWith('.photo-culler-thumbs')) {
+          return options?.withFileTypes ? [{ name: 'v2', isDirectory: () => true }] : ['v2'];
+        }
+        throw new Error('EPERM');
+      },
+    );
 
     const { removed } = await vacuumThumbCache('/photos');
 
@@ -172,18 +192,16 @@ describe('vacuumThumbCache', () => {
   });
 
   it('removes loose v1 files and keeps the current version directory', async () => {
-    mockReaddir.mockImplementation(async (p: string) => {
-      const n = norm(p);
-      if (n.endsWith('/.photo-culler-thumbs')) {
-        return [
-          { name: 'v2', isDirectory: () => true },
-          { name: 'a.jpg.thumb.jpg', isDirectory: () => false },
-        ];
-      }
-      if (n.endsWith('/.photo-culler-thumbs/v2')) return ['a.jpg.thumb.jpg'];
-      if (n === '/photos') return ['a.jpg'];
-      throw new Error('ENOENT');
-    });
+    mockReaddir.mockImplementation(
+      readdirFrom(
+        {
+          '/photos': ['a.jpg'],
+          '/photos/.photo-culler-thumbs': ['v2', 'a.jpg.thumb.jpg'],
+          '/photos/.photo-culler-thumbs/v2': ['a.jpg.thumb.jpg'],
+        },
+        new Set(['/photos/.photo-culler-thumbs/v2']),
+      ),
+    );
     mockRm.mockResolvedValue(undefined);
 
     const { removed } = await vacuumThumbCache('/photos');
@@ -197,15 +215,16 @@ describe('vacuumThumbCache', () => {
   });
 
   it('removes orphaned thumbnails whose image is gone', async () => {
-    mockReaddir.mockImplementation(async (p: string) => {
-      const n = norm(p);
-      if (n.endsWith('/.photo-culler-thumbs')) return [{ name: 'v2', isDirectory: () => true }];
-      if (n.endsWith('/.photo-culler-thumbs/v2')) {
-        return ['a.jpg.thumb.jpg', 'gone.jpg.thumb.jpg'];
-      }
-      if (n === '/photos') return ['a.jpg'];
-      throw new Error('ENOENT');
-    });
+    mockReaddir.mockImplementation(
+      readdirFrom(
+        {
+          '/photos': ['a.jpg'],
+          '/photos/.photo-culler-thumbs': ['v2'],
+          '/photos/.photo-culler-thumbs/v2': ['a.jpg.thumb.jpg', 'gone.jpg.thumb.jpg'],
+        },
+        new Set(['/photos/.photo-culler-thumbs/v2']),
+      ),
+    );
     mockUnlink.mockResolvedValue(undefined);
 
     const { removed } = await vacuumThumbCache('/photos');
@@ -217,17 +236,42 @@ describe('vacuumThumbCache', () => {
   });
 
   it('matches image names case-insensitively', async () => {
-    mockReaddir.mockImplementation(async (p: string) => {
-      const n = norm(p);
-      if (n.endsWith('/.photo-culler-thumbs')) return [{ name: 'v2', isDirectory: () => true }];
-      if (n.endsWith('/.photo-culler-thumbs/v2')) return ['IMG_1.JPG.thumb.jpg'];
-      if (n === '/photos') return ['img_1.jpg'];
-      throw new Error('ENOENT');
-    });
+    mockReaddir.mockImplementation(
+      readdirFrom(
+        {
+          '/photos': ['img_1.jpg'],
+          '/photos/.photo-culler-thumbs': ['v2'],
+          '/photos/.photo-culler-thumbs/v2': ['IMG_1.JPG.thumb.jpg'],
+        },
+        new Set(['/photos/.photo-culler-thumbs/v2']),
+      ),
+    );
 
     const { removed } = await vacuumThumbCache('/photos');
 
     expect(mockUnlink).not.toHaveBeenCalled();
     expect(removed).toBe(0);
+  });
+
+  it('follows subfolders, so orphans in a nested shoot are cleaned too', async () => {
+    mockReaddir.mockImplementation(
+      readdirFrom(
+        {
+          '/photos': ['eventA'],
+          '/photos/eventA': ['a.jpg'],
+          '/photos/eventA/.photo-culler-thumbs': ['v2'],
+          '/photos/eventA/.photo-culler-thumbs/v2': ['a.jpg.thumb.jpg', 'gone.jpg.thumb.jpg'],
+        },
+        new Set(['/photos/eventA', '/photos/eventA/.photo-culler-thumbs/v2']),
+      ),
+    );
+    mockUnlink.mockResolvedValue(undefined);
+
+    const { removed } = await vacuumThumbCache('/photos');
+
+    expect(mockUnlink.mock.calls.map((c) => norm(c[0]))).toEqual([
+      '/photos/eventA/.photo-culler-thumbs/v2/gone.jpg.thumb.jpg',
+    ]);
+    expect(removed).toBe(1);
   });
 });

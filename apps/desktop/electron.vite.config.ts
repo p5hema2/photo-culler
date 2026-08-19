@@ -42,6 +42,10 @@ export default defineConfig({
           __dirname,
           '../../packages/image-utils/src/focus',
         ),
+        '@photo-culler/image-utils/folders': resolve(
+          __dirname,
+          '../../packages/image-utils/src/folders',
+        ),
       },
     },
     plugins: [tailwindcss(), react()],

@@ -11,9 +11,9 @@ interface GroupRowProps {
   rotations: Record<string, number>;
   focusedImageId: string | null;
   selectOnHover: boolean;
-  onImageClick: (filename: string) => void;
+  onImageClick: (imagePath: string) => void;
   onImageFocus: (path: string) => void;
-  onCycleClassification: (filename: string) => void;
+  onCycleClassification: (imagePath: string) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   groupIndex: number;
@@ -47,7 +47,7 @@ function getClassificationSummary(
 ): string {
   const counts = { keep: 0, review: 0, delete: 0, unclassified: 0 };
   for (const img of images) {
-    const cls = classifications[img.name] ?? null;
+    const cls = classifications[img.path] ?? null;
     if (cls === null) {
       counts.unclassified++;
     } else {
@@ -116,14 +116,14 @@ export function GroupRow({
             key={image.path}
             image={image}
             cellSize={cellSize}
-            classification={classifications[image.name] ?? null}
-            qualityScore={qualityScores[image.name]}
-            rotation={rotations[image.name]}
+            classification={classifications[image.path] ?? null}
+            qualityScore={qualityScores[image.path]}
+            rotation={rotations[image.path]}
             isFocused={focusedImageId === image.path}
             selectOnHover={selectOnHover}
-            onClick={() => onImageClick(image.name)}
+            onClick={() => onImageClick(image.path)}
             onFocus={() => onImageFocus(image.path)}
-            onCycleClassification={() => onCycleClassification(image.name)}
+            onCycleClassification={() => onCycleClassification(image.path)}
             getThumbnail={getThumbnail}
             requestThumbnail={requestThumbnail}
             groupIndex={groupIndex}

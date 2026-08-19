@@ -14,6 +14,9 @@ import { readdir, stat } from 'node:fs/promises';
 const mockReaddir = vi.mocked(readdir);
 const mockStat = vi.mocked(stat);
 
+/** Compare paths regardless of the platform separator. */
+const norm = (p: unknown): string => String(p).split(String.fromCharCode(92)).join('/');
+
 /** path.join yields '\picks' on Windows and '/picks' elsewhere. */
 function isPicksDir(dirPath: unknown): boolean {
   return /[/\\]picks$/.test(String(dirPath));
@@ -108,21 +111,76 @@ describe('scanFolder', () => {
     expect(result[0]!.name).toBe('photo.jpg');
   });
 
-  it('includes files from picks/ subfolder when it exists', async () => {
+  it('includes files from picks/ and files them under the parent folder', async () => {
     mockReaddir.mockImplementation(async (dirPath) => {
-      const dir = String(dirPath);
-      if (isPicksDir(dir)) {
-        return [makeDirent('picked.jpg')] as Dirent[];
-      }
-      return [makeDirent('main.jpg')] as Dirent[];
+      if (isPicksDir(dirPath)) return [makeDirent('picked.jpg')] as Dirent[];
+      return [makeDirent('main.jpg'), makeDirent('picks', false)] as Dirent[];
     });
     mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
     expect(result).toHaveLength(2);
-    const names = result.map((r) => r.name);
-    expect(names).toContain('main.jpg');
-    expect(names).toContain('picked.jpg');
+    expect(result.map((r) => r.name).sort()).toEqual(['main.jpg', 'picked.jpg']);
+    // A moved pick stays in the section it was culled in, so both report the
+    // parent as their folder.
+    expect(new Set(result.map((r) => r.folder))).toEqual(new Set(['/test/folder']));
+  });
+
+  it('descends into subfolders and files each image under its own directory', async () => {
+    mockReaddir.mockImplementation(async (dirPath) => {
+      const dir = norm(dirPath);
+      if (dir === '/test/folder') {
+        return [
+          makeDirent('root.jpg'),
+          makeDirent('eventA', false),
+          makeDirent('eventB', false),
+        ] as Dirent[];
+      }
+      if (dir.endsWith('/eventA'))
+        return [makeDirent('a1.jpg'), makeDirent('day2', false)] as Dirent[];
+      if (dir.endsWith('/day2')) return [makeDirent('a2.jpg')] as Dirent[];
+      if (dir.endsWith('/eventB')) return [makeDirent('b1.jpg')] as Dirent[];
+      return [] as Dirent[];
+    });
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
+
+    const result = await scanFolder('/test/folder');
+    const byName = Object.fromEntries(result.map((r) => [r.name, norm(r.folder)]));
+
+    expect(Object.keys(byName).sort()).toEqual(['a1.jpg', 'a2.jpg', 'b1.jpg', 'root.jpg']);
+    expect(byName['root.jpg']).toBe('/test/folder');
+    expect(byName['a1.jpg']).toBe('/test/folder/eventA');
+    // Nesting is unlimited, not one level.
+    expect(byName['a2.jpg']).toBe('/test/folder/eventA/day2');
+    expect(byName['b1.jpg']).toBe('/test/folder/eventB');
+  });
+
+  it('skips hidden directories, which is what excludes the thumbnail cache', async () => {
+    mockReaddir.mockImplementation(async (dirPath) => {
+      const dir = norm(dirPath);
+      if (dir === '/test/folder') {
+        return [makeDirent('a.jpg'), makeDirent('.photo-culler-thumbs', false)] as Dirent[];
+      }
+      return [makeDirent('a.jpg.thumb.jpg')] as Dirent[];
+    });
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
+
+    const result = await scanFolder('/test/folder');
+    expect(result.map((r) => r.name)).toEqual(['a.jpg']);
+  });
+
+  it('keeps scanning when a subfolder cannot be read', async () => {
+    mockReaddir.mockImplementation(async (dirPath) => {
+      const dir = norm(dirPath);
+      if (dir === '/test/folder') {
+        return [makeDirent('ok.jpg'), makeDirent('locked', false)] as Dirent[];
+      }
+      throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+    });
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
+
+    const result = await scanFolder('/test/folder');
+    expect(result.map((r) => r.name)).toEqual(['ok.jpg']);
   });
 
   it('handles picks/ not existing without error', async () => {
@@ -195,6 +253,7 @@ describe('scanFolder', () => {
       // Built with join() so the assertion holds on Windows too
       path: join('/test/folder', 'photo.jpg'),
       name: 'photo.jpg',
+      folder: '/test/folder',
       extension: 'jpg',
       size: 2048,
       lastModified: 1700000000000,

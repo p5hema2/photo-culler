@@ -12,7 +12,7 @@ class FakeWorker {
 }
 
 function img(folder: string, name: string) {
-  return { name, path: `${folder}/${name}`, extension: 'jpg', size: 100, lastModified: 1 };
+  return { name, path: `${folder}/${name}`, folder, extension: 'jpg', size: 100, lastModified: 1 };
 }
 
 /** Folder B is fully analysed: cached EXIF, a score, and a user classification. */
@@ -84,7 +84,7 @@ describe('results persistence', () => {
       await result.current.openFolder('/B');
     });
     await act(async () => {
-      result.current.setQualityScore('b1.jpg', 42, {
+      result.current.setQualityScore('/B/b1.jpg', 42, {
         sharpness: 42,
         exposure: 42,
         contrast: 42,
@@ -119,7 +119,7 @@ describe('results persistence', () => {
 
     // Folder A's still-running worker delivers a score mid-flight
     await act(async () => {
-      result.current.setQualityScore('a1.jpg', 7, {
+      result.current.setQualityScore('/A/a1.jpg', 7, {
         sharpness: 7,
         exposure: 7,
         contrast: 7,

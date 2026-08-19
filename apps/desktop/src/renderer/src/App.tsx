@@ -70,7 +70,7 @@ function LoadingState({
 
 function App(): React.JSX.Element {
   const store = usePhotoStore();
-  const { state, groups, thumbnailWorker } = store;
+  const { state, folders, thumbnailWorker } = store;
   const scoringWorker = useScoringWorker();
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const scoringTriggeredRef = useRef<string | null>(null);
@@ -82,7 +82,38 @@ function App(): React.JSX.Element {
 
   const { settings: overlaySettings, actions: overlayActions } = useOverlaySettings();
 
-  const sortedFlatImages = useMemo(() => groups.flatMap((g) => g.images), [groups]);
+  /** Folders the user has collapsed. Keyed by absolute directory path. */
+  const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<string>>(new Set());
+
+  const handleToggleFolder = useCallback((folderPath: string) => {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderPath)) next.delete(folderPath);
+      else next.add(folderPath);
+      return next;
+    });
+  }, []);
+
+  /**
+   * Navigation order. Collapsed folders are skipped, so an arrow key never
+   * moves focus onto a photo the user cannot see.
+   */
+  const sortedFlatImages = useMemo(
+    () =>
+      folders
+        .filter((section) => !collapsedFolders.has(section.path))
+        .flatMap((section) => section.groups.flatMap((g) => g.images)),
+    [folders, collapsedFolders],
+  );
+
+  /** Timestamp groups of the visible folders, for grid-shaped keyboard motion. */
+  const navGroups = useMemo(
+    () =>
+      folders
+        .filter((section) => !collapsedFolders.has(section.path))
+        .flatMap((section) => section.groups),
+    [folders, collapsedFolders],
+  );
 
   const handleTrashFocused = useCallback(() => {
     if (state.focusedImageId) {
@@ -91,7 +122,7 @@ function App(): React.JSX.Element {
   }, [store, state.focusedImageId]);
 
   useKeyboardNav({
-    groups,
+    groups: navGroups,
     focusedImageId: state.focusedImageId,
     onFocusChange: store.setFocusedImage,
     onCycleClassification: store.cycleClassification,
@@ -164,8 +195,8 @@ function App(): React.JSX.Element {
   }, []);
 
   const handleImageClick = useCallback(
-    (filename: string) => {
-      store.cycleClassification(filename);
+    (imagePath: string) => {
+      store.cycleClassification(imagePath);
     },
     [store],
   );
@@ -376,14 +407,14 @@ function App(): React.JSX.Element {
     if (!state.folderPath) {
       return <WelcomeState onOpenFolder={handleSelectFolder} />;
     }
-    if (groups.length === 0) {
+    if (folders.length === 0) {
       return <EmptyState />;
     }
     if (viewLayout === 'loupe' || viewLayout === 'filmstrip') {
       const DetailView = viewLayout === 'loupe' ? LoupeView : FilmstripView;
       return (
         <DetailView
-          groups={groups}
+          folders={folders}
           focusedImageId={state.focusedImageId}
           classifications={state.classifications}
           qualityScores={state.qualityScores}
@@ -403,7 +434,9 @@ function App(): React.JSX.Element {
     }
     return (
       <PhotoGrid
-        groups={groups}
+        folders={folders}
+        collapsedFolders={collapsedFolders}
+        onToggleFolder={handleToggleFolder}
         classifications={state.classifications}
         qualityScores={state.qualityScores}
         rotations={state.rotations}

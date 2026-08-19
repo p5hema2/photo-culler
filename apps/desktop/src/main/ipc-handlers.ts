@@ -113,10 +113,35 @@ async function relocateThumbCache(fromPath: string, toPath: string): Promise<voi
  * that renderer-side filters exist, so it can never delete a thumbnail merely
  * because its image is currently hidden.
  */
+/**
+ * Directories the scanner would visit, so the vacuum covers exactly the same
+ * tree. Hidden directories are skipped, which keeps the cache dirs themselves
+ * out of the walk.
+ */
+async function imageDirectories(rootPath: string): Promise<string[]> {
+  const found: string[] = [];
+  const walk = async (dirPath: string): Promise<void> => {
+    if (found.length >= 2000) return;
+    found.push(dirPath);
+    let entries;
+    try {
+      entries = await readdir(dirPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      await walk(path.join(dirPath, entry.name));
+    }
+  };
+  await walk(rootPath);
+  return found;
+}
+
 export async function vacuumThumbCache(folderPath: string): Promise<{ removed: number }> {
   let removed = 0;
 
-  for (const imageDir of [folderPath, path.join(folderPath, 'picks')]) {
+  for (const imageDir of await imageDirectories(folderPath)) {
     const cacheDir = getThumbCacheDir(imageDir);
 
     let cacheEntries;
@@ -254,6 +279,15 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.CLEAR_RESULTS, async (_event, folderPath: string) => {
+    // Rescan means "forget everything below here", so every folder in the tree
+    // loses its file — not only the one the user picked.
+    const directories = await imageDirectories(folderPath);
+    for (const dir of directories.slice(1)) {
+      for (const name of [RESULTS_FILENAME, LEGACY_RESULTS_FILENAME]) {
+        await unlinkQuiet(path.join(dir, name));
+      }
+    }
+
     // Drop a queued write before unlinking, otherwise the queue drains after
     // the delete and writes the data straight back. Deleting the map entry
     // would not help — an in-flight write holds the queue object directly.
