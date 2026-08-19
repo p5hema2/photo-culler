@@ -98,6 +98,25 @@ jobs:
           files: |
             artifacts/mac-builds/*
             artifacts/win-builds/*
+          # Prepended to the generated changelog. These builds are unsigned, so
+          # every user meets a scary dialog before they meet the app; telling
+          # them how to get past it belongs on the page they download from.
+          body: |
+            ### Installing
+
+            **Windows** — SmartScreen will say "Windows protected your PC".
+            Click **More info**, then **Run anyway**.
+
+            **macOS** — drag the app to Applications and launch it from there.
+            Control-click it and choose **Open**; on macOS 15 (Sequoia) and later,
+            let it be blocked once, then allow it under **System Settings →
+            Privacy & Security → Open Anyway**. If macOS calls the app *damaged*,
+            that is the download quarantine flag:
+            `xattr -dr com.apple.quarantine "/Applications/Photo Culler.app"`.
+
+            These builds carry no code-signing certificate, which is why the
+            warnings appear. See
+            [Code signing](https://github.com/p5hema2/photo-culler#code-signing).
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -18,6 +18,7 @@
     "package": "pnpm vendor && electron-builder",
     "package:mac": "pnpm vendor:mac && electron-builder --mac",
     "package:win": "pnpm vendor:win && electron-builder --win",
+    "icons": "node scripts/make-icons.mjs",
     "vendor": "node scripts/vendor-native-deps.mjs",
     "vendor:win": "node scripts/vendor-native-deps.mjs --target win-x64",
     "vendor:mac": "node scripts/vendor-native-deps.mjs --target mac-x64 --target mac-arm64"

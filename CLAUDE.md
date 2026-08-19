@@ -117,6 +117,12 @@ Three things to know before touching it:
 This is also why `electron-builder.yml` sets `asar: false` and `npmRebuild: false`. Commits
 `cbe4229`, `8cf68b2`, and `f465675` are the original convergence on the sharp arrangement.
 
+**Icons are generated, not hand-authored.** `build/icon-source.png` is the master; `pnpm icons`
+(`scripts/make-icons.mjs`) derives `icon.ico`, `icon.icns` and the 512px `icon.png` from it.
+The script writes both containers itself because `iconutil` is macOS-only and this is a Windows dev
+machine — do not reach for it, or for a new dependency, to "fix" that. `build/README.md` carries
+the sizes and the prompt the artwork came from.
+
 **`pnpm.overrides` pins vite to 6.4.1, and that pin is load-bearing.** `vite` is not a direct
 dependency anywhere — it arrives only as a peer of `electron-vite`, `@vitejs/plugin-react`,
 `@tailwindcss/vite` and `vitest`. Of those, only vitest allows vite 8, so any `pnpm add` re-resolves

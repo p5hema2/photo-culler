@@ -16,6 +16,11 @@ function createWindow(): BrowserWindow {
     minWidth: 800,
     minHeight: 600,
     show: false,
+    // Only in dev. A packaged app takes its icon from the bundle itself —
+    // build/icon.ico is compiled into the exe, build/icon.icns into the .app —
+    // and build/ is not among the packaged files, so pointing at it there would
+    // just be a dead path.
+    ...(app.isPackaged ? {} : { icon: path.join(__dirname, '../../build/icon.png') }),
     // Keep the menu (and its accelerators) but stay out of the way — press Alt
     // to reveal it. No effect on macOS, where the menu bar is OS-owned.
     autoHideMenuBar: true,

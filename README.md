@@ -17,6 +17,50 @@ Built with Electron, React, TypeScript, and Tailwind CSS.
 - **Batch execute** — trash rejects, move picks to subfolder, apply rotations
 - **Persistent state** — classifications, scores, and rotations saved per folder
 
+## Installing
+
+Grab the installer for your platform from the
+[latest release](https://github.com/p5hema2/photo-culler/releases/latest):
+`.exe` for Windows, `-mac-arm64.dmg` for Apple Silicon, `-mac-x64.dmg` for Intel.
+
+**Both platforms will warn you the first time.** The builds carry no code-signing
+certificate — see [Code signing](#code-signing) for why — so the OS has no
+publisher to vouch for them. Getting past it:
+
+**Windows.** SmartScreen shows "Windows protected your PC". Click **More info**,
+then **Run anyway**. Your browser may also flag the download itself as
+uncommon — keep the file.
+
+**macOS.** Open the `.dmg`, drag the app to Applications, then launch it from
+Applications rather than from the disk image:
+
+- Control-click the app and choose **Open**, then **Open** again in the dialog.
+- On macOS 15 (Sequoia) and later that shortcut is gone. Double-click the app,
+  let it be blocked, then go to **System Settings → Privacy & Security**, scroll
+  to the message about Photo Culler, and click **Open Anyway**.
+- If macOS insists the app is *damaged*, quarantine is the cause rather than the
+  app. Clear it and reopen:
+
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Photo Culler.app"
+  ```
+
+You only have to do this once per installed version.
+
+### Code signing
+
+Neither platform's build is signed, and that is a purchasing decision rather than
+a missing config: Windows code-signing certificates must now live on a hardware
+token or a cloud HSM (Azure Trusted Signing at roughly $10/month is the cheapest
+CI-friendly route), and macOS notarisation requires an Apple Developer Program
+membership at $99/year. The macOS artefacts are ad-hoc signed on Apple Silicon,
+because arm64 refuses to execute an entirely unsigned binary; the Intel build
+carries no signature at all.
+
+Worth knowing before buying: a standard (OV) Windows certificate does not silence
+SmartScreen immediately — reputation accrues as downloads accumulate. Only an EV
+certificate is trusted on sight.
+
 ## Keyboard Shortcuts
 
 | Key | Action |
