@@ -293,13 +293,22 @@ function App(): React.JSX.Element {
         case 'toggle-af-point':
           overlayActionsRef.current.toggleAfPoint();
           break;
-        case 'vacuum-thumbs': {
+        case 'clean-up-folder': {
           const folder = stateRef.current.folderPath;
-          if (folder) {
-            void window.api.vacuumThumbCache(folder).catch(() => {
-              // Housekeeping is best-effort; never interrupt the user for it.
-            });
-          }
+          if (!folder) break;
+          void (async () => {
+            try {
+              // Flush first: a queued write would otherwise land after the
+              // clean-up and restore the very records it just removed.
+              storeRef.current.cancelPendingSave();
+              const result = await window.api.cleanUpFolder(folder);
+              if (!result.cancelled && result.entriesRemoved > 0) {
+                storeRef.current.pruneLoadedResults();
+              }
+            } catch {
+              // The dialog in the main process already reported anything useful.
+            }
+          })();
           break;
         }
       }

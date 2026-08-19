@@ -92,6 +92,11 @@ export interface PhotoStoreAPI {
   setScoringProgress: (progress: { completed: number; total: number }) => void;
   rotateImage: (imagePath: string, direction: 'cw' | 'ccw') => void;
   cancelPendingSave: () => void;
+  /**
+   * Drop in-memory records for images that are no longer on disk, mirroring
+   * what the main process just removed from the files.
+   */
+  pruneLoadedResults: () => void;
 }
 
 export function usePhotoStore(): PhotoStoreAPI {
@@ -711,6 +716,28 @@ export function usePhotoStore(): PhotoStoreAPI {
     }
   }, []);
 
+  const pruneLoadedResults = useCallback(() => {
+    const current = stateRef.current;
+    // The renderer's own folder attribution already matches the main process's
+    // rule — picks/ images report their parent — so a folder's images are
+    // exactly the entries its file may keep.
+    const namesByFolder = new Map<string, Set<string>>();
+    for (const img of current.images) {
+      const set = namesByFolder.get(img.folder);
+      if (set) set.add(img.name);
+      else namesByFolder.set(img.folder, new Set([img.name]));
+    }
+
+    for (const [folderPath, results] of resultsRef.current) {
+      const keep = namesByFolder.get(folderPath) ?? new Set<string>();
+      const pruned: typeof results.images = {};
+      for (const [name, entry] of Object.entries(results.images)) {
+        if (keep.has(name)) pruned[name] = entry;
+      }
+      resultsRef.current.set(folderPath, { ...results, images: pruned });
+    }
+  }, []);
+
   const setQualityScore = useCallback(
     (imagePath: string, score: number, subscores?: QualitySubscores) => {
       setState((prev) => ({
@@ -918,6 +945,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     setScoringProgress,
     rotateImage,
     cancelPendingSave,
+    pruneLoadedResults,
   };
 }
 

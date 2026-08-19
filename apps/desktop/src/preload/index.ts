@@ -22,7 +22,7 @@ const api: ElectronAPI = {
   rotateFiles: (files) => ipcRenderer.invoke(IPC_CHANNELS.ROTATE_FILES, files),
   readDetailedMetadata: (filePath) =>
     ipcRenderer.invoke(IPC_CHANNELS.READ_DETAILED_METADATA, filePath),
-  vacuumThumbCache: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.VACUUM_THUMB_CACHE, folderPath),
+  cleanUpFolder: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.CLEAN_UP_FOLDER, folderPath),
   getAppVersion: () => ipcRenderer.invoke(IPC_CHANNELS.GET_APP_VERSION),
 };
 

@@ -106,7 +106,7 @@ function buildMenu(): void {
         { type: 'separator' },
         commandItem('Save / Delete...', 'execute', 'CmdOrCtrl+S'),
         { type: 'separator' },
-        commandItem('Clean Thumbnail Cache', 'vacuum-thumbs'),
+        commandItem('Clean Up Folder…', 'clean-up-folder'),
         { type: 'separator' },
         { role: 'quit' },
       ],

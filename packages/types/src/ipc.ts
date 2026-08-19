@@ -16,7 +16,7 @@ export const IPC_CHANNELS = {
   LOAD_THUMB_CACHE: 'fs:load-thumb-cache',
   SAVE_THUMB_CACHE: 'fs:save-thumb-cache',
   ROTATE_FILES: 'fs:rotate-files',
-  VACUUM_THUMB_CACHE: 'fs:vacuum-thumb-cache',
+  CLEAN_UP_FOLDER: 'fs:clean-up-folder',
   READ_DETAILED_METADATA: 'meta:read-detailed',
   GET_APP_VERSION: 'app:get-version',
 } as const;
@@ -36,7 +36,7 @@ export const MENU_COMMANDS = [
   'thumbnail:large',
   'toggle-info-panel',
   'show-shortcuts',
-  'vacuum-thumbs',
+  'clean-up-folder',
   'toggle-focus-peaking',
   'toggle-clipping',
   'toggle-af-point',
@@ -158,8 +158,14 @@ export interface ElectronAPI {
    * nothing usable.
    */
   readDetailedMetadata: (filePath: string) => Promise<DetailedMetadata | null>;
-  /** Delete orphaned and outdated cached thumbnails for a folder. */
-  vacuumThumbCache: (folderPath: string) => Promise<{ removed: number }>;
+  /**
+   * Remove cached thumbnails and saved records whose image no longer exists,
+   * anywhere below `folderPath`. Asks the user to confirm first, because
+   * records carry classifications, scores and rotations.
+   */
+  cleanUpFolder: (
+    folderPath: string,
+  ) => Promise<{ thumbsRemoved: number; entriesRemoved: number; cancelled: boolean }>;
   /** Version of the running app, stamped from the git tag at build time. */
   getAppVersion: () => Promise<string>;
 }

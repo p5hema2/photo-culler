@@ -23,6 +23,8 @@ const THUMB_CACHE_DIR = '.photo-culler-thumbs';
  */
 const THUMB_CACHE_VERSION = 'v2';
 const THUMB_SUFFIX = '.thumb.jpg';
+/** Mirrors the scanner: picks/ images are filed under their parent folder. */
+const PICKS_DIRNAME = 'picks';
 
 function isEnoent(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === 'ENOENT';
@@ -136,6 +138,169 @@ async function imageDirectories(rootPath: string): Promise<string[]> {
   };
   await walk(rootPath);
   return found;
+}
+
+/**
+ * Filenames a directory's results file may legitimately describe.
+ *
+ * That is the directory's own files PLUS its `picks/` children: Execute moves
+ * keeps into `picks/`, and the scanner attributes them back to the parent, so
+ * the parent's results file is where their classifications live. Pruning
+ * against the bare directory listing would delete every moved pick's record.
+ *
+ * Returns null when the directory cannot be listed — the caller must then
+ * delete nothing rather than read the failure as "no files here".
+ */
+async function describableNames(dir: string): Promise<Set<string> | null> {
+  let own: string[];
+  try {
+    own = await readdir(dir);
+  } catch {
+    return null;
+  }
+
+  const names = new Set(own.map((n) => n.toLowerCase()));
+
+  try {
+    for (const n of await readdir(path.join(dir, PICKS_DIRNAME))) {
+      names.add(n.toLowerCase());
+    }
+  } catch {
+    // no picks/ here, which is the normal case
+  }
+  return names;
+}
+
+/** What a clean-up would remove. Computed first so the user can confirm it. */
+export interface CleanUpPlan {
+  /** Absolute paths of thumbnails whose source image is gone. */
+  thumbs: string[];
+  /** Cache entries written by an older thumbnail format. */
+  staleCacheDirs: string[];
+  /** Results files and the entries in them that describe missing images. */
+  results: Array<{ file: string; names: string[] }>;
+  /** Directories inspected, for the summary. */
+  directoriesScanned: number;
+}
+
+/**
+ * Work out what is orphaned below `rootPath`, without deleting anything.
+ *
+ * Deliberately conservative at every step: a directory that cannot be listed is
+ * skipped entirely, and only entries with no corresponding file are proposed.
+ */
+export async function planCleanUp(rootPath: string): Promise<CleanUpPlan> {
+  const plan: CleanUpPlan = {
+    thumbs: [],
+    staleCacheDirs: [],
+    results: [],
+    directoriesScanned: 0,
+  };
+
+  for (const imageDir of await imageDirectories(rootPath)) {
+    plan.directoriesScanned++;
+
+    // ── thumbnails: checked against this directory's OWN files, because
+    //    picks/ keeps its own cache alongside its own images
+    let ownNames: Set<string> | null = null;
+    try {
+      ownNames = new Set((await readdir(imageDir)).map((n) => n.toLowerCase()));
+    } catch {
+      continue;
+    }
+
+    const cacheDir = getThumbCacheDir(imageDir);
+    let cacheEntries;
+    try {
+      cacheEntries = await readdir(cacheDir, { withFileTypes: true });
+    } catch {
+      cacheEntries = null;
+    }
+
+    if (cacheEntries) {
+      for (const entry of cacheEntries) {
+        if (entry.name !== THUMB_CACHE_VERSION) {
+          plan.staleCacheDirs.push(path.join(cacheDir, entry.name));
+        }
+      }
+
+      const versionDir = path.join(cacheDir, THUMB_CACHE_VERSION);
+      try {
+        for (const thumb of await readdir(versionDir)) {
+          if (!thumb.endsWith(THUMB_SUFFIX)) continue;
+          const source = thumb.slice(0, -THUMB_SUFFIX.length).toLowerCase();
+          if (!ownNames.has(source)) plan.thumbs.push(path.join(versionDir, thumb));
+        }
+      } catch {
+        // no current-version directory yet
+      }
+    }
+
+    // ── results entries: checked against this directory's files AND its picks/
+    const describable = await describableNames(imageDir);
+    if (!describable) continue;
+
+    for (const filename of [RESULTS_FILENAME, LEGACY_RESULTS_FILENAME]) {
+      const file = path.join(imageDir, filename);
+      let parsed: { images?: Record<string, unknown> };
+      try {
+        parsed = JSON.parse(await readFile(file, 'utf-8'));
+      } catch {
+        continue; // absent or unreadable — leave it alone
+      }
+      if (!parsed || typeof parsed.images !== 'object' || parsed.images === null) continue;
+
+      const orphaned = Object.keys(parsed.images).filter(
+        (name) => !describable.has(name.toLowerCase()),
+      );
+      if (orphaned.length > 0) plan.results.push({ file, names: orphaned });
+    }
+  }
+
+  return plan;
+}
+
+/** Carry out a plan. Each step is best-effort; a failure never aborts the rest. */
+export async function applyCleanUp(
+  plan: CleanUpPlan,
+): Promise<{ thumbsRemoved: number; entriesRemoved: number }> {
+  let thumbsRemoved = 0;
+  let entriesRemoved = 0;
+
+  for (const dir of plan.staleCacheDirs) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      thumbsRemoved++;
+    } catch {
+      // ignored on purpose
+    }
+  }
+
+  for (const thumb of plan.thumbs) {
+    await unlinkQuiet(thumb);
+    thumbsRemoved++;
+  }
+
+  for (const { file, names } of plan.results) {
+    try {
+      const parsed = JSON.parse(await readFile(file, 'utf-8'));
+      // Re-read rather than trusting the plan's snapshot: the debounced save
+      // may have rewritten the file since, and dropping only the named keys
+      // preserves whatever else landed in the meantime.
+      for (const name of names) {
+        if (name in parsed.images) {
+          delete parsed.images[name];
+          entriesRemoved++;
+        }
+      }
+      parsed.updatedAt = new Date().toISOString();
+      await writeFile(file, `${JSON.stringify(parsed, null, 2)}\n`, 'utf-8');
+    } catch {
+      // ignored on purpose
+    }
+  }
+
+  return { thumbsRemoved, entriesRemoved };
 }
 
 export async function vacuumThumbCache(folderPath: string): Promise<{ removed: number }> {
@@ -308,8 +473,49 @@ export function registerIpcHandlers(): void {
     return readDetailedMetadata(filePath);
   });
 
-  ipcMain.handle(IPC_CHANNELS.VACUUM_THUMB_CACHE, async (_event, folderPath: string) => {
-    return vacuumThumbCache(folderPath);
+  ipcMain.handle(IPC_CHANNELS.CLEAN_UP_FOLDER, async (_event, folderPath: string) => {
+    const plan = await planCleanUp(folderPath);
+    const thumbCount = plan.thumbs.length + plan.staleCacheDirs.length;
+    const entryCount = plan.results.reduce((sum, r) => sum + r.names.length, 0);
+
+    if (thumbCount === 0 && entryCount === 0) {
+      await dialog.showMessageBox({
+        type: 'info',
+        title: 'Clean Up',
+        message: 'Nothing to clean up',
+        detail:
+          `Scanned ${plan.directoriesScanned} folder(s). Every cached thumbnail and ` +
+          'saved record still has its image.',
+        buttons: ['OK'],
+      });
+      return { thumbsRemoved: 0, entriesRemoved: 0, cancelled: false };
+    }
+
+    // Removing saved records discards classifications, scores and rotations for
+    // those images. Show the count and let the user decide before touching disk.
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      title: 'Clean Up',
+      message: 'Remove orphaned thumbnails and records?',
+      detail:
+        `Scanned ${plan.directoriesScanned} folder(s).
+
+` +
+        `${thumbCount} cached thumbnail(s) whose image is gone
+` +
+        `${entryCount} saved record(s) whose image is gone
+
+` +
+        'Records hold classifications, scores and rotations. Images themselves are never touched.',
+      buttons: ['Cancel', 'Remove'],
+      defaultId: 0,
+      cancelId: 0,
+    });
+
+    if (response !== 1) return { thumbsRemoved: 0, entriesRemoved: 0, cancelled: true };
+
+    const result = await applyCleanUp(plan);
+    return { ...result, cancelled: false };
   });
 
   ipcMain.handle(IPC_CHANNELS.GET_APP_VERSION, async () => {

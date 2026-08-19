@@ -1,20 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockUnlink, mockRename, mockMkdir, mockReaddir, mockRm, mockStat, mockTrashItem } =
-  vi.hoisted(() => ({
-    mockUnlink: vi.fn(),
-    mockRename: vi.fn(),
-    mockMkdir: vi.fn(),
-    mockReaddir: vi.fn(),
-    mockRm: vi.fn(),
-    mockStat: vi.fn(),
-    mockTrashItem: vi.fn(),
-  }));
+const {
+  mockUnlink,
+  mockRename,
+  mockMkdir,
+  mockReaddir,
+  mockRm,
+  mockStat,
+  mockTrashItem,
+  mockReadFile,
+  mockWriteFile,
+} = vi.hoisted(() => ({
+  mockUnlink: vi.fn(),
+  mockRename: vi.fn(),
+  mockMkdir: vi.fn(),
+  mockReaddir: vi.fn(),
+  mockRm: vi.fn(),
+  mockStat: vi.fn(),
+  mockTrashItem: vi.fn(),
+  mockReadFile: vi.fn(),
+  mockWriteFile: vi.fn(),
+}));
 
 vi.mock('node:fs/promises', () => {
   const fs = {
-    readFile: vi.fn(),
-    writeFile: vi.fn(),
+    readFile: mockReadFile,
+    writeFile: mockWriteFile,
     mkdir: mockMkdir,
     rename: mockRename,
     unlink: mockUnlink,
@@ -36,7 +47,7 @@ vi.mock('sharp', () => ({ default: vi.fn() }));
 vi.mock('../store', () => ({ getSession: vi.fn(), updateSession: vi.fn() }));
 vi.mock('@photo-culler/image-utils', () => ({ scanFolder: vi.fn(async () => []) }));
 
-const { registerIpcHandlers, getThumbCachePath, vacuumThumbCache } =
+const { registerIpcHandlers, getThumbCachePath, vacuumThumbCache, planCleanUp, applyCleanUp } =
   await import('../ipc-handlers');
 
 /** Pull a registered handler out of the ipcMain.handle mock by channel name. */
@@ -273,5 +284,164 @@ describe('vacuumThumbCache', () => {
       '/photos/eventA/.photo-culler-thumbs/v2/gone.jpg.thumb.jpg',
     ]);
     expect(removed).toBe(1);
+  });
+});
+
+describe('planCleanUp', () => {
+  /** Serve readdir both ways and readFile from a small in-memory tree. */
+  function mountTree(
+    tree: Record<string, string[]>,
+    dirs: ReadonlySet<string>,
+    files: Record<string, string> = {},
+  ) {
+    mockReaddir.mockImplementation(readdirFrom(tree, dirs));
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      const content = files[norm(filePath)];
+      if (content === undefined) throw new Error('ENOENT');
+      return content;
+    });
+  }
+
+  function resultsFile(names: string[]): string {
+    return JSON.stringify({
+      version: 1,
+      folderPath: '/photos',
+      updatedAt: 'x',
+      images: Object.fromEntries(names.map((n) => [n, { classification: 'keep' }])),
+    });
+  }
+
+  it('proposes only records whose image is missing', async () => {
+    mountTree({ '/photos': ['a.jpg', '.photo-culler-results.json'] }, new Set(), {
+      '/photos/.photo-culler-results.json': resultsFile(['a.jpg', 'gone.jpg']),
+    });
+
+    const plan = await planCleanUp('/photos');
+
+    expect(plan.results).toHaveLength(1);
+    expect(plan.results[0]!.names).toEqual(['gone.jpg']);
+  });
+
+  it('keeps records for images that were moved into picks/', async () => {
+    // Execute moves keeps into picks/ and the scanner files them back under the
+    // parent, so the parent's results file legitimately describes them. Pruning
+    // against the bare directory listing would delete every moved pick.
+    mountTree(
+      {
+        '/photos': ['a.jpg', 'picks', '.photo-culler-results.json'],
+        '/photos/picks': ['moved.jpg'],
+      },
+      new Set(['/photos/picks']),
+      { '/photos/.photo-culler-results.json': resultsFile(['a.jpg', 'moved.jpg']) },
+    );
+
+    const plan = await planCleanUp('/photos');
+
+    expect(plan.results).toHaveLength(0);
+  });
+
+  it('descends into subfolders', async () => {
+    mountTree(
+      {
+        '/photos': ['eventA'],
+        '/photos/eventA': ['a.jpg', '.photo-culler-results.json'],
+      },
+      new Set(['/photos/eventA']),
+      { '/photos/eventA/.photo-culler-results.json': resultsFile(['a.jpg', 'gone.jpg']) },
+    );
+
+    const plan = await planCleanUp('/photos');
+
+    expect(plan.results).toHaveLength(1);
+    expect(norm(plan.results[0]!.file)).toBe('/photos/eventA/.photo-culler-results.json');
+    expect(plan.results[0]!.names).toEqual(['gone.jpg']);
+  });
+
+  it('proposes orphaned thumbnails alongside records', async () => {
+    mountTree(
+      {
+        '/photos': ['a.jpg'],
+        '/photos/.photo-culler-thumbs': ['v2'],
+        '/photos/.photo-culler-thumbs/v2': ['a.jpg.thumb.jpg', 'gone.jpg.thumb.jpg'],
+      },
+      new Set(['/photos/.photo-culler-thumbs/v2']),
+    );
+
+    const plan = await planCleanUp('/photos');
+
+    expect(plan.thumbs.map(norm)).toEqual(['/photos/.photo-culler-thumbs/v2/gone.jpg.thumb.jpg']);
+  });
+
+  it('proposes nothing when a directory cannot be listed', async () => {
+    mockReaddir.mockImplementation(async () => {
+      throw new Error('EPERM');
+    });
+
+    const plan = await planCleanUp('/photos');
+
+    expect(plan.thumbs).toEqual([]);
+    expect(plan.results).toEqual([]);
+  });
+
+  it('leaves an unreadable results file alone', async () => {
+    mountTree({ '/photos': ['a.jpg', '.photo-culler-results.json'] }, new Set(), {
+      '/photos/.photo-culler-results.json': '{ not json',
+    });
+
+    const plan = await planCleanUp('/photos');
+    expect(plan.results).toEqual([]);
+  });
+});
+
+describe('applyCleanUp', () => {
+  it('removes only the named records and keeps the rest', async () => {
+    const onDisk = JSON.stringify({
+      version: 1,
+      folderPath: '/photos',
+      updatedAt: 'x',
+      images: {
+        'a.jpg': { classification: 'keep', qualityScore: 88 },
+        'gone.jpg': { classification: 'delete' },
+      },
+    });
+    mockReadFile.mockResolvedValue(onDisk);
+    mockWriteFile.mockResolvedValue(undefined);
+
+    const result = await applyCleanUp({
+      thumbs: [],
+      staleCacheDirs: [],
+      results: [{ file: '/photos/.photo-culler-results.json', names: ['gone.jpg'] }],
+      directoriesScanned: 1,
+    });
+
+    expect(result.entriesRemoved).toBe(1);
+    const written = JSON.parse(String(mockWriteFile.mock.calls[0]![1]));
+    expect(Object.keys(written.images)).toEqual(['a.jpg']);
+    // The surviving record keeps everything it had.
+    expect(written.images['a.jpg'].qualityScore).toBe(88);
+  });
+
+  it('re-reads the file rather than trusting the plan snapshot', async () => {
+    // A debounced save may have rewritten the file between planning and
+    // applying; only the named keys may be dropped.
+    mockReadFile.mockResolvedValue(
+      JSON.stringify({
+        version: 1,
+        folderPath: '/photos',
+        updatedAt: 'x',
+        images: { 'gone.jpg': {}, 'added-since.jpg': { classification: 'review' } },
+      }),
+    );
+    mockWriteFile.mockResolvedValue(undefined);
+
+    await applyCleanUp({
+      thumbs: [],
+      staleCacheDirs: [],
+      results: [{ file: '/photos/.photo-culler-results.json', names: ['gone.jpg'] }],
+      directoriesScanned: 1,
+    });
+
+    const written = JSON.parse(String(mockWriteFile.mock.calls[0]![1]));
+    expect(Object.keys(written.images)).toEqual(['added-since.jpg']);
   });
 });

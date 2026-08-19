@@ -79,6 +79,12 @@ reintroduce inline writes.
 the directory above, so a shot moved by Execute stays in the section it was culled in rather than
 reappearing as its own folder.
 
+That fold-up has a sharp edge: a folder's results file legitimately describes images that live in
+its `picks/` subfolder. Anything deciding whether a record is orphaned must therefore compare
+against the directory's files **plus** its `picks/` children — see `describableNames` in
+`ipc-handlers.ts`. Comparing against the bare listing would delete the classification of every
+moved pick. Thumbnails are not affected: `picks/` keeps its own cache beside its own images.
+
 **The renderer must never import the `image-utils` barrel.** It aliases
 `@photo-culler/image-utils/sorting`, `/grouping`, `/focus` and `/folders` deep, on purpose: the
 barrel re-exports `scanner.ts`, which imports `node:fs/promises` and would break the browser bundle.
