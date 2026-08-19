@@ -37,6 +37,15 @@ interface KeyboardNavResult {
 /**
  * Find which group and position an image is in.
  */
+/** True while the user is typing into a field, where keys are not ours. */
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  const tag = el?.tagName?.toLowerCase();
+  return (
+    tag === 'input' || tag === 'textarea' || tag === 'select' || el?.isContentEditable === true
+  );
+}
+
 /**
  * Keys the grid handles that the browser would otherwise use to scroll.
  * Space is included: unhandled, it pages the scroll container.
@@ -97,6 +106,10 @@ export function useKeyboardNav({
       // is still '1', so the menu's "Layout > Grid" accelerator would also
       // classify the focused photo as Keep.
       if (e.ctrlKey || e.metaKey) return;
+
+      // Listening on the document means text fields would otherwise navigate
+      // the grid while the user types in them.
+      if (isTypingTarget(e.target)) return;
 
       const currentGroups = groupsRef.current;
       if (currentGroups.length === 0) return;
@@ -328,16 +341,24 @@ export function useKeyboardNav({
     [onFocusChange, onCycleClassification, onSetClassification, onTrashFocused, onRotate],
   );
 
-  // Attach keydown listener to container
+  /**
+   * Listen on the document, not on the container.
+   *
+   * A container listener only fires while focus is inside it, and focus leaves
+   * easily — a click on empty chrome, a closing dialog, anything that lands on
+   * document.body. The keys then went unhandled and the browser scrolled the
+   * nearest scrollable ancestor, which is the photo grid: navigation looked
+   * dead and the gallery moved instead.
+   *
+   * Every other keyboard handler in the app (App.tsx, DetailImageViewer)
+   * already listens on the document; this one was the exception.
+   */
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-
-    el.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
-      el.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [handleKeyDown, containerRef]);
+  }, [handleKeyDown]);
 
   return { handleKeyDown };
 }

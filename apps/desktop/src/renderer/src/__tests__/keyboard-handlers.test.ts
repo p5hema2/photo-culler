@@ -154,3 +154,47 @@ describe('focus that is no longer on screen', () => {
     expect(handlers.onSetClassification).not.toHaveBeenCalled();
   });
 });
+
+describe('where the handler listens', () => {
+  beforeEach(() => mount());
+
+  it('responds even when focus is outside the app container', () => {
+    // The original report: focus lands on document.body — a click on empty
+    // chrome, a closed dialog — and a container-scoped listener never sees the
+    // key, so the browser scrolls the grid instead of navigating it.
+    const event = new KeyboardEvent('keydown', {
+      key: 'ArrowUp',
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('leaves typing in a text field alone', () => {
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+
+    for (const key of ['ArrowUp', 'ArrowDown', '1', ' ']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      input.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+
+    expect(handlers.onFocusChange).not.toHaveBeenCalled();
+    expect(handlers.onSetClassification).not.toHaveBeenCalled();
+    input.remove();
+  });
+
+  it('leaves typing in a textarea alone', () => {
+    const area = document.createElement('textarea');
+    document.body.appendChild(area);
+
+    const event = new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true });
+    area.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+    area.remove();
+  });
+});
