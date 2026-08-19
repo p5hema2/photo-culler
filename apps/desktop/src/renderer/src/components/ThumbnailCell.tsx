@@ -17,6 +17,12 @@ interface ThumbnailCellProps {
   onFocus: () => void;
   onCycleClassification: () => void;
   getThumbnail: (id: string) => ThumbnailStatus;
+  /**
+   * Scroll self into view when focused. The loupe and filmstrip strips scroll
+   * the focused cell themselves, and two scrolls racing on one node made the
+   * selection jump. Set false wherever a parent already owns it.
+   */
+  autoScrollIntoView?: boolean;
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   groupIndex: number;
 }
@@ -42,6 +48,7 @@ export function ThumbnailCell({
   getThumbnail,
   requestThumbnail,
   groupIndex,
+  autoScrollIntoView = true,
 }: ThumbnailCellProps): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cellRef = useRef<HTMLDivElement>(null);
@@ -49,10 +56,10 @@ export function ThumbnailCell({
 
   // Auto-scroll into view when focused via keyboard
   useEffect(() => {
-    if (isFocused && cellRef.current) {
+    if (autoScrollIntoView && isFocused && cellRef.current) {
       cellRef.current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
-  }, [isFocused]);
+  }, [isFocused, autoScrollIntoView]);
 
   // Request thumbnail if not yet requested
   useEffect(() => {

@@ -63,7 +63,10 @@ function LoupeFilmstrip({
     if (!container || !focusedImageId) return;
     const el = container.querySelector(`[data-image-path="${CSS.escape(focusedImageId)}"]`);
     if (el) {
-      el.scrollIntoView({ inline: 'center', behavior: 'smooth' });
+      // Instant, not smooth: Chromium's smooth scroll runs ~300-500ms and
+      // restarts on every call, so holding an arrow key left the strip
+      // permanently chasing a selection it never caught.
+      el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'instant' });
     }
   }, [focusedImageId]);
 
@@ -98,6 +101,7 @@ function LoupeFilmstrip({
                 getThumbnail={getThumbnail}
                 requestThumbnail={requestThumbnail}
                 groupIndex={gi}
+                autoScrollIntoView={false}
               />
             </div>
           ))}

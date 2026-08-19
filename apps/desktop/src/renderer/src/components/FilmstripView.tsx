@@ -43,7 +43,8 @@ function VerticalFilmstrip({
     if (!container || !focusedImageId) return;
     const el = container.querySelector(`[data-image-path="${CSS.escape(focusedImageId)}"]`);
     if (el) {
-      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      // See LoupeView: smooth scrolling cannot keep up with key repeat.
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
     }
   }, [focusedImageId]);
 
@@ -76,6 +77,7 @@ function VerticalFilmstrip({
                 getThumbnail={getThumbnail}
                 requestThumbnail={requestThumbnail}
                 groupIndex={gi}
+                autoScrollIntoView={false}
               />
             </div>
           ))}
