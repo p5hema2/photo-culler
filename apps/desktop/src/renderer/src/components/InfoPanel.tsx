@@ -103,6 +103,36 @@ function scoreTextColor(score: number): string {
   return 'text-red-400';
 }
 
+/**
+ * One label/value row.
+ *
+ * Renders an em dash instead of vanishing when the value is missing. EXIF
+ * arrives progressively while a folder is processed, so conditionally rendered
+ * rows made the panel change height under the cursor - every section below the
+ * one being filled jumped as each field landed.
+ */
+function InfoRow({
+  label,
+  value,
+  title,
+  testId,
+}: {
+  label: string;
+  value: React.ReactNode;
+  title?: string;
+  testId?: string;
+}): React.JSX.Element {
+  const empty = value === null || value === undefined || value === '' || value === false;
+  return (
+    <div className="flex justify-between" data-testid={testId}>
+      <span className="text-gray-500">{label}</span>
+      <span className="text-right max-w-[70%] truncate" title={title}>
+        {empty ? <span className="text-gray-700">—</span> : value}
+      </span>
+    </div>
+  );
+}
+
 export function InfoPanel({
   image,
   classification,
@@ -446,150 +476,104 @@ export function InfoPanel({
                       one click away. */}
                   <CollapsibleSection title="Focus" testId="info-section-focus-group">
                     <div className="flex flex-col gap-3 text-xs text-gray-400">
-                      {/* Focus — from the maker note via exiftool. Sits next to
-                            the lens info it relates to. */}
-                      {(focus || lens?.id || detailedMeta.status === 'loading') && (
-                        <div className="flex flex-col gap-1.5" data-testid="info-panel-focus">
-                          <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
-                            Focus
+                      {/* Read from the maker note via exiftool. Rendered
+                          unconditionally: the previous gate excluded the
+                          'unsupported' and 'error' states, which made the
+                          messages for them below unreachable, and let the
+                          section's height collapse mid-navigation. */}
+                      <div className="flex flex-col gap-1.5" data-testid="info-panel-focus">
+                        {detailedMeta.status === 'loading' && (
+                          <div className="text-gray-600 animate-pulse">Reading…</div>
+                        )}
+                        {focus?.modeLabel && (
+                          <div className="flex justify-between" data-testid="info-panel-focus-mode">
+                            <span className="text-gray-500">Mode</span>
+                            <span className="text-right">{focus.modeLabel}</span>
                           </div>
-                          {detailedMeta.status === 'loading' && (
-                            <div className="text-gray-600 animate-pulse">Reading…</div>
-                          )}
-                          {focus?.modeLabel && (
-                            <div
-                              className="flex justify-between"
-                              data-testid="info-panel-focus-mode"
-                            >
-                              <span className="text-gray-500">Mode</span>
-                              <span className="text-right">{focus.modeLabel}</span>
-                            </div>
-                          )}
-                          {focus?.areaMode && (
-                            <div className="flex justify-between" data-testid="info-panel-af-area">
-                              <span className="text-gray-500">AF Area</span>
-                              <span className="text-right">{focus.areaMode}</span>
-                            </div>
-                          )}
-                          {focus?.subjectDetection && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">Subject</span>
-                              <span className="text-right">{focus.subjectDetection}</span>
-                            </div>
-                          )}
-                          {afPoint && (
-                            <div className="flex justify-between" data-testid="info-panel-af-point">
-                              <span className="text-gray-500">AF Point</span>
-                              <span className="text-right font-mono">
-                                {Math.round(afPoint.rect.cx * 100)}%,{' '}
-                                {Math.round(afPoint.rect.cy * 100)}%
-                              </span>
-                            </div>
-                          )}
-                          {faceCount > 0 && (
-                            <div className="flex justify-between" data-testid="info-panel-faces">
-                              <span className="text-gray-500">Faces</span>
-                              <span className="text-right">{faceCount}</span>
-                            </div>
-                          )}
-                          {focus?.assistLamp && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">AF Assist</span>
-                              <span className="text-right">{focus.assistLamp}</span>
-                            </div>
-                          )}
-                          {lens?.id && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">Lens ID</span>
-                              <span className="text-right max-w-[70%] truncate" title={lens.id}>
-                                {lens.id}
-                              </span>
-                            </div>
-                          )}
-                          {lens?.serial && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">Lens S/N</span>
-                              <span className="text-right font-mono">{lens.serial}</span>
-                            </div>
-                          )}
-                          {detailedMeta.status === 'unsupported' && (
-                            <div className="text-gray-600">
-                              No focus data (manual focus or unsupported camera)
-                            </div>
-                          )}
-                          {detailedMeta.status === 'error' && (
-                            <div className="text-gray-600">Could not read metadata</div>
-                          )}
-                        </div>
-                      )}
+                        )}
+                        {focus?.areaMode && (
+                          <div className="flex justify-between" data-testid="info-panel-af-area">
+                            <span className="text-gray-500">AF Area</span>
+                            <span className="text-right">{focus.areaMode}</span>
+                          </div>
+                        )}
+                        {focus?.subjectDetection && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Subject</span>
+                            <span className="text-right">{focus.subjectDetection}</span>
+                          </div>
+                        )}
+                        {afPoint && (
+                          <div className="flex justify-between" data-testid="info-panel-af-point">
+                            <span className="text-gray-500">AF Point</span>
+                            <span className="text-right font-mono">
+                              {Math.round(afPoint.rect.cx * 100)}%,{' '}
+                              {Math.round(afPoint.rect.cy * 100)}%
+                            </span>
+                          </div>
+                        )}
+                        {faceCount > 0 && (
+                          <div className="flex justify-between" data-testid="info-panel-faces">
+                            <span className="text-gray-500">Faces</span>
+                            <span className="text-right">{faceCount}</span>
+                          </div>
+                        )}
+                        {focus?.assistLamp && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">AF Assist</span>
+                            <span className="text-right">{focus.assistLamp}</span>
+                          </div>
+                        )}
+                        {lens?.id && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Lens ID</span>
+                            <span className="text-right max-w-[70%] truncate" title={lens.id}>
+                              {lens.id}
+                            </span>
+                          </div>
+                        )}
+                        {lens?.serial && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Lens S/N</span>
+                            <span className="text-right font-mono">{lens.serial}</span>
+                          </div>
+                        )}
+                        {detailedMeta.status === 'unsupported' && (
+                          <div className="text-gray-600">
+                            No focus data (manual focus or unsupported camera)
+                          </div>
+                        )}
+                        {detailedMeta.status === 'error' && (
+                          <div className="text-gray-600">Could not read metadata</div>
+                        )}
+                      </div>
                     </div>
                   </CollapsibleSection>
 
                   <CollapsibleSection title="Camera" testId="info-section-camera">
                     <div className="flex flex-col gap-3 text-xs text-gray-400">
                       {/* Camera & Lens */}
-                      {(image.cameraMake || image.cameraModel || image.lensModel) && (
-                        <div className="flex flex-col gap-1.5">
-                          <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
-                            Camera
-                          </div>
-                          {(image.cameraMake || image.cameraModel) && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">Body</span>
-                              <span className="text-right">
-                                {[image.cameraMake, image.cameraModel].filter(Boolean).join(' ')}
-                              </span>
-                            </div>
-                          )}
-                          {image.lensModel && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">Lens</span>
-                              <span
-                                className="text-right max-w-[70%] truncate"
-                                title={image.lensModel}
-                              >
-                                {image.lensModel}
-                              </span>
-                            </div>
-                          )}
+                      <div className="flex flex-col gap-1.5">
+                        <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
+                          Camera
                         </div>
-                      )}
+                        <InfoRow
+                          label="Body"
+                          value={[image.cameraMake, image.cameraModel].filter(Boolean).join(' ')}
+                        />
+                        <InfoRow label="Lens" value={image.lensModel} title={image.lensModel} />
+                      </div>
 
                       {/* Exposure Details */}
-                      {(image.exposureProgram ||
-                        image.meteringMode ||
-                        image.flash ||
-                        image.whiteBalance) && (
-                        <div className="flex flex-col gap-1.5">
-                          <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
-                            Settings
-                          </div>
-                          {image.exposureProgram && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">Program</span>
-                              <span>{image.exposureProgram}</span>
-                            </div>
-                          )}
-                          {image.meteringMode && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">Metering</span>
-                              <span>{image.meteringMode}</span>
-                            </div>
-                          )}
-                          {image.flash && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">Flash</span>
-                              <span>{image.flash}</span>
-                            </div>
-                          )}
-                          {image.whiteBalance && (
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">WB</span>
-                              <span>{image.whiteBalance}</span>
-                            </div>
-                          )}
+                      <div className="flex flex-col gap-1.5">
+                        <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
+                          Settings
                         </div>
-                      )}
+                        <InfoRow label="Program" value={image.exposureProgram} />
+                        <InfoRow label="Metering" value={image.meteringMode} />
+                        <InfoRow label="Flash" value={image.flash} />
+                        <InfoRow label="WB" value={image.whiteBalance} />
+                      </div>
                     </div>
                   </CollapsibleSection>
 
@@ -607,51 +591,39 @@ export function InfoPanel({
                           <span className="text-gray-500">Format</span>
                           <span className="uppercase">{image.extension}</span>
                         </div>
-                        {image.width && image.height && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Dimensions</span>
-                            <span>
-                              {image.width} x {image.height}
-                            </span>
-                          </div>
-                        )}
-                        {megapixels && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Megapixels</span>
-                            <span>{megapixels} MP</span>
-                          </div>
-                        )}
-                        {aspectRatio && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Ratio</span>
-                            <span>{aspectRatio}</span>
-                          </div>
-                        )}
-                        {image.colorSpace && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Color</span>
-                            <span>{image.colorSpace}</span>
-                          </div>
-                        )}
+                        <InfoRow
+                          label="Dimensions"
+                          value={
+                            image.width && image.height ? `${image.width} x ${image.height}` : null
+                          }
+                        />
+                        <InfoRow
+                          label="Megapixels"
+                          value={megapixels ? `${megapixels} MP` : null}
+                        />
+                        <InfoRow label="Ratio" value={aspectRatio} />
+                        <InfoRow label="Color" value={image.colorSpace} />
                       </div>
 
                       <div className="flex flex-col gap-1.5">
                         <div className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold">
                           Dates
                         </div>
-                        {(image.dateTakenLocal ?? image.dateTaken) != null && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Taken</span>
-                            <span>
-                              {formatDateLocal(image.dateTakenLocal ?? image.dateTaken!)}
-                              {image.timezoneOffset && (
-                                <span className="text-gray-500 ml-1 text-[10px]">
-                                  {offsetToLabel(image.timezoneOffset)}
-                                </span>
-                              )}
-                            </span>
-                          </div>
-                        )}
+                        <InfoRow
+                          label="Taken"
+                          value={
+                            (image.dateTakenLocal ?? image.dateTaken) != null ? (
+                              <>
+                                {formatDateLocal(image.dateTakenLocal ?? image.dateTaken!)}
+                                {image.timezoneOffset && (
+                                  <span className="text-gray-500 ml-1 text-[10px]">
+                                    {offsetToLabel(image.timezoneOffset)}
+                                  </span>
+                                )}
+                              </>
+                            ) : null
+                          }
+                        />
                         <div className="flex justify-between">
                           <span className="text-gray-500">Modified</span>
                           <span>
@@ -673,16 +645,31 @@ export function InfoPanel({
                     </div>
                   </CollapsibleSection>
 
-                  {/* All metadata — height-capped: the info section is
-                      flex-shrink-0, so an uncapped 300-tag dump would grow
-                      without bound and crush the preview above it. */}
-                  {extraTags.length > 0 && (
-                    <CollapsibleSection
-                      title="All metadata"
-                      badge={extraTags.length}
-                      testId="info-section-all-tags"
-                    >
-                      <div className="flex flex-col gap-1.5">
+                  {/* All metadata — always mounted, even with nothing to show.
+                      The tags arrive asynchronously, so gating the section on
+                      `extraTags.length` made it pop in and out while arrowing
+                      through images, shifting everything below it. The badge
+                      carries the state instead.
+
+                      Height-capped because the info section is flex-shrink-0:
+                      an uncapped 300-tag dump would crush the preview above. */}
+                  <CollapsibleSection
+                    title="All metadata"
+                    badge={detailedMeta.status === 'loading' ? 'loading' : extraTags.length}
+                    testId="info-section-all-tags"
+                  >
+                    <div className="flex flex-col gap-1.5">
+                      {detailedMeta.status === 'loading' && (
+                        <div className="text-xs text-gray-600 animate-pulse">Reading…</div>
+                      )}
+                      {detailedMeta.status !== 'loading' && extraTags.length === 0 && (
+                        <div className="text-xs text-gray-600">
+                          {detailedMeta.status === 'error'
+                            ? 'Could not read metadata'
+                            : 'No metadata for this file'}
+                        </div>
+                      )}
+                      {extraTags.length > 0 && (
                         <input
                           value={tagFilter}
                           onChange={(e) => setTagFilter(e.target.value)}
@@ -690,39 +677,39 @@ export function InfoPanel({
                           className="px-2 py-1 text-xs bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
                           data-testid="info-panel-tag-filter"
                         />
-                        <div
-                          className="max-h-64 overflow-y-auto flex flex-col gap-1 text-xs text-gray-400 pr-3"
-                          style={{ scrollbarGutter: 'stable' }}
-                          data-testid="info-panel-all-tags"
-                        >
-                          {extraTags
-                            .filter((t) =>
-                              tagFilter
-                                ? `${t.group}:${t.name}`
-                                    .toLowerCase()
-                                    .includes(tagFilter.toLowerCase())
-                                : true,
-                            )
-                            .map((t) => (
-                              <div
-                                key={`${t.group}:${t.name}`}
-                                className="flex justify-between gap-2"
+                      )}
+                      <div
+                        className="max-h-64 overflow-y-auto flex flex-col gap-1 text-xs text-gray-400 pr-3"
+                        style={{ scrollbarGutter: 'stable' }}
+                        data-testid="info-panel-all-tags"
+                      >
+                        {extraTags
+                          .filter((t) =>
+                            tagFilter
+                              ? `${t.group}:${t.name}`
+                                  .toLowerCase()
+                                  .includes(tagFilter.toLowerCase())
+                              : true,
+                          )
+                          .map((t) => (
+                            <div
+                              key={`${t.group}:${t.name}`}
+                              className="flex justify-between gap-2"
+                            >
+                              <span
+                                className="text-gray-500 truncate"
+                                title={`${t.group}:${t.name}`}
                               >
-                                <span
-                                  className="text-gray-500 truncate"
-                                  title={`${t.group}:${t.name}`}
-                                >
-                                  {t.name}
-                                </span>
-                                <span className="text-right max-w-[55%] truncate" title={t.value}>
-                                  {t.value}
-                                </span>
-                              </div>
-                            ))}
-                        </div>
+                                {t.name}
+                              </span>
+                              <span className="text-right max-w-[55%] truncate" title={t.value}>
+                                {t.value}
+                              </span>
+                            </div>
+                          ))}
                       </div>
-                    </CollapsibleSection>
-                  )}
+                    </div>
+                  </CollapsibleSection>
                 </div>
               </div>
               {/* end flex-shrink-0 info section */}
