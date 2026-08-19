@@ -37,6 +37,20 @@ interface KeyboardNavResult {
 /**
  * Find which group and position an image is in.
  */
+/**
+ * Keys the grid handles that the browser would otherwise use to scroll.
+ * Space is included: unhandled, it pages the scroll container.
+ */
+const GRID_NAV_KEYS = new Set([
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  ' ',
+]);
+
 function findImagePosition(
   groups: PhotoGroup[],
   imagePath: string,
@@ -145,7 +159,20 @@ export function useKeyboardNav({
       }
 
       const pos = findImagePosition(currentGroups, focused);
-      if (!pos) return;
+      if (!pos) {
+        // The focused image is not on screen: its folder was collapsed, a
+        // filter excluded it, or it was just deleted. Bailing out here used to
+        // leave the browser to handle the key, which scrolled the gallery —
+        // that is what "the arrow keys sometimes stop working" looked like.
+        // Recover onto the first visible image instead, and swallow the key so
+        // scrolling never stands in for navigation.
+        if (GRID_NAV_KEYS.has(e.key)) {
+          e.preventDefault();
+          const first = currentGroups[0]?.images[0];
+          if (first) onFocusChange(first.path);
+        }
+        return;
+      }
 
       const { groupIndex, imageIndex } = pos;
       const currentGroup = currentGroups[groupIndex]!;

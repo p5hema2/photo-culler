@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import type { ImageFileInfo } from '@photo-culler/types';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
@@ -44,7 +44,14 @@ let handlers: {
   onRotate: ReturnType<typeof vi.fn>;
 };
 
-function mount() {
+let unmountHook: (() => void) | null = null;
+
+afterEach(() => {
+  unmountHook?.();
+  unmountHook = null;
+});
+
+function mount(options: { groups?: PhotoGroup[]; focusedImageId?: string | null } = {}) {
   handlers = {
     onFocusChange: vi.fn(),
     onCycleClassification: vi.fn(),
@@ -53,21 +60,22 @@ function mount() {
     onRotate: vi.fn(),
   };
 
-  renderHook(() =>
+  const rendered = renderHook(() =>
     useKeyboardNav({
-      groups: [GROUP],
-      focusedImageId: IMAGE.path,
+      groups: options.groups ?? [GROUP],
+      focusedImageId: options.focusedImageId === undefined ? IMAGE.path : options.focusedImageId,
       onFocusChange: handlers.onFocusChange,
       onCycleClassification: handlers.onCycleClassification,
       onSetClassification: handlers.onSetClassification,
       containerRef: { current: document.body },
       onTrashFocused: handlers.onTrashFocused,
-      sortedFlatImages: [IMAGE],
+      sortedFlatImages: (options.groups ?? [GROUP]).flatMap((g) => g.images),
       thumbnailSize: 'medium',
       onRotate: handlers.onRotate,
       viewLayout: 'default',
     }),
   );
+  unmountHook = rendered.unmount;
 }
 
 /** The hook listens on the container element, so dispatch there. */
@@ -75,11 +83,9 @@ function press(key: string, init: KeyboardEventInit = {}): void {
   document.body.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, ...init }));
 }
 
-beforeEach(() => {
-  mount();
-});
-
 describe('classification keys', () => {
+  beforeEach(() => mount());
+
   it.each([
     ['1', 'keep'],
     ['2', 'review'],
@@ -99,6 +105,8 @@ describe('classification keys', () => {
 });
 
 describe('rotation keys', () => {
+  beforeEach(() => mount());
+
   it('Alt+ArrowRight rotates clockwise by absolute path', () => {
     press('ArrowRight', { altKey: true });
     expect(handlers.onRotate).toHaveBeenCalledWith(IMAGE.path, 'cw');
@@ -107,5 +115,42 @@ describe('rotation keys', () => {
   it('Alt+ArrowLeft rotates counter-clockwise by absolute path', () => {
     press('ArrowLeft', { altKey: true });
     expect(handlers.onRotate).toHaveBeenCalledWith(IMAGE.path, 'ccw');
+  });
+});
+
+describe('focus that is no longer on screen', () => {
+  const VISIBLE = makeImage('/photos/eventB', 'VISIBLE.JPG');
+  const VISIBLE_GROUP: PhotoGroup = { id: 'g1', images: [VISIBLE], startTime: 2, endTime: 2 };
+
+  /** Dispatch and report whether the handler swallowed the key. */
+  function pressCancelable(key: string): boolean {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(event);
+    return event.defaultPrevented;
+  }
+
+  beforeEach(() => {
+    // The focused image belongs to a folder the user has collapsed, so it is
+    // absent from the visible groups.
+    mount({ groups: [VISIBLE_GROUP], focusedImageId: '/photos/collapsed/HIDDEN.JPG' });
+  });
+
+  it('recovers onto the first visible image instead of doing nothing', () => {
+    pressCancelable('ArrowRight');
+    expect(handlers.onFocusChange).toHaveBeenCalledWith(VISIBLE.path);
+  });
+
+  it('swallows the key, so the browser does not scroll the gallery instead', () => {
+    // This is the actual reported symptom: navigation appeared dead and the
+    // gallery scrolled, because the handler returned without preventDefault.
+    expect(pressCancelable('ArrowRight')).toBe(true);
+    expect(pressCancelable('ArrowDown')).toBe(true);
+    expect(pressCancelable('Home')).toBe(true);
+    expect(pressCancelable(' ')).toBe(true);
+  });
+
+  it('leaves keys it does not own alone', () => {
+    expect(pressCancelable('1')).toBe(false);
+    expect(handlers.onSetClassification).not.toHaveBeenCalled();
   });
 });
