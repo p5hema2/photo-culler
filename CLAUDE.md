@@ -97,11 +97,15 @@ the tree to vite 8 and the build dies with
 `The requested module 'vite' does not provide an export named 'splitVendorChunk'`. electron-vite 3.1
 supports vite 6 at most. Remove the override only when electron-vite supports a newer vite.
 
-**pnpm ignores negated `os` fields.** `exiftool-vendored.pl` declares `"os": ["!win32"]`, and
-`pnpm.supportedArchitectures` does **not** force it onto a Windows host the way it does for sharp's
-positively-declared platform packages. So a mac bundle cannot be vendored from Windows — the script
-exits 1 with an explanation rather than shipping a broken package. CI builds macOS on `macos-latest`,
-where `.pl` installs normally.
+**`pnpm.supportedArchitectures` must NOT list `os`.** It declares only `cpu: [x64, arm64]`, and that
+is deliberate. Listing `os` explicitly makes pnpm match each optional dependency against that literal
+list, which silently never matches a **negated** `os` field — `exiftool-vendored.pl` declares
+`"os": ["!win32"]`, so it was installed on *no* platform at all, including macOS runners. Omitting
+`os` while keeping `cpu` makes pnpm link optional deps for every platform, which is exactly what the
+per-target vendoring needs (`node_modules` grows; nothing extra ships, the vendor script prunes).
+
+Cost of getting this wrong: the release build fails at `pnpm vendor:mac` with
+`missing exiftool-vendored.pl`. That is the intended failure — loud, before anything is published.
 
 **CI blocks new native addons.** `ci.yml` greps the dependency tree for
 `node-gyp|prebuild-install|node-pre-gyp|cmake-js` and fails the build on a hit. `sharp` passes only

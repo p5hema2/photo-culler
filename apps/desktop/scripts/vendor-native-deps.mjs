@@ -178,9 +178,10 @@ for (const target of requested) {
   for (const name of keep) {
     if (!copied.has(name)) {
       problems.push(
-        `missing ${name} — run \`pnpm install\`, and check pnpm.supportedArchitectures ` +
-          `in the root package.json (note: pnpm does not honour negated "os" fields such as ` +
-          `exiftool-vendored.pl's ["!win32"], so that package only installs on non-Windows hosts)`,
+        `missing ${name} — run \`pnpm install\`. If it stays missing, check that ` +
+          `pnpm.supportedArchitectures in the root package.json declares ONLY "cpu". ` +
+          `Listing "os" makes pnpm match optional deps against that literal list, which ` +
+          `never matches a negated "os" field such as exiftool-vendored.pl's ["!win32"].`,
       );
     }
   }
