@@ -473,7 +473,7 @@ function App(): React.JSX.Element {
           sortField={state.sortField}
           sortDirection={state.sortDirection}
           filterExtensions={state.filterExtensions}
-          filterClassification={state.filterClassification}
+          filterClassifications={state.filterClassifications}
           searchQuery={state.searchQuery}
           thumbnailSize={state.thumbnailSize}
           groupingThresholdMs={state.groupingThresholdMs}
@@ -487,7 +487,7 @@ function App(): React.JSX.Element {
           onSortFieldChange={store.setSortField}
           onSortDirectionChange={store.setSortDirection}
           onFilterExtensionsChange={store.setFilterExtensions}
-          onFilterClassificationChange={store.setFilterClassification}
+          onFilterClassificationsChange={store.setFilterClassifications}
           onSearchQueryChange={store.setSearchQuery}
           onThumbnailSizeChange={store.setThumbnailSize}
           onGroupingThresholdChange={store.setGroupingThresholdMs}

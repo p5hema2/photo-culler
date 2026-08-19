@@ -1,14 +1,13 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { SortField, SortDirection } from '@photo-culler/image-utils/sorting';
-import type { Classification } from './ThumbnailCell';
-
-type ClassificationFilter = Classification | 'unclassified' | null;
+import type { ClassificationFilter } from '../lib/filters';
+import { CLASSIFICATION_FILTERS, toggleClassificationFilter } from '../lib/filters';
 
 interface ToolbarProps {
   sortField: SortField;
   sortDirection: SortDirection;
   filterExtensions: Set<string>;
-  filterClassification: ClassificationFilter;
+  filterClassifications: ReadonlySet<ClassificationFilter>;
   searchQuery: string;
   thumbnailSize: 'small' | 'medium' | 'large';
   groupingThresholdMs: number;
@@ -25,7 +24,7 @@ interface ToolbarProps {
   onSortFieldChange: (field: SortField) => void;
   onSortDirectionChange: (direction: SortDirection) => void;
   onFilterExtensionsChange: (extensions: Set<string>) => void;
-  onFilterClassificationChange: (classification: ClassificationFilter) => void;
+  onFilterClassificationsChange: (classifications: Set<ClassificationFilter>) => void;
   onSearchQueryChange: (query: string) => void;
   onThumbnailSizeChange: (size: 'small' | 'medium' | 'large') => void;
   onGroupingThresholdChange: (ms: number) => void;
@@ -50,16 +49,12 @@ const GROUPING_STEPS = [500, 1000, 2000, 3000, 5000, 10000, 15000, 30000, 60000]
 
 const FILE_TYPE_CHIPS = ['jpg', 'png', 'tiff', 'webp'] as const;
 
-const CLASSIFICATION_CHIPS: Array<{
-  value: ClassificationFilter;
-  label: string;
-  activeColor: string;
-}> = [
-  { value: 'unclassified', label: 'None', activeColor: 'bg-gray-600 text-gray-300' },
-  { value: 'keep', label: 'Keep', activeColor: 'bg-green-900 text-green-300' },
-  { value: 'review', label: 'Review', activeColor: 'bg-yellow-900 text-yellow-300' },
-  { value: 'delete', label: 'Delete', activeColor: 'bg-red-900 text-red-300' },
-];
+const CLASSIFICATION_CHIPS: Record<ClassificationFilter, { label: string; activeColor: string }> = {
+  unclassified: { label: 'None', activeColor: 'bg-gray-600 text-gray-300' },
+  keep: { label: 'Keep', activeColor: 'bg-green-900 text-green-300' },
+  review: { label: 'Review', activeColor: 'bg-yellow-900 text-yellow-300' },
+  delete: { label: 'Delete', activeColor: 'bg-red-900 text-red-300' },
+};
 
 function formatThreshold(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -129,7 +124,7 @@ export function Toolbar({
   sortField,
   sortDirection,
   filterExtensions,
-  filterClassification,
+  filterClassifications,
   searchQuery,
   thumbnailSize,
   groupingThresholdMs,
@@ -145,7 +140,7 @@ export function Toolbar({
   onSortFieldChange,
   onSortDirectionChange,
   onFilterExtensionsChange,
-  onFilterClassificationChange,
+  onFilterClassificationsChange,
   onSearchQueryChange,
   onThumbnailSizeChange,
   onGroupingThresholdChange,
@@ -211,9 +206,9 @@ export function Toolbar({
 
   const handleClassificationToggle = useCallback(
     (cls: ClassificationFilter) => {
-      onFilterClassificationChange(filterClassification === cls ? null : cls);
+      onFilterClassificationsChange(toggleClassificationFilter(filterClassifications, cls));
     },
-    [filterClassification, onFilterClassificationChange],
+    [filterClassifications, onFilterClassificationsChange],
   );
 
   const handleScoreMinChange = useCallback(
@@ -258,7 +253,7 @@ export function Toolbar({
   // Active filter indicator
   const activeFilters: string[] = [];
   if (filterExtensions.size > 0) activeFilters.push('type');
-  if (filterClassification) activeFilters.push('class');
+  if (filterClassifications.size > 0) activeFilters.push('class');
   if (filterScoreRange) activeFilters.push('score');
 
   return (
@@ -342,20 +337,23 @@ export function Toolbar({
           Classification
         </div>
         <div className="flex gap-1">
-          {CLASSIFICATION_CHIPS.map((chip) => (
-            <button
-              key={String(chip.value)}
-              onClick={() => handleClassificationToggle(chip.value)}
-              className={`px-2 py-0.5 text-xs rounded transition-colors ${
-                filterClassification === chip.value
-                  ? chip.activeColor
-                  : 'text-gray-400 hover:text-gray-300'
-              }`}
-              data-testid={`filter-cls-${chip.value}`}
-            >
-              {chip.label}
-            </button>
-          ))}
+          {CLASSIFICATION_FILTERS.map((value) => {
+            const chip = CLASSIFICATION_CHIPS[value];
+            const active = filterClassifications.has(value);
+            return (
+              <button
+                key={value}
+                onClick={() => handleClassificationToggle(value)}
+                className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                  active ? chip.activeColor : 'text-gray-400 hover:text-gray-300'
+                }`}
+                aria-pressed={active}
+                data-testid={`filter-cls-${value}`}
+              >
+                {chip.label}
+              </button>
+            );
+          })}
         </div>
 
         {/* Score range */}

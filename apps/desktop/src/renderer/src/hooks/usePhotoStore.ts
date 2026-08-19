@@ -20,6 +20,8 @@ import {
 import { useExifExtractor } from './useExifExtractor';
 import { useThumbnailWorker } from './useThumbnailWorker';
 import type { ExecuteOptions, ExecuteResult } from '../components/ExecutePanel';
+import type { ClassificationFilter } from '../lib/filters';
+import { matchesClassificationFilter } from '../lib/filters';
 
 export interface PhotoState {
   folderPath: string | null;
@@ -28,7 +30,7 @@ export interface PhotoState {
   sortField: SortField;
   sortDirection: SortDirection;
   filterExtensions: Set<string>;
-  filterClassification: Classification | 'unclassified' | null;
+  filterClassifications: Set<ClassificationFilter>;
   searchQuery: string;
   thumbnailSize: 'small' | 'medium' | 'large';
   groupingThresholdMs: number;
@@ -52,7 +54,7 @@ const initialState: PhotoState = {
   sortField: 'dateTaken',
   sortDirection: 'asc',
   filterExtensions: new Set<string>(),
-  filterClassification: null,
+  filterClassifications: new Set<ClassificationFilter>(),
   searchQuery: '',
   thumbnailSize: 'medium',
   groupingThresholdMs: 5000,
@@ -79,7 +81,7 @@ export interface PhotoStoreAPI {
   setSortField: (field: SortField) => void;
   setSortDirection: (direction: SortDirection) => void;
   setFilterExtensions: (extensions: Set<string>) => void;
-  setFilterClassification: (classification: Classification | 'unclassified' | null) => void;
+  setFilterClassifications: (classifications: Set<ClassificationFilter>) => void;
   setSearchQuery: (query: string) => void;
   setThumbnailSize: (size: 'small' | 'medium' | 'large') => void;
   setGroupingThresholdMs: (ms: number) => void;
@@ -471,12 +473,9 @@ export function usePhotoStore(): PhotoStoreAPI {
     setState((prev) => ({ ...prev, filterExtensions: extensions }));
   }, []);
 
-  const setFilterClassification = useCallback(
-    (classification: Classification | 'unclassified' | null) => {
-      setState((prev) => ({ ...prev, filterClassification: classification }));
-    },
-    [],
-  );
+  const setFilterClassifications = useCallback((classifications: Set<ClassificationFilter>) => {
+    setState((prev) => ({ ...prev, filterClassifications: classifications }));
+  }, []);
 
   const setSearchQuery = useCallback((query: string) => {
     setState((prev) => ({ ...prev, searchQuery: query }));
@@ -789,15 +788,11 @@ export function usePhotoStore(): PhotoStoreAPI {
       result = result.filter((img) => state.filterExtensions.has(img.extension.toLowerCase()));
     }
 
-    // Classification filter
-    if (state.filterClassification != null) {
-      if (state.filterClassification === 'unclassified') {
-        result = result.filter((img) => (state.classifications[img.path] ?? null) === null);
-      } else {
-        result = result.filter(
-          (img) => (state.classifications[img.path] ?? null) === state.filterClassification,
-        );
-      }
+    // Classification filter — any of the selected buckets, none selected means all
+    if (state.filterClassifications.size > 0) {
+      result = result.filter((img) =>
+        matchesClassificationFilter(state.classifications[img.path], state.filterClassifications),
+      );
     }
 
     // Score range filter
@@ -820,7 +815,7 @@ export function usePhotoStore(): PhotoStoreAPI {
   }, [
     state.images,
     state.filterExtensions,
-    state.filterClassification,
+    state.filterClassifications,
     state.filterScoreRange,
     state.qualityScores,
     state.searchQuery,
@@ -932,7 +927,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     setSortField,
     setSortDirection,
     setFilterExtensions,
-    setFilterClassification,
+    setFilterClassifications,
     setSearchQuery,
     setThumbnailSize,
     setGroupingThresholdMs,
