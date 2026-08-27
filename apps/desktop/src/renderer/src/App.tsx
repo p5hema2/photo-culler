@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { MenuCommand } from '@photo-culler/types';
 import { usePhotoStore } from './hooks/usePhotoStore';
-import type { Classification } from './hooks/usePhotoStore';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useScoringWorker } from './hooks/useScoringWorker';
 import { useOverlaySettings } from './hooks/useOverlaySettings';
@@ -47,11 +46,7 @@ function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX
   );
 }
 
-function LoadingState({
-  progress,
-}: {
-  progress?: { completed: number; total: number };
-}): React.JSX.Element {
+function LoadingState(): React.JSX.Element {
   return (
     <div
       className="flex flex-col items-center justify-center h-full text-gray-400"
@@ -59,11 +54,78 @@ function LoadingState({
     >
       <div className="w-8 h-8 border-2 border-gray-600 border-t-blue-500 rounded-full animate-spin mb-4" />
       <p className="text-lg">Scanning folder...</p>
-      {progress && progress.total > 0 && (
-        <p className="text-sm text-gray-500 mt-2">
-          {progress.completed}/{progress.total} files processed
+    </div>
+  );
+}
+
+/**
+ * Confirmation for Delete/Backspace.
+ *
+ * Deletion is permanent now — there is no trash step to undo it from — so the
+ * key that used to be one tap away from recoverable gets a stop.
+ */
+function ConfirmDeleteDialog({
+  count,
+  onCancel,
+  onConfirm,
+}: {
+  count: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}): React.JSX.Element {
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        onConfirm();
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onCancel, onConfirm]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      data-testid="confirm-delete-overlay"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div
+        className="bg-gray-800 rounded-lg shadow-xl p-6 w-[420px] max-w-[90vw]"
+        data-testid="confirm-delete"
+      >
+        <h2 className="text-lg font-semibold mb-3 text-yellow-400">Delete</h2>
+        <p className="text-sm mb-6">
+          <span className="text-red-400 font-medium">
+            Permanently delete {count} image{count !== 1 ? 's' : ''}?
+          </span>{' '}
+          <span className="text-gray-400">
+            The file{count !== 1 ? 's do' : ' does'} not go to the trash and cannot be recovered.
+          </span>
         </p>
-      )}
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded text-sm font-medium transition-colors"
+            data-testid="confirm-delete-cancel-btn"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            autoFocus
+            className="px-4 py-2 bg-red-700 hover:bg-red-600 rounded text-sm font-medium transition-colors"
+            data-testid="confirm-delete-btn"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -76,8 +138,9 @@ function App(): React.JSX.Element {
   const scoringTriggeredRef = useRef<string | null>(null);
   const [showExecutePanel, setShowExecutePanel] = useState(false);
   const [infoPanelOpen, setInfoPanelOpen] = useState(true);
-  const [selectOnHover, setSelectOnHover] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  /** Paths awaiting the delete confirmation, or null when nothing is pending. */
+  const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
   const [viewLayout, setViewLayout] = useState<'default' | 'loupe' | 'filmstrip'>('default');
 
   const { settings: overlaySettings, actions: overlayActions } = useOverlaySettings();
@@ -115,24 +178,41 @@ function App(): React.JSX.Element {
     [folders, collapsedFolders],
   );
 
-  const handleTrashFocused = useCallback(() => {
+  const handleDeleteFocused = useCallback(() => {
     if (state.focusedImageId) {
-      store.trashImages([state.focusedImageId]);
+      setPendingDelete([state.focusedImageId]);
     }
-  }, [store, state.focusedImageId]);
+  }, [state.focusedImageId]);
+
+  const handleCancelDelete = useCallback(() => {
+    setPendingDelete(null);
+  }, []);
+
+  const handleConfirmDelete = useCallback(() => {
+    const paths = pendingDelete;
+    setPendingDelete(null);
+    if (paths) void store.deleteImages(paths);
+  }, [pendingDelete, store]);
+
+  /**
+   * True while a dialog is up. Every keyboard handler in this app listens on
+   * the document, so without this they all still fire behind a modal — and one
+   * of them deletes a photo.
+   */
+  const modalOpen = showExecutePanel || showShortcuts || pendingDelete !== null;
 
   useKeyboardNav({
     groups: navGroups,
     focusedImageId: state.focusedImageId,
     onFocusChange: store.setFocusedImage,
-    onCycleClassification: store.cycleClassification,
-    onSetClassification: store.setClassification,
+    onRate: store.setRating,
     containerRef: gridContainerRef,
-    onTrashFocused: handleTrashFocused,
+    onDeleteFocused: handleDeleteFocused,
     sortedFlatImages,
     thumbnailSize: state.thumbnailSize,
     onRotate: store.rotateImage,
     viewLayout,
+    modalOpen,
   });
 
   const handleSelectFolder = useCallback(async () => {
@@ -167,6 +247,9 @@ function App(): React.JSX.Element {
     const handleKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       if (tag === 'input' || tag === 'textarea') return;
+      // '?' still closes the shortcuts panel — that one is handled there, with
+      // a capturing listener that stops the event before it reaches here.
+      if (modalOpenRef.current) return;
       if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         setShowShortcuts((prev) => !prev);
@@ -194,13 +277,6 @@ function App(): React.JSX.Element {
     return () => document.removeEventListener('keydown', handleKey);
   }, []);
 
-  const handleImageClick = useCallback(
-    (imagePath: string) => {
-      store.cycleClassification(imagePath);
-    },
-    [store],
-  );
-
   const handleOpenExecute = useCallback(() => {
     setShowExecutePanel(true);
   }, []);
@@ -211,12 +287,6 @@ function App(): React.JSX.Element {
 
   const handleToggleInfoPanel = useCallback(() => {
     setInfoPanelOpen((prev) => !prev);
-  }, []);
-
-  const handleCycleViewLayout = useCallback(() => {
-    setViewLayout((prev) =>
-      prev === 'default' ? 'loupe' : prev === 'loupe' ? 'filmstrip' : 'default',
-    );
   }, []);
 
   // Focus the container after folder loads so keyboard nav works immediately
@@ -249,6 +319,8 @@ function App(): React.JSX.Element {
   handleRescanRef.current = handleRescan;
   const overlayActionsRef = useRef(overlayActions);
   overlayActionsRef.current = overlayActions;
+  const modalOpenRef = useRef(modalOpen);
+  modalOpenRef.current = modalOpen;
 
   useEffect(() => {
     if (!window.menuEvents?.onCommand) return;
@@ -357,25 +429,19 @@ function App(): React.JSX.Element {
   // Scoring progress read directly from hook — no sync needed
   const scoringProgress = scoringWorker.progress;
 
-  const totalCount = store.filteredImages.length;
+  const visibleCount = store.filteredImages.length;
 
-  // Filtered classifications — only for visible (filtered) images
-  const filteredClassifications = useMemo(() => {
-    const result: Record<string, Classification> = {};
+  /**
+   * Rating per path for the visible images only. Execute works on what the
+   * filters show, so this is what its counts and its confirmation quote.
+   */
+  const visibleRatings = useMemo(() => {
+    const result: Record<string, number> = {};
     for (const img of store.filteredImages) {
-      result[img.path] = state.classifications[img.path] ?? null;
+      result[img.path] = state.ratings[img.path] ?? 0;
     }
     return result;
-  }, [store.filteredImages, state.classifications]);
-
-  // Count classified images for the Execute button (filtered only)
-  const deleteCount = useMemo(() => {
-    return Object.values(filteredClassifications).filter((c) => c === 'delete').length;
-  }, [filteredClassifications]);
-
-  const keepCount = useMemo(() => {
-    return Object.values(filteredClassifications).filter((c) => c === 'keep').length;
-  }, [filteredClassifications]);
+  }, [store.filteredImages, state.ratings]);
 
   // Find the focused image object
   const focusedImage = useMemo(() => {
@@ -383,10 +449,10 @@ function App(): React.JSX.Element {
     return state.images.find((img) => img.path === state.focusedImageId) ?? null;
   }, [state.focusedImageId, state.images]);
 
-  const focusedClassification = useMemo(() => {
-    if (!focusedImage) return null;
-    return state.classifications[focusedImage.path] ?? null;
-  }, [focusedImage, state.classifications]);
+  const focusedRating = useMemo(() => {
+    if (!focusedImage) return 0;
+    return state.ratings[focusedImage.path] ?? 0;
+  }, [focusedImage, state.ratings]);
 
   const focusedQualityScore = useMemo(() => {
     if (!focusedImage) return undefined;
@@ -411,7 +477,7 @@ function App(): React.JSX.Element {
 
   const renderContent = (): React.JSX.Element => {
     if (state.isLoading) {
-      return <LoadingState progress={state.exifProgress} />;
+      return <LoadingState />;
     }
     if (!state.folderPath) {
       return <WelcomeState onOpenFolder={handleSelectFolder} />;
@@ -425,14 +491,12 @@ function App(): React.JSX.Element {
         <DetailView
           folders={folders}
           focusedImageId={state.focusedImageId}
-          classifications={state.classifications}
+          ratings={state.ratings}
           qualityScores={state.qualityScores}
           qualitySubscores={state.qualitySubscores}
           rotations={state.rotations}
-          selectOnHover={selectOnHover}
-          onImageClick={handleImageClick}
           onImageFocus={store.setFocusedImage}
-          onCycleClassification={store.cycleClassification}
+          onRate={store.setRating}
           getThumbnail={thumbnailWorker.getThumbnail}
           requestThumbnail={thumbnailWorker.requestThumbnail}
           overlaySettings={overlaySettings}
@@ -446,15 +510,13 @@ function App(): React.JSX.Element {
         folders={folders}
         collapsedFolders={collapsedFolders}
         onToggleFolder={handleToggleFolder}
-        classifications={state.classifications}
+        ratings={state.ratings}
         qualityScores={state.qualityScores}
         rotations={state.rotations}
         thumbnailSize={state.thumbnailSize}
         focusedImageId={state.focusedImageId}
-        selectOnHover={selectOnHover}
-        onImageClick={handleImageClick}
         onImageFocus={store.setFocusedImage}
-        onCycleClassification={store.cycleClassification}
+        onRate={store.setRating}
         getThumbnail={thumbnailWorker.getThumbnail}
         requestThumbnail={thumbnailWorker.requestThumbnail}
         updateVisibleRange={thumbnailWorker.updateVisibleRange}
@@ -470,34 +532,24 @@ function App(): React.JSX.Element {
         tabIndex={-1}
       >
         <Toolbar
-          sortField={state.sortField}
           sortDirection={state.sortDirection}
           filterExtensions={state.filterExtensions}
-          filterClassifications={state.filterClassifications}
+          filterRatingRange={state.filterRatingRange}
           searchQuery={state.searchQuery}
           thumbnailSize={state.thumbnailSize}
           groupingThresholdMs={state.groupingThresholdMs}
-          exifProgress={state.exifProgress}
-          deleteCount={deleteCount}
-          keepCount={keepCount}
-          totalCount={totalCount}
+          visibleCount={visibleCount}
           folderPath={state.folderPath}
           onSelectFolder={handleSelectFolder}
           onRescan={handleRescan}
-          onSortFieldChange={store.setSortField}
           onSortDirectionChange={store.setSortDirection}
           onFilterExtensionsChange={store.setFilterExtensions}
-          onFilterClassificationsChange={store.setFilterClassifications}
+          onFilterRatingRangeChange={store.setFilterRatingRange}
           onSearchQueryChange={store.setSearchQuery}
           onThumbnailSizeChange={store.setThumbnailSize}
           onGroupingThresholdChange={store.setGroupingThresholdMs}
-          filterScoreRange={state.filterScoreRange}
           scoringProgress={scoringProgress}
-          onFilterScoreRangeChange={store.setFilterScoreRange}
-          selectOnHover={selectOnHover}
-          onToggleSelectMode={() => setSelectOnHover((prev) => !prev)}
           viewLayout={viewLayout}
-          onCycleViewLayout={handleCycleViewLayout}
           onSetViewLayout={setViewLayout}
           onExecute={handleOpenExecute}
           onShowShortcuts={() => setShowShortcuts(true)}
@@ -521,7 +573,8 @@ function App(): React.JSX.Element {
           {viewLayout === 'default' && (
             <InfoPanel
               image={focusedImage}
-              classification={focusedClassification}
+              rating={focusedRating}
+              onRate={store.setRating}
               qualityScore={focusedQualityScore}
               qualitySubscores={focusedQualitySubscores}
               rotation={focusedRotation}
@@ -536,12 +589,20 @@ function App(): React.JSX.Element {
       </div>
 
       <ExecutePanel
-        classifications={filteredClassifications}
+        visibleRatings={visibleRatings}
         rotatedCount={Object.values(state.rotations).filter((r) => r !== 0).length}
         isOpen={showExecutePanel}
         onClose={handleCloseExecute}
         onExecute={store.executeActions}
       />
+
+      {pendingDelete !== null && (
+        <ConfirmDeleteDialog
+          count={pendingDelete.length}
+          onCancel={handleCancelDelete}
+          onConfirm={handleConfirmDelete}
+        />
+      )}
 
       <ShortcutsTutorial isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </DropZone>

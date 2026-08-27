@@ -1,60 +1,45 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import type { SortField, SortDirection } from '@photo-culler/image-utils/sorting';
-import type { ClassificationFilter } from '../lib/filters';
-import { CLASSIFICATION_FILTERS, toggleClassificationFilter } from '../lib/filters';
+import type { SortDirection } from '@photo-culler/image-utils/sorting';
+import { MAX_RATING, MIN_RATING } from '@photo-culler/image-utils/rating';
+import type { RatingRange } from '../lib/filters';
+import { FULL_RATING_RANGE, isFullRatingRange, normalizeRatingRange } from '../lib/filters';
 
 interface ToolbarProps {
-  sortField: SortField;
   sortDirection: SortDirection;
   filterExtensions: Set<string>;
-  filterClassifications: ReadonlySet<ClassificationFilter>;
+  filterRatingRange: RatingRange;
   searchQuery: string;
   thumbnailSize: 'small' | 'medium' | 'large';
   groupingThresholdMs: number;
-  exifProgress: { completed: number; total: number };
-  deleteCount: number;
-  keepCount: number;
-  totalCount: number;
-  filterScoreRange: { min: number; max: number } | null;
+  /** How many images the filters currently let through. */
+  visibleCount: number;
   scoringProgress: { completed: number; total: number };
-  selectOnHover: boolean;
   folderPath: string | null;
   onSelectFolder: () => void;
   onRescan: () => void;
-  onSortFieldChange: (field: SortField) => void;
   onSortDirectionChange: (direction: SortDirection) => void;
   onFilterExtensionsChange: (extensions: Set<string>) => void;
-  onFilterClassificationsChange: (classifications: Set<ClassificationFilter>) => void;
+  onFilterRatingRangeChange: (range: RatingRange) => void;
   onSearchQueryChange: (query: string) => void;
   onThumbnailSizeChange: (size: 'small' | 'medium' | 'large') => void;
   onGroupingThresholdChange: (ms: number) => void;
-  onFilterScoreRangeChange: (range: { min: number; max: number } | null) => void;
-  onToggleSelectMode: () => void;
   viewLayout: 'default' | 'loupe' | 'filmstrip';
-  onCycleViewLayout: () => void;
   onSetViewLayout: (layout: 'default' | 'loupe' | 'filmstrip') => void;
   onExecute: () => void;
   onShowShortcuts: () => void;
 }
 
-const SORT_OPTIONS: Array<{ value: SortField; label: string }> = [
-  { value: 'dateTaken', label: 'Timestamp' },
-  { value: 'filename', label: 'Filename' },
-  { value: 'size', label: 'File Size' },
-  { value: 'dimensions', label: 'Dimensions' },
-  { value: 'qualityScore', label: 'Quality' },
-];
-
 const GROUPING_STEPS = [500, 1000, 2000, 3000, 5000, 10000, 15000, 30000, 60000];
 
 const FILE_TYPE_CHIPS = ['jpg', 'png', 'tiff', 'webp'] as const;
 
-const CLASSIFICATION_CHIPS: Record<ClassificationFilter, { label: string; activeColor: string }> = {
-  unclassified: { label: 'None', activeColor: 'bg-gray-600 text-gray-300' },
-  keep: { label: 'Keep', activeColor: 'bg-green-900 text-green-300' },
-  review: { label: 'Review', activeColor: 'bg-yellow-900 text-yellow-300' },
-  delete: { label: 'Delete', activeColor: 'bg-red-900 text-red-300' },
-};
+// Words rather than star glyphs: the stars themselves are drawn as SVG paths
+// (see StarRating), and a text ★ next to them renders as a different shape.
+function formatRatingRange(range: RatingRange): string {
+  if (isFullRatingRange(range)) return 'All';
+  if (range.min === range.max) return range.min === MIN_RATING ? 'Unrated' : `${range.min}`;
+  return `${range.min}–${range.max}`;
+}
 
 function formatThreshold(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -121,34 +106,24 @@ function DropdownMenu({
 }
 
 export function Toolbar({
-  sortField,
   sortDirection,
   filterExtensions,
-  filterClassifications,
+  filterRatingRange,
   searchQuery,
   thumbnailSize,
   groupingThresholdMs,
-  exifProgress,
-  deleteCount,
-  keepCount,
-  totalCount,
-  filterScoreRange,
+  visibleCount,
   scoringProgress,
   folderPath,
   onSelectFolder,
   onRescan,
-  onSortFieldChange,
   onSortDirectionChange,
   onFilterExtensionsChange,
-  onFilterClassificationsChange,
+  onFilterRatingRangeChange,
   onSearchQueryChange,
   onThumbnailSizeChange,
   onGroupingThresholdChange,
-  onFilterScoreRangeChange,
-  selectOnHover,
-  onToggleSelectMode,
   viewLayout,
-  onCycleViewLayout,
   onSetViewLayout,
   onExecute,
   onShowShortcuts,
@@ -179,18 +154,6 @@ export function Toolbar({
     };
   }, []);
 
-  const handleSortClick = useCallback(
-    (field: SortField) => {
-      if (field === sortField) {
-        onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc');
-      } else {
-        onSortFieldChange(field);
-        onSortDirectionChange('asc');
-      }
-    },
-    [sortField, sortDirection, onSortFieldChange, onSortDirectionChange],
-  );
-
   const handleExtensionToggle = useCallback(
     (ext: string) => {
       const next = new Set(filterExtensions);
@@ -204,35 +167,20 @@ export function Toolbar({
     [filterExtensions, onFilterExtensionsChange],
   );
 
-  const handleClassificationToggle = useCallback(
-    (cls: ClassificationFilter) => {
-      onFilterClassificationsChange(toggleClassificationFilter(filterClassifications, cls));
+  // The two handles are independent inputs, so either can be dragged past the
+  // other; normalizeRatingRange swaps them rather than showing nothing at all.
+  const handleRatingMinChange = useCallback(
+    (value: number) => {
+      onFilterRatingRangeChange(normalizeRatingRange({ ...filterRatingRange, min: value }));
     },
-    [filterClassifications, onFilterClassificationsChange],
+    [filterRatingRange, onFilterRatingRangeChange],
   );
 
-  const handleScoreMinChange = useCallback(
+  const handleRatingMaxChange = useCallback(
     (value: number) => {
-      const max = filterScoreRange?.max ?? 100;
-      if (value === 0 && max === 100) {
-        onFilterScoreRangeChange(null);
-      } else {
-        onFilterScoreRangeChange({ min: value, max: Math.max(value, max) });
-      }
+      onFilterRatingRangeChange(normalizeRatingRange({ ...filterRatingRange, max: value }));
     },
-    [filterScoreRange, onFilterScoreRangeChange],
-  );
-
-  const handleScoreMaxChange = useCallback(
-    (value: number) => {
-      const min = filterScoreRange?.min ?? 0;
-      if (min === 0 && value === 100) {
-        onFilterScoreRangeChange(null);
-      } else {
-        onFilterScoreRangeChange({ min: Math.min(min, value), max: value });
-      }
-    },
-    [filterScoreRange, onFilterScoreRangeChange],
+    [filterRatingRange, onFilterRatingRangeChange],
   );
 
   const handleSliderChange = useCallback(
@@ -246,15 +194,15 @@ export function Toolbar({
     [onGroupingThresholdChange],
   );
 
-  const showExifProgress = exifProgress.total > 0 && exifProgress.completed < exifProgress.total;
   const showScoringProgress =
     scoringProgress.total > 0 && scoringProgress.completed < scoringProgress.total;
+
+  const ratingFilterActive = !isFullRatingRange(filterRatingRange);
 
   // Active filter indicator
   const activeFilters: string[] = [];
   if (filterExtensions.size > 0) activeFilters.push('type');
-  if (filterClassifications.size > 0) activeFilters.push('class');
-  if (filterScoreRange) activeFilters.push('score');
+  if (ratingFilterActive) activeFilters.push('rating');
 
   return (
     <div
@@ -281,37 +229,21 @@ export function Toolbar({
         </button>
       )}
 
-      {/* Sort dropdown */}
-      <DropdownMenu
-        label={`Sort: ${SORT_OPTIONS.find((o) => o.value === sortField)?.label ?? ''}`}
-        testId="sort-menu"
-        tooltip="Change image sort order"
+      {/* Sort direction — filename order is the only order, so this is all of it */}
+      <button
+        onClick={() => onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc')}
+        className="px-2 py-1 text-xs rounded text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+        data-testid="sort-direction-btn"
+        title="Sort by filename — ascending or descending"
       >
-        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">Sort by</div>
-        {SORT_OPTIONS.map((opt) => (
-          <button
-            key={opt.value}
-            onClick={() => handleSortClick(opt.value)}
-            className={`px-2 py-1 text-xs rounded text-left transition-colors ${
-              sortField === opt.value ? 'bg-gray-600 text-white' : 'text-gray-300 hover:bg-gray-700'
-            }`}
-            data-testid={`sort-${opt.value}`}
-          >
-            {opt.label}
-            {sortField === opt.value && (
-              <span className="ml-2 text-gray-400">
-                {sortDirection === 'asc' ? '\u2191 Asc' : '\u2193 Desc'}
-              </span>
-            )}
-          </button>
-        ))}
-      </DropdownMenu>
+        {sortDirection === 'asc' ? '\u2191 A\u2013Z' : '\u2193 Z\u2013A'}
+      </button>
 
       {/* Filter dropdown */}
       <DropdownMenu
         label={`Filter${activeFilters.length > 0 ? ` (${activeFilters.length})` : ''}`}
         testId="filter-menu"
-        tooltip="Filter images by type, classification, or quality score"
+        tooltip="Filter images by type or star rating"
       >
         {/* File type */}
         <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">File type</div>
@@ -332,65 +264,45 @@ export function Toolbar({
           ))}
         </div>
 
-        {/* Classification */}
+        {/* Star rating — an inclusive window, min 0 meaning "unrated too" */}
         <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mt-1">
-          Classification
-        </div>
-        <div className="flex gap-1">
-          {CLASSIFICATION_FILTERS.map((value) => {
-            const chip = CLASSIFICATION_CHIPS[value];
-            const active = filterClassifications.has(value);
-            return (
-              <button
-                key={value}
-                onClick={() => handleClassificationToggle(value)}
-                className={`px-2 py-0.5 text-xs rounded transition-colors ${
-                  active ? chip.activeColor : 'text-gray-400 hover:text-gray-300'
-                }`}
-                aria-pressed={active}
-                data-testid={`filter-cls-${value}`}
-              >
-                {chip.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Score range */}
-        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mt-1">
-          Score: {filterScoreRange ? `${filterScoreRange.min}–${filterScoreRange.max}` : 'All'}
-          {filterScoreRange && (
+          Rating: {formatRatingRange(filterRatingRange)}
+          {ratingFilterActive && (
             <button
-              onClick={() => onFilterScoreRangeChange(null)}
+              onClick={() => onFilterRatingRangeChange(FULL_RATING_RANGE)}
               className="ml-1 text-gray-500 hover:text-white"
+              title="Show every rating again"
+              data-testid="rating-range-clear"
             >
               &times;
             </button>
           )}
         </div>
         <div className="flex items-center gap-2 px-1">
-          <span className="text-[10px] text-gray-500 w-4">{filterScoreRange?.min ?? 0}</span>
+          <span className="text-[10px] text-gray-500 w-3 text-right">{filterRatingRange.min}</span>
           <input
             type="range"
-            min={0}
-            max={100}
-            step={5}
-            value={filterScoreRange?.min ?? 0}
-            onChange={(e) => handleScoreMinChange(Number(e.target.value))}
-            className="flex-1 accent-blue-500"
-            data-testid="score-min-range"
+            min={MIN_RATING}
+            max={MAX_RATING}
+            step={1}
+            value={filterRatingRange.min}
+            onChange={(e) => handleRatingMinChange(Number(e.target.value))}
+            className="flex-1 accent-amber-400"
+            aria-label="Lowest rating to show"
+            data-testid="rating-min-range"
           />
           <input
             type="range"
-            min={0}
-            max={100}
-            step={5}
-            value={filterScoreRange?.max ?? 100}
-            onChange={(e) => handleScoreMaxChange(Number(e.target.value))}
-            className="flex-1 accent-blue-500"
-            data-testid="score-max-range"
+            min={MIN_RATING}
+            max={MAX_RATING}
+            step={1}
+            value={filterRatingRange.max}
+            onChange={(e) => handleRatingMaxChange(Number(e.target.value))}
+            className="flex-1 accent-amber-400"
+            aria-label="Highest rating to show"
+            data-testid="rating-max-range"
           />
-          <span className="text-[10px] text-gray-500 w-6">{filterScoreRange?.max ?? 100}</span>
+          <span className="text-[10px] text-gray-500 w-3">{filterRatingRange.max}</span>
         </div>
       </DropdownMenu>
 
@@ -398,7 +310,7 @@ export function Toolbar({
       <DropdownMenu
         label="View"
         testId="view-menu"
-        tooltip="Thumbnail size, grouping, and selection mode"
+        tooltip="Layout, thumbnail size, and burst grouping"
       >
         <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1">Layout</div>
         <div className="flex gap-1 mb-2">
@@ -451,22 +363,8 @@ export function Toolbar({
           data-testid="grouping-range"
         />
 
-        <div className="text-[10px] text-gray-500 uppercase tracking-wider px-1 mt-1">
-          Selection mode
-        </div>
-        <button
-          onClick={onToggleSelectMode}
-          className={`px-2 py-1 text-xs rounded transition-colors ${
-            selectOnHover ? 'bg-cyan-900 text-cyan-300' : 'bg-gray-700 text-gray-300'
-          }`}
-          data-testid="select-mode-toggle"
-        >
-          {selectOnHover ? 'Hover to select' : 'Click to select'}
-        </button>
-        <div className="text-[10px] text-gray-600 px-1">
-          {selectOnHover
-            ? 'Move mouse over thumbnail to focus it. Right-click to classify.'
-            : 'Left-click to focus. Right-click to classify.'}
+        <div className="text-[10px] text-gray-600 px-1 mt-1">
+          Click a thumbnail to focus it, a star to rate it, or press 0-5.
         </div>
       </DropdownMenu>
 
@@ -512,31 +410,26 @@ export function Toolbar({
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Progress indicators — only while active */}
-      {showExifProgress && (
-        <span className="text-[10px] text-gray-500" data-testid="exif-progress">
-          EXIF {exifProgress.completed}/{exifProgress.total}
-        </span>
-      )}
+      {/* Progress indicator — only while active */}
       {showScoringProgress && (
         <span className="text-[10px] text-gray-500" data-testid="scoring-progress">
           Scoring {scoringProgress.completed}/{scoringProgress.total}
         </span>
       )}
 
-      {/* Save / Delete — execute actions on classified images */}
+      {/* Execute — deletes the low-rated images among the visible ones */}
       <button
         onClick={onExecute}
-        disabled={deleteCount === 0 && keepCount === 0}
+        disabled={visibleCount === 0}
         className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-          deleteCount > 0 || keepCount > 0
+          visibleCount > 0
             ? 'bg-blue-600 hover:bg-blue-700'
             : 'bg-gray-600 cursor-not-allowed text-gray-400'
         }`}
         data-testid="execute-btn"
-        title="Execute actions: save keeps, delete rejects, apply rotations"
+        title="Permanently delete low-rated images and apply rotations"
       >
-        Save / Delete
+        Execute
       </button>
     </div>
   );

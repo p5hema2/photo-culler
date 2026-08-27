@@ -1,20 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import type { ImageFileInfo } from '@photo-culler/types';
-import type { ClassificationFilter } from '../lib/filters';
-import { matchesClassificationFilter, toggleClassificationFilter } from '../lib/filters';
-
-type Classification = 'keep' | 'review' | 'delete' | null;
+import { isInRatingRange } from '@photo-culler/image-utils/rating';
+import type { RatingRange } from '../lib/filters';
+import { FULL_RATING_RANGE, isFullRatingRange, normalizeRatingRange } from '../lib/filters';
 
 /**
- * The filter pipeline from usePhotoStore. The classification step calls the
- * real predicate, so the multi-select rule is tested rather than re-stated.
+ * The filter pipeline from usePhotoStore. The rating step calls the real
+ * predicate, so the range rule is tested rather than re-stated.
  */
 function filterImages(
   images: ImageFileInfo[],
   filterExtensions: Set<string>,
-  filterClassifications: ReadonlySet<ClassificationFilter>,
+  filterRatingRange: RatingRange,
   searchQuery: string,
-  classifications: Record<string, Classification>,
+  ratings: Record<string, number>,
 ): ImageFileInfo[] {
   let result = images;
 
@@ -22,10 +21,8 @@ function filterImages(
     result = result.filter((img) => filterExtensions.has(img.extension.toLowerCase()));
   }
 
-  if (filterClassifications.size > 0) {
-    result = result.filter((img) =>
-      matchesClassificationFilter(classifications[img.path], filterClassifications),
-    );
+  if (!isFullRatingRange(filterRatingRange)) {
+    result = result.filter((img) => isInRatingRange(ratings[img.path], filterRatingRange));
   }
 
   if (searchQuery.trim()) {
@@ -47,10 +44,9 @@ function makeImage(name: string, extension: string = 'jpg'): ImageFileInfo {
   };
 }
 
-const NO_CLASS = new Set<ClassificationFilter>();
+const ALL = FULL_RATING_RANGE;
 
-const withClasses = (...values: ClassificationFilter[]): Set<ClassificationFilter> =>
-  new Set(values);
+const range = (min: number, max: number): RatingRange => ({ min, max });
 
 describe('Filtering', () => {
   const images: ImageFileInfo[] = [
@@ -59,133 +55,105 @@ describe('Filtering', () => {
     makeImage('IMG_003.png', 'png'),
     makeImage('IMG_004.tiff', 'tiff'),
     makeImage('sunset.webp', 'webp'),
-    makeImage('IMG_005.jpg', 'jpg'), // deliberately left unclassified
+    makeImage('IMG_005.jpg', 'jpg'), // deliberately left unrated
   ];
 
-  const classifications: Record<string, Classification> = {
-    '/photos/IMG_001.jpg': 'keep',
-    '/photos/IMG_002.jpg': 'review',
-    '/photos/IMG_003.png': 'keep',
-    '/photos/IMG_004.tiff': 'delete',
-    '/photos/sunset.webp': 'review',
+  const ratings: Record<string, number> = {
+    '/photos/IMG_001.jpg': 5,
+    '/photos/IMG_002.jpg': 3,
+    '/photos/IMG_003.png': 5,
+    '/photos/IMG_004.tiff': 1,
+    '/photos/sunset.webp': 3,
   };
 
   describe('File type filter', () => {
     it('toggling JPG shows only JPG images', () => {
-      const result = filterImages(images, new Set(['jpg']), NO_CLASS, '', classifications);
+      const result = filterImages(images, new Set(['jpg']), ALL, '', ratings);
       expect(result.every((img) => img.extension === 'jpg')).toBe(true);
       expect(result.length).toBe(3);
     });
 
     it('multiple extensions can be active simultaneously', () => {
-      const result = filterImages(images, new Set(['jpg', 'png']), NO_CLASS, '', classifications);
+      const result = filterImages(images, new Set(['jpg', 'png']), ALL, '', ratings);
       expect(result.length).toBe(4);
     });
 
     it('empty filter set shows all images', () => {
-      const result = filterImages(images, new Set(), NO_CLASS, '', classifications);
+      const result = filterImages(images, new Set(), ALL, '', ratings);
       expect(result.length).toBe(6);
     });
   });
 
-  describe('Classification filter', () => {
-    it('selecting "keep" shows only keep images', () => {
-      const result = filterImages(images, new Set(), withClasses('keep'), '', classifications);
+  describe('Rating filter', () => {
+    it('a single-value range shows only that rating', () => {
+      const result = filterImages(images, new Set(), range(5, 5), '', ratings);
       expect(result.map((img) => img.name).sort()).toEqual(['IMG_001.jpg', 'IMG_003.png']);
     });
 
-    it('selecting two classifications shows the union', () => {
-      const result = filterImages(
-        images,
-        new Set(),
-        withClasses('keep', 'delete'),
-        '',
-        classifications,
-      );
+    it('a wider range shows the whole span', () => {
+      const result = filterImages(images, new Set(), range(3, 5), '', ratings);
       expect(result.map((img) => img.name).sort()).toEqual([
         'IMG_001.jpg',
+        'IMG_002.jpg',
         'IMG_003.png',
-        'IMG_004.tiff',
+        'sunset.webp',
       ]);
     });
 
-    it('"None" selects the images with no classification at all', () => {
-      const result = filterImages(
-        images,
-        new Set(),
-        withClasses('unclassified'),
-        '',
-        classifications,
-      );
-      expect(result.map((img) => img.name)).toEqual(['IMG_005.jpg']);
-    });
-
-    it('"None" combines with a real classification', () => {
-      const result = filterImages(
-        images,
-        new Set(),
-        withClasses('unclassified', 'delete'),
-        '',
-        classifications,
-      );
+    it('min 0 is what includes the unrated images', () => {
+      const result = filterImages(images, new Set(), range(0, 1), '', ratings);
       expect(result.map((img) => img.name).sort()).toEqual(['IMG_004.tiff', 'IMG_005.jpg']);
     });
 
-    it('deselecting the last classification shows all again', () => {
-      const result = filterImages(images, new Set(), NO_CLASS, '', classifications);
-      expect(result.length).toBe(6);
+    it('a range above 0 excludes the unrated images', () => {
+      const result = filterImages(images, new Set(), range(1, 5), '', ratings);
+      expect(result.map((img) => img.name)).not.toContain('IMG_005.jpg');
+      expect(result.length).toBe(5);
     });
 
-    it('selecting every classification is the same as no filter', () => {
-      const all = withClasses('unclassified', 'keep', 'review', 'delete');
-      const result = filterImages(images, new Set(), all, '', classifications);
+    it('the full range is the same as no filter', () => {
+      const result = filterImages(images, new Set(), range(0, 5), '', ratings);
       expect(result.length).toBe(6);
     });
   });
 
   describe('Search', () => {
     it('typing "IMG_0" filters to matching filenames', () => {
-      const result = filterImages(images, new Set(), NO_CLASS, 'IMG_0', classifications);
+      const result = filterImages(images, new Set(), ALL, 'IMG_0', ratings);
       expect(result.length).toBe(5);
     });
 
     it('typing "sunset" filters to sunset.webp', () => {
-      const result = filterImages(images, new Set(), NO_CLASS, 'sunset', classifications);
+      const result = filterImages(images, new Set(), ALL, 'sunset', ratings);
       expect(result.length).toBe(1);
       expect(result[0]!.name).toBe('sunset.webp');
     });
 
     it('empty search shows all images', () => {
-      const result = filterImages(images, new Set(), NO_CLASS, '', classifications);
+      const result = filterImages(images, new Set(), ALL, '', ratings);
       expect(result.length).toBe(6);
     });
 
     it('search is case-insensitive', () => {
-      const result = filterImages(images, new Set(), NO_CLASS, 'img_001', classifications);
+      const result = filterImages(images, new Set(), ALL, 'img_001', ratings);
       expect(result.length).toBe(1);
       expect(result[0]!.name).toBe('IMG_001.jpg');
     });
 
     it('whitespace-only search shows all images', () => {
-      const result = filterImages(images, new Set(), NO_CLASS, '   ', classifications);
+      const result = filterImages(images, new Set(), ALL, '   ', ratings);
       expect(result.length).toBe(6);
     });
   });
 
   describe('Combined filters', () => {
-    it('extension + classification + search all applied together', () => {
-      const result = filterImages(
-        images,
-        new Set(['jpg']),
-        withClasses('keep'),
-        'IMG',
-        classifications,
-      );
+    it('extension + rating + search all applied together', () => {
+      const result = filterImages(images, new Set(['jpg']), range(5, 5), 'IMG', ratings);
       expect(result.map((img) => img.name)).toEqual(['IMG_001.jpg']);
     });
 
     it('extension + search narrows results', () => {
-      const result = filterImages(images, new Set(['jpg']), NO_CLASS, 'IMG_002', classifications);
+      const result = filterImages(images, new Set(['jpg']), ALL, 'IMG_002', ratings);
       expect(result.length).toBe(1);
       expect(result[0]!.name).toBe('IMG_002.jpg');
     });
@@ -193,9 +161,9 @@ describe('Filtering', () => {
 
   describe('Debounce behavior', () => {
     it('rapid filtering calls return consistent results', () => {
-      const r1 = filterImages(images, new Set(), NO_CLASS, 'I', classifications);
-      const r2 = filterImages(images, new Set(), NO_CLASS, 'IM', classifications);
-      const r3 = filterImages(images, new Set(), NO_CLASS, 'IMG', classifications);
+      const r1 = filterImages(images, new Set(), ALL, 'I', ratings);
+      const r2 = filterImages(images, new Set(), ALL, 'IM', ratings);
+      const r3 = filterImages(images, new Set(), ALL, 'IMG', ratings);
 
       expect(r1.length).toBe(5);
       expect(r2.length).toBe(5);
@@ -204,34 +172,27 @@ describe('Filtering', () => {
   });
 });
 
-describe('matchesClassificationFilter', () => {
-  it('passes everything when nothing is selected', () => {
-    expect(matchesClassificationFilter('keep', NO_CLASS)).toBe(true);
-    expect(matchesClassificationFilter(null, NO_CLASS)).toBe(true);
+describe('isFullRatingRange', () => {
+  it('is true for the whole 0-5 span', () => {
+    expect(isFullRatingRange(FULL_RATING_RANGE)).toBe(true);
   });
 
-  it('treats a missing entry as unclassified', () => {
-    const selected = withClasses('unclassified');
-    expect(matchesClassificationFilter(undefined, selected)).toBe(true);
-    expect(matchesClassificationFilter(null, selected)).toBe(true);
-    expect(matchesClassificationFilter('keep', selected)).toBe(false);
+  it('is false as soon as either handle moves inward', () => {
+    expect(isFullRatingRange(range(1, 5))).toBe(false);
+    expect(isFullRatingRange(range(0, 4))).toBe(false);
   });
 });
 
-describe('toggleClassificationFilter', () => {
-  it('adds a value that is not selected', () => {
-    expect([...toggleClassificationFilter(NO_CLASS, 'keep')]).toEqual(['keep']);
+describe('normalizeRatingRange', () => {
+  it('swaps handles that have been dragged past each other', () => {
+    expect(normalizeRatingRange(range(4, 2))).toEqual({ min: 2, max: 4 });
   });
 
-  it('removes a value that is selected', () => {
-    expect([...toggleClassificationFilter(withClasses('keep', 'delete'), 'keep')]).toEqual([
-      'delete',
-    ]);
+  it('clamps values from outside 0-5', () => {
+    expect(normalizeRatingRange(range(-3, 9))).toEqual({ min: 0, max: 5 });
   });
 
-  it('never mutates the set it was given', () => {
-    const selected = withClasses('keep');
-    toggleClassificationFilter(selected, 'delete');
-    expect([...selected]).toEqual(['keep']);
+  it('leaves a valid range alone', () => {
+    expect(normalizeRatingRange(range(1, 3))).toEqual({ min: 1, max: 3 });
   });
 });

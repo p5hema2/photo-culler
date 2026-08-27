@@ -1,45 +1,34 @@
-/**
- * Which classifications the grid is showing.
- *
- * A set rather than one value: culling wants two buckets at once often enough —
- * "everything I have not decided on, plus the maybes" — and a single-choice
- * filter forces two passes over the shoot to see that. An empty set means no
- * filter at all, the same convention the file-type chips already use.
- */
-export type ClassificationFilter = 'keep' | 'review' | 'delete' | 'unclassified';
-
-/** Display order of the chips, and the closed set of filterable values. */
-export const CLASSIFICATION_FILTERS: readonly ClassificationFilter[] = [
-  'unclassified',
-  'keep',
-  'review',
-  'delete',
-];
+import { MAX_RATING, MIN_RATING, clampRating } from '@photo-culler/image-utils/rating';
 
 /**
- * Whether an image's classification passes the selection.
+ * Which ratings the grid is showing: an inclusive 0-5 window.
  *
- * An unclassified image simply has no entry in the classifications map, so both
- * null and undefined fold into the 'unclassified' bucket.
+ * A range rather than a set of chips, because ratings are ordered — "3 and up"
+ * and "the ones I have not decided on yet" are both a contiguous span, and a
+ * two-handle slider says them in one gesture. `min: 0` includes unrated, since
+ * unrated and 0 stars are the same thing.
  */
-export function matchesClassificationFilter(
-  classification: 'keep' | 'review' | 'delete' | null | undefined,
-  selected: ReadonlySet<ClassificationFilter>,
-): boolean {
-  if (selected.size === 0) return true;
-  return selected.has(classification ?? 'unclassified');
+export interface RatingRange {
+  min: number;
+  max: number;
 }
 
-/** Add or remove one value, as a new set — state here is replaced, never mutated. */
-export function toggleClassificationFilter(
-  selected: ReadonlySet<ClassificationFilter>,
-  value: ClassificationFilter,
-): Set<ClassificationFilter> {
-  const next = new Set(selected);
-  if (next.has(value)) {
-    next.delete(value);
-  } else {
-    next.add(value);
-  }
-  return next;
+/** No filtering at all — every image, unrated included. */
+export const FULL_RATING_RANGE: RatingRange = { min: MIN_RATING, max: MAX_RATING };
+
+/** Whether a range lets everything through, i.e. the filter is effectively off. */
+export function isFullRatingRange(range: RatingRange): boolean {
+  return range.min <= MIN_RATING && range.max >= MAX_RATING;
+}
+
+/**
+ * Force a range into a drawable, non-inverted 0-5 window.
+ *
+ * The two handles of a slider can be dragged past each other, and a min above
+ * max would silently show nothing at all rather than reading as a mistake.
+ */
+export function normalizeRatingRange(range: RatingRange): RatingRange {
+  const min = clampRating(range.min) ?? MIN_RATING;
+  const max = clampRating(range.max) ?? MAX_RATING;
+  return min <= max ? { min, max } : { min: max, max: min };
 }

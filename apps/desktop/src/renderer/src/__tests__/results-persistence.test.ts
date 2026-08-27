@@ -15,17 +15,16 @@ function img(folder: string, name: string) {
   return { name, path: `${folder}/${name}`, folder, extension: 'jpg', size: 100, lastModified: 1 };
 }
 
-/** Folder B is fully analysed: cached EXIF, a score, and a user classification. */
+/** Folder B is fully analysed: a score and its subscores are already on disk. */
 const B_RESULTS = JSON.stringify({
   version: 1,
   folderPath: '/B',
   updatedAt: 'x',
   images: {
     'b1.jpg': {
-      classification: 'keep',
-      userOverride: true,
       qualityScore: 88,
-      exif: { dateTaken: 999, cameraModel: 'CamB' },
+      qualitySubscores: { sharpness: 88, exposure: 88, contrast: 88, noise: 88 },
+      rotation: 90,
     },
   },
 });
@@ -100,10 +99,10 @@ describe('results persistence', () => {
   });
 
   it('does not wipe the incoming folder when the previous folder still reports scores', async () => {
-    // Regression guard for the epoch check. openFolder resets classifications to
-    // {} and only repopulates after two awaited IPC round trips. A stale score
-    // landing in that window used to persist `images: {}` over the new folder's
-    // real results file, destroying classifications, scores and cached EXIF.
+    // Regression guard for the epoch check. openFolder resets its path-keyed
+    // maps to {} and only repopulates after two awaited IPC round trips. A stale
+    // score landing in that window used to persist `images: {}` over the new
+    // folder's real results file, destroying its scores and rotations.
     const { result } = renderHook(() => usePhotoStore());
 
     await act(async () => {
@@ -137,8 +136,7 @@ describe('results persistence', () => {
 
     const onDisk = JSON.parse(disk['/B']!);
     expect(Object.keys(onDisk.images)).toContain('b1.jpg');
-    expect(onDisk.images['b1.jpg'].classification).toBe('keep');
     expect(onDisk.images['b1.jpg'].qualityScore).toBe(88);
-    expect(onDisk.images['b1.jpg'].exif?.cameraModel).toBe('CamB');
+    expect(onDisk.images['b1.jpg'].rotation).toBe(90);
   });
 });

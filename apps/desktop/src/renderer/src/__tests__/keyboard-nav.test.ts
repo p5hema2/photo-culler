@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { ImageFileInfo } from '@photo-culler/types';
 
@@ -31,17 +31,16 @@ function navigateKey(
   groups: PhotoGroup[],
   focusedPath: string | null,
   key: string,
-): { newFocus: string | null; cycledFilename: string | null } {
+): { newFocus: string | null } {
   let newFocus: string | null = null;
-  let cycledFilename: string | null = null;
 
-  if (groups.length === 0) return { newFocus, cycledFilename };
+  if (groups.length === 0) return { newFocus };
 
   if (!focusedPath) {
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(key)) {
       newFocus = groups[0]?.images[0]?.path ?? null;
     }
-    return { newFocus, cycledFilename };
+    return { newFocus };
   }
 
   // Find position
@@ -59,7 +58,7 @@ function navigateKey(
     if (groupIndex >= 0) break;
   }
 
-  if (groupIndex < 0) return { newFocus, cycledFilename };
+  if (groupIndex < 0) return { newFocus };
 
   const currentGroup = groups[groupIndex]!;
 
@@ -106,13 +105,9 @@ function navigateKey(
       newFocus = lastGroup.images[lastGroup.images.length - 1]!.path;
       break;
     }
-    case ' ': {
-      cycledFilename = currentGroup.images[imageIndex]!.name;
-      break;
-    }
   }
 
-  return { newFocus, cycledFilename };
+  return { newFocus };
 }
 
 describe('Keyboard Navigation', () => {
@@ -177,11 +172,6 @@ describe('Keyboard Navigation', () => {
   it('End jumps to last image of last group', () => {
     const result = navigateKey(groups, '/photos/a.jpg', 'End');
     expect(result.newFocus).toBe('/photos/e.jpg');
-  });
-
-  it('Space cycles classification of focused image', () => {
-    const result = navigateKey(groups, '/photos/b.jpg', ' ');
-    expect(result.cycledFilename).toBe('b.jpg');
   });
 
   it('focuses first image when nothing is focused on arrow key', () => {

@@ -84,25 +84,17 @@ export async function saveResults(folderPath: string, results: ResultsFile): Pro
  * per-image field forward.
  *
  * This exists because the projection used to be hand-rolled in two places that
- * drifted: the copy in `trashImages` listed four of the six fields, so a single
- * Delete keypress silently stripped `qualitySubscores` and `rotation` from every
- * remaining image in the folder. Spreading the existing entry means a field
- * added to `ImageResult` later cannot be dropped here by omission.
+ * drifted: the copy in the delete path listed four of the six fields, so a
+ * single Delete keypress silently stripped `qualitySubscores` and `rotation`
+ * from every remaining image in the folder. Spreading the existing entry means a
+ * field added to `ImageResult` later cannot be dropped here by omission.
  */
-export function rebuildResults(
-  results: ResultsFile,
-  keepNames: Iterable<string>,
-  classifications: Record<string, ImageResult['classification'] | undefined>,
-): ResultsFile {
+export function rebuildResults(results: ResultsFile, keepNames: Iterable<string>): ResultsFile {
   const images: Record<string, ImageResult> = {};
 
   for (const name of keepNames) {
     const existing = results.images[name];
-    images[name] = {
-      ...existing,
-      classification: classifications[name] ?? existing?.classification ?? null,
-      userOverride: existing?.userOverride ?? false,
-    };
+    if (existing) images[name] = { ...existing };
   }
 
   return { ...results, images };
@@ -110,7 +102,6 @@ export function rebuildResults(
 
 /** Path-keyed slices of renderer state, as they are held in the photo store. */
 export interface ResultsProjection {
-  classifications: Record<string, ImageResult['classification'] | undefined>;
   qualityScores: Record<string, number | undefined>;
   qualitySubscores: Record<string, ImageResult['qualitySubscores']>;
   rotations: Record<string, number | undefined>;
@@ -120,7 +111,9 @@ export interface ResultsProjection {
  * Project path-keyed renderer state onto one folder's basename-keyed file.
  *
  * Entries already on disk are preserved even when the image is not in `images`
- * — a filter narrowing the view must never erase somebody's classifications.
+ * — a filter narrowing the view must never erase somebody's scores.
+ *
+ * Ratings are absent on purpose: they live in the image files themselves.
  */
 export function projectFolderResults(
   existing: ResultsFile,
@@ -134,8 +127,6 @@ export function projectFolderResults(
     const prior = existing.images[image.name];
     next[image.name] = {
       ...prior,
-      classification: state.classifications[image.path] ?? prior?.classification ?? null,
-      userOverride: prior?.userOverride ?? false,
       qualityScore: state.qualityScores[image.path] ?? prior?.qualityScore,
       qualitySubscores: state.qualitySubscores[image.path] ?? prior?.qualitySubscores,
       // NO `?? prior?.rotation` here, deliberately: absence in state has to mean
@@ -147,7 +138,6 @@ export function projectFolderResults(
       // the old angle sitting in `prior`, and the next open re-applied a visual
       // 90 degrees on top of the file it had just physically rotated.
       rotation: state.rotations[image.path],
-      exif: prior?.exif,
     };
   }
 

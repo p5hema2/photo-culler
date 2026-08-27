@@ -110,7 +110,7 @@ function buildMenu(): void {
         // F5 rather than CmdOrCtrl+Shift+R, which the forceReload role owns
         commandItem('Rescan Folder', 'rescan', 'F5'),
         { type: 'separator' },
-        commandItem('Save / Delete...', 'execute', 'CmdOrCtrl+S'),
+        commandItem('Execute…', 'execute', 'CmdOrCtrl+S'),
         { type: 'separator' },
         commandItem('Clean Up Folder…', 'clean-up-folder'),
         { type: 'separator' },
@@ -137,9 +137,9 @@ function buildMenu(): void {
         {
           label: 'Layout',
           submenu: [
-            // Modifier accelerators only — bare 1/2/3 and V belong to the
-            // renderer (classification and layout cycling) and a menu
-            // accelerator would swallow them before the window sees them.
+            // Modifier accelerators only — bare 0-5 and V belong to the
+            // renderer (rating and layout cycling) and a menu accelerator
+            // would swallow them before the window sees them.
             commandItem('Grid', 'layout:default', 'CmdOrCtrl+1'),
             commandItem('Loupe', 'layout:loupe', 'CmdOrCtrl+2'),
             commandItem('Filmstrip', 'layout:filmstrip', 'CmdOrCtrl+3'),

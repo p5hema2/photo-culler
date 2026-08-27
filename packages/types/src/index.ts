@@ -12,7 +12,7 @@ export type { MenuEvents } from './window';
 export { IPC_CHANNELS, MENU_COMMANDS } from './ipc';
 export type {
   ElectronAPI,
-  TrashResult,
+  FileOpResult,
   SessionConfig,
   ImageResult,
   QualitySubscores,

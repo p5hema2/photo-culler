@@ -10,9 +10,6 @@ const SUPPORTED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.tiff', '.tif', 
 // have not been migrated yet.
 const EXCLUDED_FILES = new Set(['photo-culler-results.json']);
 
-/** Subfolder that Execute moves picks into. Folded into its parent, not listed. */
-const PICKS_DIR = 'picks';
-
 /** Safety net against opening a whole drive by accident. */
 const MAX_DIRECTORIES = 2000;
 
@@ -49,13 +46,17 @@ async function attachMetadata(images: ImageFileInfo[]): Promise<void> {
  * Recursively scan a folder tree for supported image files.
  *
  * Every directory below `folderPath` is visited, so a user can open the parent
- * of several shoots instead of culling one folder at a time. Two rules shape
- * the result:
+ * of several shoots instead of culling one folder at a time. Hidden directories
+ * are skipped, which also excludes the thumbnail cache, and `folder` is simply
+ * the directory the image sits in.
  *
- *  - Hidden directories are skipped, which also excludes the thumbnail cache.
- *  - A `picks/` directory is scanned, but its images are attributed to the
- *    PARENT folder. Execute moves keeps into picks/, and they should stay
- *    visible where they were culled rather than jumping to a new section.
+ * There used to be one exception: a `picks/` directory was scanned but its
+ * images were attributed to the PARENT folder, so a shot Execute had moved
+ * stayed in the section it was culled in. Execute no longer moves anything —
+ * the keep classification it served is gone — so there is nothing left to fold
+ * up. Do not restore it: the main process's clean-up had to mirror the same
+ * union to avoid pruning a moved pick's record, and a `picks/` directory is now
+ * an ordinary shoot subfolder like any other.
  *
  * Each image's metadata — including its star rating — is read here rather than
  * cached in the results file, because the file on disk is the authority for the
@@ -65,7 +66,7 @@ export async function scanFolder(folderPath: string): Promise<ImageFileInfo[]> {
   const images: ImageFileInfo[] = [];
   let directoriesVisited = 0;
 
-  const walk = async (dirPath: string, attributeTo: string): Promise<void> => {
+  const walk = async (dirPath: string): Promise<void> => {
     if (directoriesVisited >= MAX_DIRECTORIES) return;
     directoriesVisited++;
 
@@ -79,18 +80,14 @@ export async function scanFolder(folderPath: string): Promise<ImageFileInfo[]> {
       return;
     }
 
-    const subdirectories: Array<{ path: string; attributeTo: string }> = [];
+    const subdirectories: string[] = [];
 
     for (const entry of entries) {
       // Skip hidden entries — covers .photo-culler-thumbs and the results file
       if (entry.name.startsWith('.')) continue;
 
       if (entry.isDirectory()) {
-        subdirectories.push({
-          path: join(dirPath, entry.name),
-          // picks/ folds into whatever folder it belongs to
-          attributeTo: entry.name === PICKS_DIR ? attributeTo : join(dirPath, entry.name),
-        });
+        subdirectories.push(join(dirPath, entry.name));
         continue;
       }
 
@@ -111,7 +108,7 @@ export async function scanFolder(folderPath: string): Promise<ImageFileInfo[]> {
       images.push({
         path: filePath,
         name: entry.name,
-        folder: attributeTo,
+        folder: dirPath,
         extension: ext.slice(1),
         size: stats.size,
         lastModified: stats.mtimeMs,
@@ -119,11 +116,11 @@ export async function scanFolder(folderPath: string): Promise<ImageFileInfo[]> {
     }
 
     for (const sub of subdirectories) {
-      await walk(sub.path, sub.attributeTo);
+      await walk(sub);
     }
   };
 
-  await walk(folderPath, folderPath);
+  await walk(folderPath);
   await attachMetadata(images);
   return images;
 }

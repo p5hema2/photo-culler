@@ -4,7 +4,6 @@ import type { DetailedMetadataState } from '../hooks/useDetailedMetadata';
 import type { QualitySubscores } from '@photo-culler/types';
 import type { FolderSection } from '@photo-culler/image-utils/folders';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
-import type { Classification } from './ThumbnailCell';
 import { ThumbnailCell } from './ThumbnailCell';
 import { DetailImageViewer } from './DetailImageViewer';
 import { centerElementHorizontally } from '../lib/focus-scroll';
@@ -15,14 +14,12 @@ type ThumbnailStatus = ImageBitmap | 'loading' | 'error';
 export interface DetailViewProps {
   folders: FolderSection[];
   focusedImageId: string | null;
-  classifications: Record<string, Classification>;
+  ratings: Record<string, number>;
   qualityScores: Record<string, number>;
   qualitySubscores: Record<string, QualitySubscores>;
   rotations: Record<string, number>;
-  selectOnHover: boolean;
-  onImageClick: (imagePath: string) => void;
   onImageFocus: (path: string) => void;
-  onCycleClassification: (imagePath: string) => void;
+  onRate: (imagePath: string, rating: number) => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number) => void;
   overlaySettings: OverlaySettings;
@@ -37,25 +34,19 @@ const LOUPE_THUMB_SIZE = 72;
 function LoupeFilmstrip({
   groups,
   focusedImageId,
-  classifications,
+  ratings,
   qualityScores,
   rotations,
-  selectOnHover,
-  onImageClick,
   onImageFocus,
-  onCycleClassification,
   getThumbnail,
   requestThumbnail,
 }: {
   groups: PhotoGroup[];
   focusedImageId: string | null;
-  classifications: Record<string, Classification>;
+  ratings: Record<string, number>;
   qualityScores: Record<string, number>;
   rotations: Record<string, number>;
-  selectOnHover: boolean;
-  onImageClick: (filename: string) => void;
   onImageFocus: (path: string) => void;
-  onCycleClassification: (filename: string) => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number) => void;
 }) {
@@ -95,14 +86,11 @@ function LoupeFilmstrip({
               <ThumbnailCell
                 image={image}
                 cellSize={LOUPE_THUMB_SIZE}
-                classification={classifications[image.path] ?? null}
+                rating={ratings[image.path]}
                 qualityScore={qualityScores[image.path]}
                 rotation={rotations[image.path]}
                 isFocused={image.path === focusedImageId}
-                selectOnHover={selectOnHover}
-                onClick={() => onImageClick(image.path)}
                 onFocus={(origin) => handleImageFocus(image.path, origin)}
-                onCycleClassification={() => onCycleClassification(image.path)}
                 getThumbnail={getThumbnail}
                 requestThumbnail={requestThumbnail}
                 groupIndex={gi}
@@ -121,14 +109,12 @@ export function LoupeView(props: DetailViewProps): React.JSX.Element {
   const {
     folders,
     focusedImageId,
-    classifications,
+    ratings,
     qualityScores,
     qualitySubscores,
     rotations,
-    selectOnHover,
-    onImageClick,
     onImageFocus,
-    onCycleClassification,
+    onRate,
     getThumbnail,
     requestThumbnail,
     overlaySettings,
@@ -148,10 +134,10 @@ export function LoupeView(props: DetailViewProps): React.JSX.Element {
     return flatImages.find((img) => img.path === focusedImageId) ?? null;
   }, [focusedImageId, flatImages]);
 
-  const focusedClassification = useMemo(() => {
-    if (!focusedImage) return null;
-    return classifications[focusedImage.path] ?? null;
-  }, [focusedImage, classifications]);
+  const focusedRating = useMemo(() => {
+    if (!focusedImage) return 0;
+    return ratings[focusedImage.path] ?? 0;
+  }, [focusedImage, ratings]);
 
   const focusedRotation = useMemo(() => {
     if (!focusedImage) return 0;
@@ -171,8 +157,9 @@ export function LoupeView(props: DetailViewProps): React.JSX.Element {
       <DetailImageViewer
         focusedImageId={focusedImageId}
         focusedImage={focusedImage}
-        focusedClassification={focusedClassification}
+        focusedRating={focusedRating}
         focusedRotation={focusedRotation}
+        onRate={onRate}
         qualityScores={qualityScores}
         qualitySubscores={qualitySubscores}
         allImages={flatImages}
@@ -185,13 +172,10 @@ export function LoupeView(props: DetailViewProps): React.JSX.Element {
       <LoupeFilmstrip
         groups={stripGroups}
         focusedImageId={focusedImageId}
-        classifications={classifications}
+        ratings={ratings}
         qualityScores={qualityScores}
         rotations={rotations}
-        selectOnHover={selectOnHover}
-        onImageClick={onImageClick}
         onImageFocus={onImageFocus}
-        onCycleClassification={onCycleClassification}
         getThumbnail={getThumbnail}
         requestThumbnail={requestThumbnail}
       />

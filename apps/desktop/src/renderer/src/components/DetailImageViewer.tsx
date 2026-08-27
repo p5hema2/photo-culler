@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { ImageFileInfo, QualitySubscores } from '@photo-culler/types';
-import type { Classification } from './ThumbnailCell';
+import { StarRating } from './StarRating';
 import { useZoomPan } from '../hooks/useZoomPan';
 import { FocusPeakingOverlay } from './FocusPeakingOverlay';
 import { ExposureClippingOverlay } from './ExposureClippingOverlay';
@@ -41,32 +41,23 @@ function scoreTextColor(score: number): string {
 
 export function MetadataOverlay({
   image,
-  classification,
+  rating,
   qualityScore,
   qualitySubscores,
   rotation,
 }: {
   image: ImageFileInfo;
-  classification: Classification;
+  rating: number;
   qualityScore?: number;
   qualitySubscores?: QualitySubscores;
   rotation: number;
 }) {
-  const badge =
-    classification === 'keep'
-      ? { label: 'Keep', cls: 'bg-green-900/80 text-green-300 border-green-500' }
-      : classification === 'review'
-        ? { label: 'Review', cls: 'bg-yellow-900/80 text-yellow-300 border-yellow-500' }
-        : classification === 'delete'
-          ? { label: 'Delete', cls: 'bg-red-900/80 text-red-300 border-red-500' }
-          : { label: 'Unscored', cls: 'bg-gray-700/80 text-gray-400 border-gray-500' };
-
   return (
     <div className="absolute bottom-2 left-2 z-30 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-3 text-white text-xs max-w-sm pointer-events-none select-none">
       <div className="flex items-center gap-2 mb-1.5">
         <span className="font-semibold text-sm truncate">{image.name}</span>
-        <span className={`px-1.5 py-0.5 rounded border text-[10px] flex-shrink-0 ${badge.cls}`}>
-          {badge.label}
+        <span className="flex-shrink-0">
+          <StarRating rating={rating} interactive={false} size="sm" />
         </span>
       </div>
 
@@ -115,8 +106,11 @@ type ThumbnailStatus = ImageBitmap | 'loading' | 'error';
 interface DetailImageViewerProps {
   focusedImageId: string | null;
   focusedImage: ImageFileInfo | null;
-  focusedClassification: Classification;
+  /** Star rating of the focused image, 0-5, where 0 means unrated. */
+  focusedRating: number;
   focusedRotation: number;
+  /** Takes the image's ABSOLUTE PATH — renderer state is keyed by path. */
+  onRate: (imagePath: string, rating: number) => void;
   qualityScores: Record<string, number>;
   qualitySubscores: Record<string, QualitySubscores>;
   allImages: ImageFileInfo[];
@@ -129,8 +123,9 @@ interface DetailImageViewerProps {
 export function DetailImageViewer({
   focusedImageId,
   focusedImage,
-  focusedClassification,
+  focusedRating,
   focusedRotation,
+  onRate,
   qualityScores,
   qualitySubscores,
   allImages,
@@ -381,6 +376,24 @@ export function DetailImageViewer({
         />
       </div>
 
+      {/* Rating. stopPropagation because the container's mousedown starts a
+          pan, and a rating click is not a drag. */}
+      {focusedImage && (
+        <div
+          className="absolute top-2 right-2 z-20 bg-gray-800/80 rounded px-2 py-1"
+          onMouseDown={(e) => e.stopPropagation()}
+          data-testid="detail-rating"
+        >
+          <StarRating
+            rating={focusedRating}
+            onRate={(value) => onRate(focusedImage.path, value)}
+            interactive
+            size="lg"
+            focusable
+          />
+        </div>
+      )}
+
       {/* Blurred placeholder */}
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center">
@@ -446,7 +459,7 @@ export function DetailImageViewer({
       {showMetadata && focusedImage && (
         <MetadataOverlay
           image={focusedImage}
-          classification={focusedClassification}
+          rating={focusedRating}
           qualityScore={qualityScores[focusedImage.path]}
           qualitySubscores={qualitySubscores[focusedImage.path]}
           rotation={focusedRotation}

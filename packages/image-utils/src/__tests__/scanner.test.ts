@@ -23,11 +23,6 @@ vi.mock('node:fs/promises', () => ({
 /** Compare paths regardless of the platform separator. */
 const norm = (p: unknown): string => String(p).split(String.fromCharCode(92)).join('/');
 
-/** path.join yields '\picks' on Windows and '/picks' elsewhere. */
-function isPicksDir(dirPath: unknown): boolean {
-  return /[/\\]picks$/.test(String(dirPath));
-}
-
 function makeDirent(name: string, isFile = true): Dirent {
   return {
     name,
@@ -53,24 +48,17 @@ describe('scanFolder', () => {
   });
 
   it('returns ImageFileInfo[] for supported image types only', async () => {
-    mockReaddir.mockImplementation(async (dirPath) => {
-      if (isPicksDir(dirPath)) {
-        const err = new Error('ENOENT') as NodeJS.ErrnoException;
-        err.code = 'ENOENT';
-        throw err;
-      }
-      return [
-        makeDirent('photo.jpg'),
-        makeDirent('image.jpeg'),
-        makeDirent('pic.png'),
-        makeDirent('raw.tiff'),
-        makeDirent('scan.tif'),
-        makeDirent('web.webp'),
-        makeDirent('document.pdf'),
-        makeDirent('video.mp4'),
-        makeDirent('readme.txt'),
-      ] as Dirent[];
-    });
+    mockReaddir.mockResolvedValue([
+      makeDirent('photo.jpg'),
+      makeDirent('image.jpeg'),
+      makeDirent('pic.png'),
+      makeDirent('raw.tiff'),
+      makeDirent('scan.tif'),
+      makeDirent('web.webp'),
+      makeDirent('document.pdf'),
+      makeDirent('video.mp4'),
+      makeDirent('readme.txt'),
+    ] as Dirent[]);
     mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
@@ -86,14 +74,10 @@ describe('scanFolder', () => {
   });
 
   it('excludes hidden files (names starting with .)', async () => {
-    mockReaddir.mockImplementation(async (dirPath) => {
-      if (isPicksDir(dirPath)) {
-        const err = new Error('ENOENT') as NodeJS.ErrnoException;
-        err.code = 'ENOENT';
-        throw err;
-      }
-      return [makeDirent('.hidden.jpg'), makeDirent('visible.jpg')] as Dirent[];
-    });
+    mockReaddir.mockResolvedValue([
+      makeDirent('.hidden.jpg'),
+      makeDirent('visible.jpg'),
+    ] as Dirent[]);
     mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
@@ -102,14 +86,10 @@ describe('scanFolder', () => {
   });
 
   it('excludes photo-culler-results.json', async () => {
-    mockReaddir.mockImplementation(async (dirPath) => {
-      if (isPicksDir(dirPath)) {
-        const err = new Error('ENOENT') as NodeJS.ErrnoException;
-        err.code = 'ENOENT';
-        throw err;
-      }
-      return [makeDirent('photo-culler-results.json'), makeDirent('photo.jpg')] as Dirent[];
-    });
+    mockReaddir.mockResolvedValue([
+      makeDirent('photo-culler-results.json'),
+      makeDirent('photo.jpg'),
+    ] as Dirent[]);
     mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
@@ -117,19 +97,21 @@ describe('scanFolder', () => {
     expect(result[0]!.name).toBe('photo.jpg');
   });
 
-  it('includes files from picks/ and files them under the parent folder', async () => {
+  it('treats a picks/ subfolder as an ordinary directory', async () => {
+    // It used to be folded into its parent, so that a shot Execute had moved
+    // there stayed in the section it was culled in. Execute moves nothing now,
+    // and `folder` is simply the containing directory for every image.
     mockReaddir.mockImplementation(async (dirPath) => {
-      if (isPicksDir(dirPath)) return [makeDirent('picked.jpg')] as Dirent[];
+      if (norm(dirPath).endsWith('/picks')) return [makeDirent('picked.jpg')] as Dirent[];
       return [makeDirent('main.jpg'), makeDirent('picks', false)] as Dirent[];
     });
     mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
-    expect(result).toHaveLength(2);
-    expect(result.map((r) => r.name).sort()).toEqual(['main.jpg', 'picked.jpg']);
-    // A moved pick stays in the section it was culled in, so both report the
-    // parent as their folder.
-    expect(new Set(result.map((r) => r.folder))).toEqual(new Set(['/test/folder']));
+    const byName = Object.fromEntries(result.map((r) => [r.name, norm(r.folder)]));
+
+    expect(byName['main.jpg']).toBe('/test/folder');
+    expect(byName['picked.jpg']).toBe('/test/folder/picks');
   });
 
   it('descends into subfolders and files each image under its own directory', async () => {
@@ -189,44 +171,15 @@ describe('scanFolder', () => {
     expect(result.map((r) => r.name)).toEqual(['ok.jpg']);
   });
 
-  it('handles picks/ not existing without error', async () => {
-    mockReaddir.mockImplementation(async (dirPath) => {
-      if (isPicksDir(dirPath)) {
-        const err = new Error('ENOENT') as NodeJS.ErrnoException;
-        err.code = 'ENOENT';
-        throw err;
-      }
-      return [makeDirent('photo.jpg')] as Dirent[];
-    });
-    mockStat.mockResolvedValue(makeStats(1024, 1000000));
-
-    const result = await scanFolder('/test/folder');
-    expect(result).toHaveLength(1);
-  });
-
   it('returns empty array for empty folder', async () => {
-    mockReaddir.mockImplementation(async (dirPath) => {
-      if (isPicksDir(dirPath)) {
-        const err = new Error('ENOENT') as NodeJS.ErrnoException;
-        err.code = 'ENOENT';
-        throw err;
-      }
-      return [] as Dirent[];
-    });
+    mockReaddir.mockResolvedValue([] as Dirent[]);
 
     const result = await scanFolder('/test/folder');
     expect(result).toEqual([]);
   });
 
   it('handles case-insensitive extension matching (.JPG works)', async () => {
-    mockReaddir.mockImplementation(async (dirPath) => {
-      if (isPicksDir(dirPath)) {
-        const err = new Error('ENOENT') as NodeJS.ErrnoException;
-        err.code = 'ENOENT';
-        throw err;
-      }
-      return [makeDirent('PHOTO.JPG'), makeDirent('Image.PNG')] as Dirent[];
-    });
+    mockReaddir.mockResolvedValue([makeDirent('PHOTO.JPG'), makeDirent('Image.PNG')] as Dirent[]);
     mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = await scanFolder('/test/folder');
@@ -244,14 +197,7 @@ describe('scanFolder', () => {
   });
 
   it('returns correct ImageFileInfo shape', async () => {
-    mockReaddir.mockImplementation(async (dirPath) => {
-      if (isPicksDir(dirPath)) {
-        const err = new Error('ENOENT') as NodeJS.ErrnoException;
-        err.code = 'ENOENT';
-        throw err;
-      }
-      return [makeDirent('photo.jpg')] as Dirent[];
-    });
+    mockReaddir.mockResolvedValue([makeDirent('photo.jpg')] as Dirent[]);
     mockStat.mockResolvedValue(makeStats(2048, 1700000000000));
 
     const result = await scanFolder('/test/folder');

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useMemo } from 'react';
-import type { Classification } from './ThumbnailCell';
 import { ThumbnailCell } from './ThumbnailCell';
 import { DetailImageViewer } from './DetailImageViewer';
 import { centerElementVertically } from '../lib/focus-scroll';
@@ -16,25 +15,19 @@ const FILMSTRIP_THUMB_SIZE = 100;
 function VerticalFilmstrip({
   groups,
   focusedImageId,
-  classifications,
+  ratings,
   qualityScores,
   rotations,
-  selectOnHover,
-  onImageClick,
   onImageFocus,
-  onCycleClassification,
   getThumbnail,
   requestThumbnail,
 }: {
   groups: PhotoGroup[];
   focusedImageId: string | null;
-  classifications: Record<string, Classification>;
+  ratings: Record<string, number>;
   qualityScores: Record<string, number>;
   rotations: Record<string, number>;
-  selectOnHover: boolean;
-  onImageClick: (imagePath: string) => void;
   onImageFocus: (path: string) => void;
-  onCycleClassification: (imagePath: string) => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number) => void;
 }) {
@@ -72,14 +65,11 @@ function VerticalFilmstrip({
               <ThumbnailCell
                 image={image}
                 cellSize={FILMSTRIP_THUMB_SIZE}
-                classification={classifications[image.path] ?? null}
+                rating={ratings[image.path]}
                 qualityScore={qualityScores[image.path]}
                 rotation={rotations[image.path]}
                 isFocused={image.path === focusedImageId}
-                selectOnHover={selectOnHover}
-                onClick={() => onImageClick(image.path)}
                 onFocus={(origin) => handleImageFocus(image.path, origin)}
-                onCycleClassification={() => onCycleClassification(image.path)}
                 getThumbnail={getThumbnail}
                 requestThumbnail={requestThumbnail}
                 groupIndex={gi}
@@ -98,14 +88,12 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
   const {
     folders,
     focusedImageId,
-    classifications,
+    ratings,
     qualityScores,
     qualitySubscores,
     rotations,
-    selectOnHover,
-    onImageClick,
     onImageFocus,
-    onCycleClassification,
+    onRate,
     getThumbnail,
     requestThumbnail,
     overlaySettings,
@@ -125,10 +113,10 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
     return flatImages.find((img) => img.path === focusedImageId) ?? null;
   }, [focusedImageId, flatImages]);
 
-  const focusedClassification = useMemo(() => {
-    if (!focusedImage) return null;
-    return classifications[focusedImage.path] ?? null;
-  }, [focusedImage, classifications]);
+  const focusedRating = useMemo(() => {
+    if (!focusedImage) return 0;
+    return ratings[focusedImage.path] ?? 0;
+  }, [focusedImage, ratings]);
 
   const focusedRotation = useMemo(() => {
     if (!focusedImage) return 0;
@@ -148,13 +136,10 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
       <VerticalFilmstrip
         groups={stripGroups}
         focusedImageId={focusedImageId}
-        classifications={classifications}
+        ratings={ratings}
         qualityScores={qualityScores}
         rotations={rotations}
-        selectOnHover={selectOnHover}
-        onImageClick={onImageClick}
         onImageFocus={onImageFocus}
-        onCycleClassification={onCycleClassification}
         getThumbnail={getThumbnail}
         requestThumbnail={requestThumbnail}
       />
@@ -162,8 +147,9 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
       <DetailImageViewer
         focusedImageId={focusedImageId}
         focusedImage={focusedImage}
-        focusedClassification={focusedClassification}
+        focusedRating={focusedRating}
         focusedRotation={focusedRotation}
+        onRate={onRate}
         qualityScores={qualityScores}
         qualitySubscores={qualitySubscores}
         allImages={flatImages}

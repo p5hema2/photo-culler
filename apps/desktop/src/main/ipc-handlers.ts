@@ -1,9 +1,9 @@
-import { app, ipcMain, dialog, shell } from 'electron';
+import { app, ipcMain, dialog } from 'electron';
 import { writeFile, readFile, mkdir, rename, unlink, stat, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { IPC_CHANNELS } from '@photo-culler/types';
-import type { SessionConfig, TrashResult } from '@photo-culler/types';
+import type { FileOpResult, SessionConfig } from '@photo-culler/types';
 import { scanFolder } from '@photo-culler/image-utils';
 import { getSession, updateSession } from './store';
 import { readDetailedMetadata, writeRating, type RatingWriteResult } from './exiftool';
@@ -31,8 +31,6 @@ const THUMB_CACHE_DIR = '.photo-culler-thumbs';
  *   1.5.2+        longest edge 512 WebP, loose in THUMB_CACHE_DIR
  */
 const THUMB_SUFFIX = '.thumb.webp';
-/** Mirrors the scanner: picks/ images are filed under their parent folder. */
-const PICKS_DIRNAME = 'picks';
 
 function isEnoent(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === 'ENOENT';
@@ -66,7 +64,7 @@ export async function readResultsFile(folderPath: string): Promise<string | null
     await rename(legacyPath, currentPath);
   } catch {
     // Migration is best-effort — a failed rename must not cost the user
-    // their classifications, so fall through and return the data anyway.
+    // their scores and rotations, so fall through and return the data anyway.
   }
   return legacyData;
 }
@@ -136,24 +134,6 @@ async function removeThumbCache(filePath: string): Promise<void> {
 }
 
 /**
- * Follow a thumbnail to its image's new location.
- *
- * Both directories sit on the same volume (picks/ is a subdirectory), so the
- * rename is O(1). On any failure the source is dropped instead: the worst case
- * is one regenerated thumbnail, never a stale or orphaned one.
- */
-async function relocateThumbCache(fromPath: string, toPath: string): Promise<void> {
-  const from = getThumbCachePath(fromPath);
-  const to = getThumbCachePath(toPath);
-  try {
-    await mkdir(path.dirname(to), { recursive: true });
-    await rename(from, to);
-  } catch {
-    await unlinkQuiet(from);
-  }
-}
-
-/**
  * Delete cache entries that no longer correspond to an image, plus every entry
  * written by a different cache version.
  *
@@ -184,37 +164,6 @@ async function imageDirectories(rootPath: string): Promise<string[]> {
   };
   await walk(rootPath);
   return found;
-}
-
-/**
- * Filenames a directory's results file may legitimately describe.
- *
- * That is the directory's own files PLUS its `picks/` children: Execute moves
- * keeps into `picks/`, and the scanner attributes them back to the parent, so
- * the parent's results file is where their classifications live. Pruning
- * against the bare directory listing would delete every moved pick's record.
- *
- * Returns null when the directory cannot be listed — the caller must then
- * delete nothing rather than read the failure as "no files here".
- */
-async function describableNames(dir: string): Promise<Set<string> | null> {
-  let own: string[];
-  try {
-    own = await readdir(dir);
-  } catch {
-    return null;
-  }
-
-  const names = new Set(own.map((n) => n.toLowerCase()));
-
-  try {
-    for (const n of await readdir(path.join(dir, PICKS_DIRNAME))) {
-      names.add(n.toLowerCase());
-    }
-  } catch {
-    // no picks/ here, which is the normal case
-  }
-  return names;
 }
 
 /** What a clean-up would remove. Computed first so the user can confirm it. */
@@ -250,9 +199,11 @@ export async function planCleanUp(rootPath: string): Promise<CleanUpPlan> {
   for (const imageDir of await imageDirectories(rootPath)) {
     plan.directoriesScanned++;
 
-    // ── thumbnails: checked against this directory's OWN files, because
-    //    picks/ keeps its own cache alongside its own images
-    let ownNames: Set<string> | null = null;
+    // Thumbnails AND records are checked against this one listing: a directory's
+    // results file describes exactly its own files. A second readdir used to
+    // union in `picks/`, because Execute moved keeps there and the scanner filed
+    // them back under the parent — both are gone with the keep feature.
+    let ownNames: Set<string>;
     try {
       ownNames = new Set((await readdir(imageDir)).map((n) => n.toLowerCase()));
     } catch {
@@ -281,10 +232,6 @@ export async function planCleanUp(rootPath: string): Promise<CleanUpPlan> {
       }
     }
 
-    // ── results entries: checked against this directory's files AND its picks/
-    const describable = await describableNames(imageDir);
-    if (!describable) continue;
-
     for (const filename of [RESULTS_FILENAME, LEGACY_RESULTS_FILENAME]) {
       const file = path.join(imageDir, filename);
       let parsed: { images?: Record<string, unknown> };
@@ -296,7 +243,7 @@ export async function planCleanUp(rootPath: string): Promise<CleanUpPlan> {
       if (!parsed || typeof parsed.images !== 'object' || parsed.images === null) continue;
 
       const orphaned = Object.keys(parsed.images).filter(
-        (name) => !describable.has(name.toLowerCase()),
+        (name) => !ownNames.has(name.toLowerCase()),
       );
       if (orphaned.length > 0) plan.results.push({ file, names: orphaned });
     }
@@ -532,7 +479,7 @@ export function registerIpcHandlers(): void {
       return { thumbsRemoved: 0, legacyRemoved: 0, entriesRemoved: 0, cancelled: false };
     }
 
-    // Removing saved records discards classifications, scores and rotations for
+    // Removing saved records discards quality scores and pending rotations for
     // those images. Show the count and let the user decide before touching disk.
     const detail = [
       `Scanned ${plan.directoriesScanned} folder(s).`,
@@ -546,7 +493,8 @@ export function registerIpcHandlers(): void {
         : []),
       `${entryCount} saved record(s) whose image is gone`,
       '',
-      'Records hold classifications, scores and rotations. Images themselves are never touched.',
+      'Records hold quality scores and pending rotations. Images themselves are never ' +
+        'touched, and star ratings live in the image files rather than in a record.',
     ].join('\n');
 
     const { response } = await dialog.showMessageBox({
@@ -579,59 +527,6 @@ export function registerIpcHandlers(): void {
     updateSession(partial);
   });
 
-  ipcMain.handle(
-    IPC_CHANNELS.MOVE_TO_PICKS,
-    async (_event, folderPath: string, filePaths: string[]) => {
-      const picksDir = path.join(folderPath, 'picks');
-      await mkdir(picksDir, { recursive: true });
-
-      const succeeded: string[] = [];
-      const failed: Array<{ path: string; error: string }> = [];
-
-      for (const filePath of filePaths) {
-        const destPath = path.join(picksDir, path.basename(filePath));
-        try {
-          await rename(filePath, destPath);
-          succeeded.push(filePath);
-          // The only place that knows both paths — the renderer never learns
-          // the destination, so without this the old thumbnail is orphaned and
-          // a duplicate is regenerated under picks/.
-          await relocateThumbCache(filePath, destPath);
-        } catch (err) {
-          failed.push({
-            path: filePath,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
-      return { succeeded, failed };
-    },
-  );
-
-  ipcMain.handle(IPC_CHANNELS.TRASH_FILES, async (_event, filePaths: string[]) => {
-    const result: TrashResult = { succeeded: [], failed: [] };
-
-    for (const filePath of filePaths) {
-      try {
-        await shell.trashItem(filePath);
-        result.succeeded.push(filePath);
-        // Only after the source op succeeded — a failed trash must not orphan
-        // the thumbnail of a file that still exists. Thumbnails are unlinked
-        // rather than trashed: derived data does not belong in the user's
-        // Recycle Bin next to their photos.
-        await removeThumbCache(filePath);
-      } catch (err) {
-        result.failed.push({
-          path: filePath,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    return result;
-  });
-
   ipcMain.handle(IPC_CHANNELS.READ_FILE, async (_event, filePath: string) => {
     // Under the per-path lock so a rating write cannot land while a thumbnail,
     // scoring or preview read holds this file open. exiftool writes by renaming
@@ -651,12 +546,14 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(IPC_CHANNELS.DELETE_FILES, async (_event, filePaths: string[]) => {
-    const result: TrashResult = { succeeded: [], failed: [] };
+    const result: FileOpResult = { succeeded: [], failed: [] };
 
     for (const filePath of filePaths) {
       try {
         await unlink(filePath);
         result.succeeded.push(filePath);
+        // Only after the delete succeeded — a failed unlink must not orphan the
+        // thumbnail of a file that still exists.
         await removeThumbCache(filePath);
       } catch (err) {
         result.failed.push({

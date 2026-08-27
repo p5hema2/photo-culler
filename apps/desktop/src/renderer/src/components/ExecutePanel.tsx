@@ -1,54 +1,53 @@
 import { useState, useMemo, useCallback } from 'react';
-import type { Classification } from '../hooks/usePhotoStore';
-
-export type DeleteMode = 'trash' | 'permanent';
-
-export interface ExecuteOptions {
-  deleteMode: DeleteMode;
-  movePicks: boolean;
-  applyRotations: boolean;
-}
-
-export interface ExecuteResult {
-  trashedCount: number;
-  movedCount: number;
-  rotatedCount: number;
-  failedPaths: Array<{ path: string; error: string }>;
-}
+import { MAX_RATING, isInRatingRange } from '@photo-culler/image-utils/rating';
+import type { ExecuteOptions, ExecuteResult } from '../hooks/usePhotoStore';
+import { DEFAULT_DELETE_RANGE } from '../hooks/usePhotoStore';
 
 interface ExecutePanelProps {
-  classifications: Record<string, Classification>;
+  /**
+   * Rating per absolute path for the images the filters currently show —
+   * Execute operates on what is visible, so this is also the denominator of
+   * every count the panel quotes.
+   */
+  visibleRatings: Record<string, number>;
   rotatedCount: number;
   isOpen: boolean;
   onClose: () => void;
   onExecute: (options: ExecuteOptions) => Promise<ExecuteResult>;
 }
 
+/** "1 star" / "1-3 stars" — the range always starts at one. */
+function formatDeleteRange(max: number): string {
+  return max === 1 ? '1 star' : `1-${max} stars`;
+}
+
 export function ExecutePanel({
-  classifications,
+  visibleRatings,
   rotatedCount,
   isOpen,
   onClose,
   onExecute,
 }: ExecutePanelProps): React.JSX.Element | null {
-  const [deleteMode, setDeleteMode] = useState<DeleteMode>('trash');
-  const [movePicks, setMovePicks] = useState(false);
+  /**
+   * The top of the delete window. The bottom is always 1: an unrated image can
+   * never be deleted, and that is the safety property of the whole feature.
+   */
+  const [deleteMax, setDeleteMax] = useState(DEFAULT_DELETE_RANGE.max);
   const [applyRotations, setApplyRotations] = useState(true);
   const [isExecuting, setIsExecuting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [result, setResult] = useState<ExecuteResult | null>(null);
 
-  const counts = useMemo(() => {
-    const summary = { keep: 0, review: 0, delete: 0, unclassified: 0 };
-    for (const cls of Object.values(classifications)) {
-      if (cls === null) {
-        summary.unclassified++;
-      } else {
-        summary[cls]++;
-      }
-    }
-    return summary;
-  }, [classifications]);
+  const deleteRange = useMemo(() => ({ min: 1, max: deleteMax }), [deleteMax]);
+
+  const visibleCount = Object.keys(visibleRatings).length;
+  const deleteCount = useMemo(
+    () =>
+      Object.values(visibleRatings).filter((rating) => isInRatingRange(rating, deleteRange)).length,
+    [visibleRatings, deleteRange],
+  );
+
+  const rotationCount = applyRotations ? rotatedCount : 0;
 
   const handleExecuteClick = useCallback(() => {
     setShowConfirm(true);
@@ -58,19 +57,18 @@ export function ExecutePanel({
     setShowConfirm(false);
     setIsExecuting(true);
     try {
-      const res = await onExecute({ deleteMode, movePicks, applyRotations });
+      const res = await onExecute({ deleteRange, applyRotations });
       setResult(res);
     } catch {
       setResult({
-        trashedCount: 0,
-        movedCount: 0,
+        deletedCount: 0,
         rotatedCount: 0,
         failedPaths: [{ path: '', error: 'Unexpected error' }],
       });
     } finally {
       setIsExecuting(false);
     }
-  }, [onExecute, deleteMode, movePicks, applyRotations]);
+  }, [onExecute, deleteRange, applyRotations]);
 
   const handleDone = useCallback(() => {
     setResult(null);
@@ -98,15 +96,10 @@ export function ExecutePanel({
             <h2 className="text-lg font-semibold mb-4">Execution Complete</h2>
 
             <div className="space-y-2 mb-6 text-sm">
-              {result.trashedCount > 0 && (
+              {result.deletedCount > 0 && (
                 <p className="text-green-400">
-                  {result.trashedCount} image{result.trashedCount !== 1 ? 's' : ''}{' '}
-                  {deleteMode === 'trash' ? 'moved to trash' : 'permanently deleted'}
-                </p>
-              )}
-              {result.movedCount > 0 && (
-                <p className="text-green-400">
-                  {result.movedCount} image{result.movedCount !== 1 ? 's' : ''} moved to picks/
+                  {result.deletedCount} image{result.deletedCount !== 1 ? 's' : ''} permanently
+                  deleted
                 </p>
               )}
               {result.rotatedCount > 0 && (
@@ -129,8 +122,7 @@ export function ExecutePanel({
                   </ul>
                 </div>
               )}
-              {result.trashedCount === 0 &&
-                result.movedCount === 0 &&
+              {result.deletedCount === 0 &&
                 result.rotatedCount === 0 &&
                 result.failedPaths.length === 0 && (
                   <p className="text-gray-400">No actions were performed.</p>
@@ -153,32 +145,22 @@ export function ExecutePanel({
             <h2 className="text-lg font-semibold mb-4 text-yellow-400">Confirm Execution</h2>
 
             <div className="space-y-2 mb-6 text-sm">
-              {counts.delete > 0 && (
-                <p>
-                  {deleteMode === 'trash' ? (
-                    <>
-                      Move <span className="text-red-400 font-medium">{counts.delete}</span> image
-                      {counts.delete !== 1 ? 's' : ''} to trash?
-                    </>
-                  ) : (
-                    <span className="text-red-400 font-medium">
-                      Permanently delete {counts.delete} image{counts.delete !== 1 ? 's' : ''}? This
-                      cannot be undone!
-                    </span>
-                  )}
+              {deleteCount > 0 && (
+                <p data-testid="execute-confirm-summary">
+                  <span className="text-red-400 font-medium">
+                    Permanently delete {deleteCount} of {visibleCount} visible image
+                    {visibleCount !== 1 ? 's' : ''}, {formatDeleteRange(deleteMax)}?
+                  </span>{' '}
+                  <span className="text-gray-400">
+                    The files do not go to the trash and cannot be recovered.
+                  </span>
                 </p>
               )}
-              {movePicks && counts.keep > 0 && (
-                <p>
-                  Move <span className="text-green-400 font-medium">{counts.keep}</span> keep image
-                  {counts.keep !== 1 ? 's' : ''} to picks/ subfolder?
-                </p>
-              )}
-              {applyRotations && rotatedCount > 0 && (
+              {rotationCount > 0 && (
                 <p>
                   Apply rotation to{' '}
-                  <span className="text-blue-400 font-medium">{rotatedCount}</span> image
-                  {rotatedCount !== 1 ? 's' : ''} on disk
+                  <span className="text-blue-400 font-medium">{rotationCount}</span> image
+                  {rotationCount !== 1 ? 's' : ''} on disk
                   <span className="text-gray-500"> (modifies files in-place)</span>
                 </p>
               )}
@@ -195,11 +177,7 @@ export function ExecutePanel({
               <button
                 onClick={handleConfirm}
                 className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                  counts.delete > 0 && deleteMode === 'permanent'
-                    ? 'bg-red-700 hover:bg-red-600'
-                    : counts.delete > 0
-                      ? 'bg-red-600 hover:bg-red-700'
-                      : 'bg-blue-600 hover:bg-blue-700'
+                  deleteCount > 0 ? 'bg-red-700 hover:bg-red-600' : 'bg-blue-600 hover:bg-blue-700'
                 }`}
                 data-testid="execute-confirm-btn"
               >
@@ -210,96 +188,42 @@ export function ExecutePanel({
         ) : (
           /* Options view */
           <div>
-            <h2 className="text-lg font-semibold mb-4">Execute Actions</h2>
+            <h2 className="text-lg font-semibold mb-1">Execute Actions</h2>
+            <p className="text-xs text-gray-500 mb-5">
+              Deletion is permanent — files are removed, not moved to the trash.
+            </p>
 
-            {/* Classification summary */}
-            <div className="mb-6 space-y-1.5 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-green-500 inline-block" />
-                <span>
-                  {counts.keep} image{counts.keep !== 1 ? 's' : ''} marked as Keep
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-yellow-500 inline-block" />
-                <span>
-                  {counts.review} image{counts.review !== 1 ? 's' : ''} marked as Review
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
-                <span>
-                  {counts.delete} image{counts.delete !== 1 ? 's' : ''} marked as Delete
-                </span>
-              </div>
-              {counts.unclassified > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="w-3 h-3 rounded-full bg-gray-500 inline-block" />
-                  <span>
-                    {counts.unclassified} image{counts.unclassified !== 1 ? 's' : ''} unclassified
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Delete mode selection */}
-            <div className="mb-4">
+            {/* Delete range — the bottom is fixed at one star on purpose */}
+            <div className="mb-6">
               <p className="text-sm font-medium text-gray-300 mb-2">
-                Action for &apos;delete&apos; images:
+                Delete images rated {formatDeleteRange(deleteMax)}
               </p>
-              <div className="space-y-2">
-                <label
-                  className="flex items-center gap-2 cursor-pointer text-sm"
-                  data-testid="mode-trash"
-                >
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    value="trash"
-                    checked={deleteMode === 'trash'}
-                    onChange={() => setDeleteMode('trash')}
-                    className="accent-blue-500"
-                  />
-                  <span>Move to OS Trash</span>
-                  <span className="text-gray-500 text-xs">(recoverable)</span>
-                </label>
-                <label
-                  className="flex items-center gap-2 cursor-pointer text-sm"
-                  data-testid="mode-permanent"
-                >
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    value="permanent"
-                    checked={deleteMode === 'permanent'}
-                    onChange={() => setDeleteMode('permanent')}
-                    className="accent-red-500"
-                  />
-                  <span className="text-red-400">Permanently delete</span>
-                  <span className="text-red-500 text-xs">(cannot be undone!)</span>
-                </label>
-              </div>
-            </div>
-
-            {/* Move picks checkbox */}
-            <div className="mb-4">
-              <label
-                className="flex items-center gap-2 cursor-pointer text-sm"
-                data-testid="move-picks-checkbox"
-              >
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 w-4 text-right">1</span>
                 <input
-                  type="checkbox"
-                  checked={movePicks}
-                  onChange={(e) => setMovePicks(e.target.checked)}
-                  className="accent-green-500"
+                  type="range"
+                  min={1}
+                  max={MAX_RATING}
+                  step={1}
+                  value={deleteMax}
+                  onChange={(e) => setDeleteMax(Number(e.target.value))}
+                  className="flex-1 accent-red-500"
+                  aria-label="Highest rating to delete"
+                  data-testid="delete-range-slider"
                 />
-                <span>Move &apos;keep&apos; images to picks/ subfolder</span>
-                {counts.keep > 0 && (
-                  <span className="text-gray-500 text-xs">
-                    ({counts.keep} image{counts.keep !== 1 ? 's' : ''})
-                  </span>
-                )}
-              </label>
+                <span className="text-xs text-gray-500 w-4">{deleteMax}</span>
+              </div>
+              <p className="text-sm mt-2" data-testid="execute-delete-summary">
+                <span className={deleteCount > 0 ? 'text-red-400 font-medium' : 'text-gray-400'}>
+                  {deleteCount}
+                </span>{' '}
+                <span className="text-gray-400">
+                  of {visibleCount} visible image{visibleCount !== 1 ? 's' : ''}
+                </span>
+              </p>
+              <p className="text-xs text-gray-600 mt-1">
+                Unrated images are never deleted, whatever the range.
+              </p>
             </div>
 
             {/* Apply rotations checkbox */}
@@ -337,15 +261,9 @@ export function ExecutePanel({
               </button>
               <button
                 onClick={handleExecuteClick}
-                disabled={
-                  counts.delete === 0 &&
-                  !(movePicks && counts.keep > 0) &&
-                  !(applyRotations && rotatedCount > 0)
-                }
+                disabled={deleteCount === 0 && rotationCount === 0}
                 className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                  counts.delete === 0 &&
-                  !(movePicks && counts.keep > 0) &&
-                  !(applyRotations && rotatedCount > 0)
+                  deleteCount === 0 && rotationCount === 0
                     ? 'bg-gray-600 cursor-not-allowed text-gray-400'
                     : 'bg-red-600 hover:bg-red-700'
                 }`}

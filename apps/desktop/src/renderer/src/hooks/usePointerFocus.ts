@@ -1,6 +1,5 @@
 import { useCallback, useRef } from 'react';
 import type { FocusOrigin } from '../lib/focus-scroll';
-import { isHoverStale } from '../lib/focus-scroll';
 
 export interface PointerFocus {
   /** Pass to a thumbnail list in place of the raw focus callback. */
@@ -20,20 +19,14 @@ export interface PointerFocus {
  * Tells a pointer-driven focus change from every other kind.
  *
  * Views that scroll the focused image into place need the distinction: a click
- * or a hover has already put the cell where the user is looking, and moving it
- * then is at best a fight with them. The hover case is worse than a fight — see
- * isHoverStale in lib/focus-scroll.
+ * has already put the cell where the user is looking, and moving it then is at
+ * best a fight with them.
  */
 export function usePointerFocus(onImageFocus: (path: string) => void): PointerFocus {
   const lastRef = useRef<{ path: string; origin: FocusOrigin } | null>(null);
 
   const handleImageFocus = useCallback(
     (path: string, origin: FocusOrigin) => {
-      // A hover the user never made: our own centring scroll slid this cell
-      // under a resting cursor. Honouring it would advance the selection a
-      // second time on every arrow key. See isHoverStale.
-      if (origin === 'hover' && isHoverStale()) return;
-
       lastRef.current = { path, origin };
       onImageFocus(path);
     },

@@ -9,16 +9,11 @@ function makeResults(): ResultsFile {
     updatedAt: '2026-01-01T00:00:00.000Z',
     images: {
       'a.jpg': {
-        classification: 'keep',
-        userOverride: true,
         qualityScore: 81,
         qualitySubscores: { sharpness: 90, exposure: 70, contrast: 80, noise: 60 },
         rotation: 90,
-        exif: { iso: 160, cameraModel: 'DC-S5D' },
       },
       'b.jpg': {
-        classification: 'delete',
-        userOverride: false,
         qualityScore: 12,
       },
     },
@@ -27,52 +22,37 @@ function makeResults(): ResultsFile {
 
 describe('rebuildResults', () => {
   it('carries every per-image field forward for kept images', () => {
-    // Regression for the bug where trashImages listed only four of the six
+    // Regression for the bug where the delete path listed only four of the six
     // fields, stripping qualitySubscores and rotation from every remaining
     // image in the folder on a single Delete keypress.
     const results = makeResults();
-    const rebuilt = rebuildResults(results, ['a.jpg'], { 'a.jpg': 'keep' });
+    const rebuilt = rebuildResults(results, ['a.jpg']);
 
     expect(rebuilt.images['a.jpg']).toEqual({
-      classification: 'keep',
-      userOverride: true,
       qualityScore: 81,
       qualitySubscores: { sharpness: 90, exposure: 70, contrast: 80, noise: 60 },
       rotation: 90,
-      exif: { iso: 160, cameraModel: 'DC-S5D' },
     });
   });
 
   it('drops images that are not in keepNames', () => {
-    const rebuilt = rebuildResults(makeResults(), ['a.jpg'], { 'a.jpg': 'keep' });
+    const rebuilt = rebuildResults(makeResults(), ['a.jpg']);
 
     expect(Object.keys(rebuilt.images)).toEqual(['a.jpg']);
     expect(rebuilt.images['b.jpg']).toBeUndefined();
   });
 
-  it('applies the incoming classification over the stored one', () => {
-    const rebuilt = rebuildResults(makeResults(), ['a.jpg'], { 'a.jpg': 'review' });
+  it('does not invent an entry for a name with no stored record', () => {
+    // Nothing is known about the image, and an empty record would only be noise
+    // in the file — every field of ImageResult is optional.
+    const rebuilt = rebuildResults(makeResults(), ['new.jpg']);
 
-    expect(rebuilt.images['a.jpg']!.classification).toBe('review');
-    // ...without disturbing the other fields
-    expect(rebuilt.images['a.jpg']!.rotation).toBe(90);
-  });
-
-  it('falls back to the stored classification when none is supplied', () => {
-    const rebuilt = rebuildResults(makeResults(), ['a.jpg'], {});
-
-    expect(rebuilt.images['a.jpg']!.classification).toBe('keep');
-  });
-
-  it('creates a null-classified entry for a name with no stored record', () => {
-    const rebuilt = rebuildResults(makeResults(), ['new.jpg'], {});
-
-    expect(rebuilt.images['new.jpg']).toEqual({ classification: null, userOverride: false });
+    expect(rebuilt.images['new.jpg']).toBeUndefined();
   });
 
   it('preserves the file-level metadata', () => {
     const results = makeResults();
-    const rebuilt = rebuildResults(results, ['a.jpg'], {});
+    const rebuilt = rebuildResults(results, ['a.jpg']);
 
     expect(rebuilt.version).toBe(1);
     expect(rebuilt.folderPath).toBe('/photos');
@@ -91,7 +71,6 @@ describe('projectFolderResults', () => {
 
   /** Nothing in state at all — the shape openFolder produces for a fresh folder. */
   const empty = {
-    classifications: {},
     qualityScores: {},
     qualitySubscores: {},
     rotations: {},
@@ -120,10 +99,15 @@ describe('projectFolderResults', () => {
   it('leaves the other fields of the projected image alone', () => {
     const projected = projectFolderResults(makeResults(), '/photos', [A], empty);
 
-    // Scores and cached EXIF are only ever set, never cleared, so they keep
-    // falling back to the value on disk.
+    // Scores are only ever set, never cleared, so they keep falling back to the
+    // value on disk.
     expect(projected.images['a.jpg']!.qualityScore).toBe(81);
-    expect(projected.images['a.jpg']!.exif).toEqual({ iso: 160, cameraModel: 'DC-S5D' });
+    expect(projected.images['a.jpg']!.qualitySubscores).toEqual({
+      sharpness: 90,
+      exposure: 70,
+      contrast: 80,
+      noise: 60,
+    });
   });
 
   it('does not touch an image that is not in the projected list', () => {
@@ -131,5 +115,11 @@ describe('projectFolderResults', () => {
     const projected = projectFolderResults(makeResults(), '/photos', [A], empty);
 
     expect(projected.images['b.jpg']!.qualityScore).toBe(12);
+  });
+
+  it('never records a rating — the image file is the authority for that', () => {
+    const projected = projectFolderResults(makeResults(), '/photos', [A], empty);
+
+    expect(projected.images['a.jpg']).not.toHaveProperty('rating');
   });
 });

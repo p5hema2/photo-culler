@@ -11,9 +11,12 @@
  * Where a focus change came from, when a thumbnail itself caused it.
  *
  * Pointer-driven focus must not scroll: the cell is already under the cursor,
- * and moving it away is at best a fight with the user.
+ * and moving it away is at best a fight with the user. Since select-on-hover
+ * went, a click is the only way a thumbnail can move the focus — hence the
+ * single member. Named rather than inlined because the thumbnail views read
+ * better saying what moved the focus than passing a bare flag.
  */
-export type FocusOrigin = 'click' | 'hover';
+export type FocusOrigin = 'click';
 
 export interface CenterScrollInput {
   /** Item offset from the start of the scrollable content, in px. */
@@ -44,58 +47,20 @@ export function centeredScrollOffset({
   return Math.round(Math.min(Math.max(centered, 0), maxOffset));
 }
 
-// ─── Hover after a programmatic scroll ───────────────────────────────
-
 /**
- * Chromium re-evaluates the hover target after any scroll and dispatches
- * mouseenter on whatever lands under a resting cursor. With select-on-hover on,
- * that reads as a selection, so one arrow key would advance two images: once by
- * the key, once by the thumbnail the centring scroll slid under the pointer.
+ * Scroll a container along one axis.
  *
- * So a scroll we performed ourselves marks hover stale, and only real pointer
- * movement clears it. Movement is judged by position, not by a mousemove event
- * arriving: Blink can dispatch a *fake* one at unchanged coordinates after a
- * layout change, which is the very event this needs to ignore.
- */
-let hoverStale = false;
-let pointerX = NaN;
-let pointerY = NaN;
-
-if (typeof document !== 'undefined') {
-  document.addEventListener(
-    'mousemove',
-    (event) => {
-      if (event.clientX === pointerX && event.clientY === pointerY) return;
-      pointerX = event.clientX;
-      pointerY = event.clientY;
-      hoverStale = false;
-    },
-    { capture: true, passive: true },
-  );
-}
-
-/** Whether hover is currently a leftover of our own scrolling rather than intent. */
-export function isHoverStale(): boolean {
-  return hoverStale;
-}
-
-/**
- * Scroll a container along one axis, and note that anything now under the
- * pointer got there by scrolling rather than by the user pointing at it.
- *
- * A no-op when the container is already there — an assignment that moves
- * nothing must not make a genuine hover look stale.
+ * A no-op when the container is already there, so a redundant re-centre costs
+ * no scroll event.
  */
 export function setScrollTop(container: HTMLElement, target: number): void {
   if (Math.round(container.scrollTop) === target) return;
   container.scrollTop = target;
-  hoverStale = true;
 }
 
 export function setScrollLeft(container: HTMLElement, target: number): void {
   if (Math.round(container.scrollLeft) === target) return;
   container.scrollLeft = target;
-  hoverStale = true;
 }
 
 /**

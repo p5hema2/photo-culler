@@ -43,10 +43,8 @@ const GROUP: PhotoGroup = {
 function makeHandlers() {
   return {
     onFocusChange: vi.fn<(path: string | null) => void>(),
-    onCycleClassification: vi.fn<(imagePath: string) => void>(),
-    onSetClassification:
-      vi.fn<(imagePath: string, classification: 'keep' | 'review' | 'delete' | null) => void>(),
-    onTrashFocused: vi.fn<() => void>(),
+    onRate: vi.fn<(imagePath: string, rating: number) => void>(),
+    onDeleteFocused: vi.fn<() => void>(),
     onRotate: vi.fn<(imagePath: string, direction: 'cw' | 'ccw') => void>(),
   };
 }
@@ -60,7 +58,13 @@ afterEach(() => {
   unmountHook = null;
 });
 
-function mount(options: { groups?: PhotoGroup[]; focusedImageId?: string | null } = {}) {
+function mount(
+  options: {
+    groups?: PhotoGroup[];
+    focusedImageId?: string | null;
+    modalOpen?: boolean;
+  } = {},
+) {
   handlers = makeHandlers();
 
   const rendered = renderHook(() =>
@@ -68,14 +72,14 @@ function mount(options: { groups?: PhotoGroup[]; focusedImageId?: string | null 
       groups: options.groups ?? [GROUP],
       focusedImageId: options.focusedImageId === undefined ? IMAGE.path : options.focusedImageId,
       onFocusChange: handlers.onFocusChange,
-      onCycleClassification: handlers.onCycleClassification,
-      onSetClassification: handlers.onSetClassification,
+      onRate: handlers.onRate,
       containerRef: { current: document.body },
-      onTrashFocused: handlers.onTrashFocused,
+      onDeleteFocused: handlers.onDeleteFocused,
       sortedFlatImages: (options.groups ?? [GROUP]).flatMap((g) => g.images),
       thumbnailSize: 'medium',
       onRotate: handlers.onRotate,
       viewLayout: 'default',
+      modalOpen: options.modalOpen ?? false,
     }),
   );
   unmountHook = rendered.unmount;
@@ -86,24 +90,53 @@ function press(key: string, init: KeyboardEventInit = {}): void {
   document.body.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, ...init }));
 }
 
-describe('classification keys', () => {
+describe('rating keys', () => {
   beforeEach(() => mount());
 
-  it.each([
-    ['1', 'keep'],
-    ['2', 'review'],
-    ['3', 'delete'],
-    ['0', null],
-  ] as const)('key %s reports the absolute path, not the filename', (key, classification) => {
-    press(key);
+  it.each([0, 1, 2, 3, 4, 5])('key %s reports the absolute path, not the filename', (rating) => {
+    press(String(rating));
 
-    expect(handlers.onSetClassification).toHaveBeenCalledWith(IMAGE.path, classification);
-    expect(handlers.onSetClassification).not.toHaveBeenCalledWith(IMAGE.name, classification);
+    expect(handlers.onRate).toHaveBeenCalledWith(IMAGE.path, rating);
+    expect(handlers.onRate).not.toHaveBeenCalledWith(IMAGE.name, rating);
   });
 
-  it('Space cycles by absolute path', () => {
-    press(' ');
-    expect(handlers.onCycleClassification).toHaveBeenCalledWith(IMAGE.path);
+  it('leaves a digit outside 0-5 to whatever else wants it', () => {
+    press('6');
+    expect(handlers.onRate).not.toHaveBeenCalled();
+  });
+});
+
+describe('a dialog in front of the grid', () => {
+  beforeEach(() => mount({ modalOpen: true }));
+
+  /**
+   * The hook listens on the document, so every key still reaches it while a
+   * modal is up — and one of them deletes a photo the user cannot even see.
+   */
+  it('ignores Delete', () => {
+    press('Delete');
+    expect(handlers.onDeleteFocused).not.toHaveBeenCalled();
+  });
+
+  it('ignores rating and navigation keys', () => {
+    press('3');
+    press('ArrowRight');
+    expect(handlers.onRate).not.toHaveBeenCalled();
+    expect(handlers.onFocusChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('Delete', () => {
+  beforeEach(() => mount());
+
+  it('asks the caller to delete the focused image', () => {
+    press('Delete');
+    expect(handlers.onDeleteFocused).toHaveBeenCalledTimes(1);
+  });
+
+  it('Backspace does the same', () => {
+    press('Backspace');
+    expect(handlers.onDeleteFocused).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -152,9 +185,9 @@ describe('focus that is no longer on screen', () => {
     expect(pressCancelable(' ')).toBe(true);
   });
 
-  it('leaves keys it does not own alone', () => {
+  it('does not rate an image it cannot find', () => {
     expect(pressCancelable('1')).toBe(false);
-    expect(handlers.onSetClassification).not.toHaveBeenCalled();
+    expect(handlers.onRate).not.toHaveBeenCalled();
   });
 });
 
@@ -186,7 +219,7 @@ describe('where the handler listens', () => {
     }
 
     expect(handlers.onFocusChange).not.toHaveBeenCalled();
-    expect(handlers.onSetClassification).not.toHaveBeenCalled();
+    expect(handlers.onRate).not.toHaveBeenCalled();
     input.remove();
   });
 

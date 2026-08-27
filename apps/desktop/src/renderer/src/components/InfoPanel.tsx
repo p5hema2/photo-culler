@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ImageFileInfo, QualitySubscores } from '@photo-culler/types';
-import type { Classification } from './ThumbnailCell';
+import { StarRating } from './StarRating';
 import { Histogram } from './Histogram';
 import { useZoomPan } from '../hooks/useZoomPan';
 import { FocusPeakingOverlay } from './FocusPeakingOverlay';
@@ -14,7 +14,10 @@ import type { DetailedMetadataState } from '../hooks/useDetailedMetadata';
 
 interface InfoPanelProps {
   image: ImageFileInfo | null;
-  classification: Classification;
+  /** Star rating of `image`, 0-5, where 0 means unrated. */
+  rating: number;
+  /** Takes the image's ABSOLUTE PATH — renderer state is keyed by path. */
+  onRate: (imagePath: string, rating: number) => void;
   qualityScore?: number;
   qualitySubscores?: QualitySubscores;
   rotation?: number;
@@ -24,16 +27,6 @@ interface InfoPanelProps {
   overlayActions: OverlayActions;
   detailedMeta: DetailedMetadataState;
 }
-
-const CLASSIFICATION_BADGES: Record<
-  NonNullable<Classification> | 'null',
-  { label: string; className: string }
-> = {
-  keep: { label: 'Keep', className: 'bg-green-900 text-green-300 border-green-500' },
-  review: { label: 'Review', className: 'bg-yellow-900 text-yellow-300 border-yellow-500' },
-  delete: { label: 'Delete', className: 'bg-red-900 text-red-300 border-red-500' },
-  null: { label: 'Unscored', className: 'bg-gray-700 text-gray-400 border-gray-500' },
-};
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -138,7 +131,8 @@ function InfoRow({
 
 export function InfoPanel({
   image,
-  classification,
+  rating,
+  onRate,
   qualityScore,
   qualitySubscores,
   rotation = 0,
@@ -246,15 +240,6 @@ export function InfoPanel({
       });
     };
   }, []);
-
-  // The key set is closed, so the type says this lookup cannot miss — and the
-  // `??` is still load-bearing, because the value does not come from the type
-  // system. `loadResults` validates only `version` and `folderPath`, so a
-  // hand-edited or corrupted .photo-culler-results.json can put any string in
-  // `classification`. Without the fallback that renders as a TypeError on
-  // `badge.className`, and with no ErrorBoundary in the app that means a blank
-  // window instead of one wrong badge.
-  const badge = CLASSIFICATION_BADGES[classification ?? 'null'] ?? CLASSIFICATION_BADGES.null;
 
   // Compute quick stats
   const megapixels =
@@ -403,21 +388,24 @@ export function InfoPanel({
 
                 {/* Info content */}
                 <div className="p-5 pr-3 flex flex-col gap-4">
-                  {/* Header: filename + badge */}
-                  <div className="flex items-center gap-3">
+                  {/* Header: filename, then the rating on its own line */}
+                  <div className="flex flex-col gap-2">
                     <h2
-                      className="text-base font-semibold text-white truncate flex-1"
+                      className="text-base font-semibold text-white truncate"
                       title={image.name}
                       data-testid="info-panel-filename"
                     >
                       {image.name}
                     </h2>
-                    <span
-                      className={`inline-block px-2 py-0.5 text-xs rounded border flex-shrink-0 ${badge.className}`}
-                      data-testid="info-panel-classification"
-                    >
-                      {badge.label}
-                    </span>
+                    <div className="-ml-1" data-testid="info-panel-rating">
+                      <StarRating
+                        rating={rating}
+                        onRate={(value) => onRate(image.path, value)}
+                        interactive
+                        size="lg"
+                        focusable
+                      />
+                    </div>
                   </div>
 
                   {/* Quality score with subscores */}

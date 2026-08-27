@@ -32,8 +32,6 @@ const validResults: ResultsFile = {
   updatedAt: '2026-01-01T00:00:00.000Z',
   images: {
     'IMG_001.jpg': {
-      classification: 'keep',
-      userOverride: false,
       qualityScore: 0.9,
     },
   },
@@ -89,7 +87,7 @@ describe('saveResults', () => {
     expect(parsed.version).toBe(1);
     expect(parsed.folderPath).toBe('/Users/test/photos');
     expect(parsed.updatedAt).toBeDefined();
-    expect(parsed.images['IMG_001.jpg'].classification).toBe('keep');
+    expect(parsed.images['IMG_001.jpg'].qualityScore).toBe(0.9);
   });
 
   it('updates the timestamp on save', async () => {

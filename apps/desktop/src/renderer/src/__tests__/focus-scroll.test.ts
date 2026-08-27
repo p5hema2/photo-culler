@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { centeredScrollOffset, isHoverStale, setScrollTop } from '../lib/focus-scroll';
+import { describe, it, expect, vi } from 'vitest';
+import { centeredScrollOffset, setScrollTop } from '../lib/focus-scroll';
 
 /** A 100px-tall thumbnail in a 600px-tall strip holding 30 of them. */
 const STRIP = { itemSize: 100, viewportSize: 600, contentSize: 3000 };
@@ -39,43 +39,24 @@ describe('centeredScrollOffset', () => {
   });
 });
 
-/**
- * Chromium re-hovers whatever a scroll slides under a resting cursor, without a
- * mousemove. Select-on-hover would read that as a selection.
- */
-describe('hover after a programmatic scroll', () => {
-  const movePointer = (x: number, y: number): void => {
-    document.dispatchEvent(new MouseEvent('mousemove', { clientX: x, clientY: y }));
-  };
-
-  it('marks hover stale when the scroll actually moves the view', () => {
-    movePointer(10, 10);
-    expect(isHoverStale()).toBe(false);
-
-    setScrollTop(document.createElement('div'), 250);
-    expect(isHoverStale()).toBe(true);
+describe('setScrollTop', () => {
+  it('assigns the offset', () => {
+    const container = document.createElement('div');
+    setScrollTop(container, 250);
+    expect(container.scrollTop).toBe(250);
   });
 
-  it('clears once the pointer really moves', () => {
-    setScrollTop(document.createElement('div'), 250);
-    expect(isHoverStale()).toBe(true);
+  it('leaves the container alone when it is already at the offset', () => {
+    // jsdom does not lay out, so scrollTop only ever holds what we assigned.
+    // The guard is what keeps a redundant re-centre from firing a scroll event.
+    const container = document.createElement('div');
+    const setter = vi.fn();
+    Object.defineProperty(container, 'scrollTop', { get: () => 0, set: setter });
 
-    movePointer(40, 80);
-    expect(isHoverStale()).toBe(false);
-  });
+    setScrollTop(container, 0);
+    expect(setter).not.toHaveBeenCalled();
 
-  it('ignores a repeat mousemove at coordinates the pointer never left', () => {
-    movePointer(40, 80);
-    setScrollTop(document.createElement('div'), 250);
-
-    // Blink dispatches one of these itself after a layout change.
-    movePointer(40, 80);
-    expect(isHoverStale()).toBe(true);
-  });
-
-  it('leaves hover alone when the container is already at the offset', () => {
-    movePointer(1, 1);
-    setScrollTop(document.createElement('div'), 0);
-    expect(isHoverStale()).toBe(false);
+    setScrollTop(container, 40);
+    expect(setter).toHaveBeenCalledWith(40);
   });
 });

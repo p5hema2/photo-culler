@@ -2,7 +2,6 @@ import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { ImageFileInfo } from '@photo-culler/types';
 import type { FocusOrigin } from '../lib/focus-scroll';
 import { ThumbnailCell } from './ThumbnailCell';
-import type { Classification } from './ThumbnailCell';
 
 /**
  * Height of the group's time-range header, pinned rather than left to the text.
@@ -16,14 +15,12 @@ export const HEADER_HEIGHT = 32;
 interface GroupRowProps {
   group: PhotoGroup;
   cellSize: number;
-  classifications: Record<string, Classification>;
+  ratings: Record<string, number>;
   qualityScores: Record<string, number>;
   rotations: Record<string, number>;
   focusedImageId: string | null;
-  selectOnHover: boolean;
-  onImageClick: (imagePath: string) => void;
   onImageFocus: (path: string, origin: FocusOrigin) => void;
-  onCycleClassification: (imagePath: string) => void;
+  onRate: (imagePath: string, rating: number) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   groupIndex: number;
@@ -51,37 +48,21 @@ function offsetToLabel(offset: string): string {
   return labels[offset] ?? `UTC${offset}`;
 }
 
-function getClassificationSummary(
-  images: ImageFileInfo[],
-  classifications: Record<string, Classification>,
-): string {
-  const counts = { keep: 0, review: 0, delete: 0, unclassified: 0 };
-  for (const img of images) {
-    const cls = classifications[img.path] ?? null;
-    if (cls === null) {
-      counts.unclassified++;
-    } else {
-      counts[cls]++;
-    }
-  }
-  const parts: string[] = [];
-  if (counts.keep > 0) parts.push(`${counts.keep} keep`);
-  if (counts.review > 0) parts.push(`${counts.review} review`);
-  if (counts.delete > 0) parts.push(`${counts.delete} delete`);
-  return parts.join(' \u00B7 ');
+/** How far the series has been culled — 0 is unrated, so an unrated one does not count. */
+function getRatingSummary(images: ImageFileInfo[], ratings: Record<string, number>): string {
+  const rated = images.filter((img) => (ratings[img.path] ?? 0) > 0).length;
+  return rated > 0 ? `${rated} rated` : '';
 }
 
 export function GroupRow({
   group,
   cellSize,
-  classifications,
+  ratings,
   qualityScores,
   rotations,
   focusedImageId,
-  selectOnHover,
-  onImageClick,
   onImageFocus,
-  onCycleClassification,
+  onRate,
   getThumbnail,
   requestThumbnail,
   groupIndex,
@@ -103,7 +84,7 @@ export function GroupRow({
         ? `${formatTime(startLocal)}${tzLabel}`
         : `${formatTime(startLocal)} -- ${formatTime(endLocal)}${tzLabel}`
       : '';
-  const summary = getClassificationSummary(group.images, classifications);
+  const summary = getRatingSummary(group.images, ratings);
 
   return (
     <div data-testid="group-row" data-group-id={group.id}>
@@ -127,14 +108,12 @@ export function GroupRow({
             key={image.path}
             image={image}
             cellSize={cellSize}
-            classification={classifications[image.path] ?? null}
+            rating={ratings[image.path]}
             qualityScore={qualityScores[image.path]}
             rotation={rotations[image.path]}
             isFocused={focusedImageId === image.path}
-            selectOnHover={selectOnHover}
-            onClick={() => onImageClick(image.path)}
             onFocus={(origin) => onImageFocus(image.path, origin)}
-            onCycleClassification={() => onCycleClassification(image.path)}
+            onRate={(rating) => onRate(image.path, rating)}
             getThumbnail={getThumbnail}
             requestThumbnail={requestThumbnail}
             groupIndex={groupIndex}

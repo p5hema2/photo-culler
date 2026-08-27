@@ -1,6 +1,7 @@
 import { useCallback, useRef, useEffect } from 'react';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { ImageFileInfo } from '@photo-culler/types';
+import { RATING_VALUES } from '@photo-culler/image-utils/rating';
 
 const THUMBNAIL_SIZE_MAP: Record<string, number> = {
   small: 120,
@@ -14,20 +15,25 @@ interface KeyboardNavOptions {
   groups: PhotoGroup[];
   focusedImageId: string | null;
   onFocusChange: (path: string | null) => void;
-  /** Takes the image's ABSOLUTE PATH — renderer state is keyed by path. */
-  onCycleClassification: (imagePath: string) => void;
-  /** Takes the image's ABSOLUTE PATH — renderer state is keyed by path. */
-  onSetClassification: (
-    imagePath: string,
-    classification: 'keep' | 'review' | 'delete' | null,
-  ) => void;
+  /**
+   * Set the focused image's star rating, 0-5, where 0 clears it.
+   * Takes the image's ABSOLUTE PATH — renderer state is keyed by path.
+   */
+  onRate: (imagePath: string, rating: number) => void;
   containerRef: React.RefObject<HTMLElement | null>;
-  onTrashFocused: () => void;
+  /** Ask to delete the focused image. The caller confirms first. */
+  onDeleteFocused: () => void;
   /** Takes the image's ABSOLUTE PATH — renderer state is keyed by path. */
   onRotate: (imagePath: string, direction: 'cw' | 'ccw') => void;
   sortedFlatImages: ImageFileInfo[];
   thumbnailSize: 'small' | 'medium' | 'large';
   viewLayout: ViewLayout;
+  /**
+   * True while a dialog is up. This hook listens on the document, so without
+   * the gate a Delete meant for nothing in particular still reaches the photo
+   * behind the Execute panel.
+   */
+  modalOpen: boolean;
 }
 
 interface KeyboardNavResult {
@@ -60,6 +66,9 @@ const GRID_NAV_KEYS = new Set([
   ' ',
 ]);
 
+/** '0'-'5': the digit is the rating, and '0' clears it. */
+const RATING_KEYS = new Map(RATING_VALUES.map((value) => [String(value), value]));
+
 function findImagePosition(
   groups: PhotoGroup[],
   imagePath: string,
@@ -79,33 +88,38 @@ export function useKeyboardNav({
   groups,
   focusedImageId,
   onFocusChange,
-  onCycleClassification,
-  onSetClassification,
+  onRate,
   containerRef,
-  onTrashFocused,
+  onDeleteFocused,
   onRotate,
   sortedFlatImages,
   thumbnailSize,
   viewLayout,
+  modalOpen,
 }: KeyboardNavOptions): KeyboardNavResult {
   const groupsRef = useRef(groups);
   const focusRef = useRef(focusedImageId);
   const flatImagesRef = useRef(sortedFlatImages);
   const thumbnailSizeRef = useRef(thumbnailSize);
   const viewLayoutRef = useRef(viewLayout);
+  const modalOpenRef = useRef(modalOpen);
   groupsRef.current = groups;
   focusRef.current = focusedImageId;
   flatImagesRef.current = sortedFlatImages;
   thumbnailSizeRef.current = thumbnailSize;
   viewLayoutRef.current = viewLayout;
+  modalOpenRef.current = modalOpen;
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       // This handler owns bare keys and Alt+Arrow only. Ctrl/Cmd chords belong
       // to the native menu — without this guard, KeyboardEvent.key for Ctrl+1
       // is still '1', so the menu's "Layout > Grid" accelerator would also
-      // classify the focused photo as Keep.
+      // rate the focused photo one star.
       if (e.ctrlKey || e.metaKey) return;
+
+      // A dialog is up: the grid behind it is not what the user is typing at.
+      if (modalOpenRef.current) return;
 
       // Listening on the document means text fields would otherwise navigate
       // the grid while the user types in them.
@@ -189,6 +203,14 @@ export function useKeyboardNav({
 
       const { groupIndex, imageIndex } = pos;
       const currentGroup = currentGroups[groupIndex]!;
+
+      const rating = RATING_KEYS.get(e.key);
+      if (rating !== undefined) {
+        e.preventDefault();
+        const image = currentGroup.images[imageIndex];
+        if (image) onRate(image.path, rating);
+        return;
+      }
 
       switch (e.key) {
         case 'ArrowRight': {
@@ -292,39 +314,9 @@ export function useKeyboardNav({
         }
 
         case ' ': {
+          // Space no longer does anything, but it must still be swallowed:
+          // unhandled, it pages the scroll container. See GRID_NAV_KEYS.
           e.preventDefault();
-          const image = currentGroup.images[imageIndex];
-          if (image) {
-            onCycleClassification(image.path);
-          }
-          break;
-        }
-
-        case '1': {
-          e.preventDefault();
-          const img1 = currentGroup.images[imageIndex];
-          if (img1) onSetClassification(img1.path, 'keep');
-          break;
-        }
-
-        case '2': {
-          e.preventDefault();
-          const img2 = currentGroup.images[imageIndex];
-          if (img2) onSetClassification(img2.path, 'review');
-          break;
-        }
-
-        case '3': {
-          e.preventDefault();
-          const img3 = currentGroup.images[imageIndex];
-          if (img3) onSetClassification(img3.path, 'delete');
-          break;
-        }
-
-        case '0': {
-          e.preventDefault();
-          const img0 = currentGroup.images[imageIndex];
-          if (img0) onSetClassification(img0.path, null);
           break;
         }
 
@@ -333,12 +325,12 @@ export function useKeyboardNav({
           const tag = (document.activeElement as HTMLElement)?.tagName?.toLowerCase();
           if (tag === 'input' || tag === 'textarea') return;
           e.preventDefault();
-          onTrashFocused();
+          onDeleteFocused();
           break;
         }
       }
     },
-    [onFocusChange, onCycleClassification, onSetClassification, onTrashFocused, onRotate],
+    [onFocusChange, onRate, onDeleteFocused, onRotate],
   );
 
   /**

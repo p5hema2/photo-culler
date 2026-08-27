@@ -3,7 +3,6 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { FolderSection } from '@photo-culler/image-utils/folders';
 import { GroupRow, HEADER_HEIGHT } from './GroupRow';
-import type { Classification } from './ThumbnailCell';
 import { centeredScrollOffset, centerElementVertically, setScrollTop } from '../lib/focus-scroll';
 import { usePointerFocus } from '../hooks/usePointerFocus';
 
@@ -106,17 +105,15 @@ export function cellOffsetInGrid(
 
 interface PhotoGridProps {
   folders: FolderSection[];
-  classifications: Record<string, Classification>;
+  ratings: Record<string, number>;
   qualityScores: Record<string, number>;
   rotations: Record<string, number>;
   thumbnailSize: 'small' | 'medium' | 'large';
   focusedImageId: string | null;
-  selectOnHover: boolean;
   collapsedFolders: ReadonlySet<string>;
   onToggleFolder: (folderPath: string) => void;
-  onImageClick: (imagePath: string) => void;
   onImageFocus: (path: string) => void;
-  onCycleClassification: (imagePath: string) => void;
+  onRate: (imagePath: string, rating: number) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
   updateVisibleRange: (first: number, last: number) => void;
@@ -124,17 +121,15 @@ interface PhotoGridProps {
 
 export function PhotoGrid({
   folders,
-  classifications,
+  ratings,
   qualityScores,
   rotations,
   thumbnailSize,
   focusedImageId,
-  selectOnHover,
   collapsedFolders,
   onToggleFolder,
-  onImageClick,
   onImageFocus,
-  onCycleClassification,
+  onRate,
   getThumbnail,
   requestThumbnail,
   updateVisibleRange,
@@ -365,14 +360,12 @@ export function PhotoGrid({
                 <GroupRow
                   group={row.group}
                   cellSize={cellSize}
-                  classifications={classifications}
+                  ratings={ratings}
                   qualityScores={qualityScores}
                   rotations={rotations}
                   focusedImageId={focusedImageId}
-                  selectOnHover={selectOnHover}
-                  onImageClick={onImageClick}
                   onImageFocus={handleImageFocus}
-                  onCycleClassification={onCycleClassification}
+                  onRate={onRate}
                   getThumbnail={getThumbnail}
                   requestThumbnail={requestThumbnail}
                   groupIndex={row.groupIndex}

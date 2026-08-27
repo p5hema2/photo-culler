@@ -17,14 +17,12 @@ interface ShortcutSection {
 
 const SECTIONS: ShortcutSection[] = [
   {
-    title: 'Classification',
+    title: 'Rating',
     shortcuts: [
-      { keys: '1', description: 'Mark as Keep' },
-      { keys: '2', description: 'Mark as Review' },
-      { keys: '3', description: 'Mark as Delete' },
-      { keys: '0', description: 'Clear classification' },
-      { keys: 'Space', description: 'Cycle classification' },
-      { keys: 'Right-click', description: 'Cycle classification' },
+      { keys: '1 \u2013 5', description: 'Rate the focused image' },
+      { keys: '0', description: 'Clear the rating' },
+      { keys: 'Click a star', description: 'Rate that many stars' },
+      { keys: 'Click the lit star', description: 'Clear the rating' },
     ],
   },
   {
@@ -40,10 +38,10 @@ const SECTIONS: ShortcutSection[] = [
     shortcuts: [
       { keys: 'Alt + \u2192', description: 'Rotate clockwise' },
       { keys: 'Alt + \u2190', description: 'Rotate counter-clockwise' },
-      { keys: 'Backspace / Delete', description: 'Trash focused image' },
+      { keys: 'Backspace / Delete', description: 'Delete focused image (permanent)' },
       { keys: '\u2318/Ctrl + O', description: 'Open folder' },
       { keys: 'F5', description: 'Rescan folder (discards cached scores)' },
-      { keys: '\u2318/Ctrl + S', description: 'Save / Delete classified images' },
+      { keys: '\u2318/Ctrl + S', description: 'Execute \u2014 delete low-rated images' },
     ],
   },
   {

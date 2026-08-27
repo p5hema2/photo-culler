@@ -7,7 +7,6 @@ const {
   mockReaddir,
   mockRm,
   mockStat,
-  mockTrashItem,
   mockReadFile,
   mockWriteFile,
 } = vi.hoisted(() => ({
@@ -17,7 +16,6 @@ const {
   mockReaddir: vi.fn(),
   mockRm: vi.fn(),
   mockStat: vi.fn(),
-  mockTrashItem: vi.fn(),
   mockReadFile: vi.fn(),
   mockWriteFile: vi.fn(),
 }));
@@ -41,7 +39,6 @@ vi.mock('electron', () => ({
   app: { getVersion: () => '1.2.0' },
   ipcMain: { handle: mockHandle },
   dialog: { showOpenDialog: vi.fn() },
-  shell: { trashItem: mockTrashItem },
 }));
 vi.mock('sharp', () => ({ default: vi.fn() }));
 vi.mock('../store', () => ({ getSession: vi.fn(), updateSession: vi.fn() }));
@@ -92,9 +89,9 @@ describe('getThumbCachePath', () => {
     );
   });
 
-  it('uses the picks/ subfolder for images that live there', () => {
-    expect(norm(getThumbCachePath('/photos/picks/IMG_1.JPG'))).toBe(
-      '/photos/picks/.photo-culler-thumbs/IMG_1.JPG.thumb.webp',
+  it('caches an image in a subfolder beside that subfolder, not the parent', () => {
+    expect(norm(getThumbCachePath('/photos/eventA/IMG_1.JPG'))).toBe(
+      '/photos/eventA/.photo-culler-thumbs/IMG_1.JPG.thumb.webp',
     );
   });
 
@@ -106,10 +103,10 @@ describe('getThumbCachePath', () => {
   });
 });
 
-describe('trashing and deleting', () => {
-  it('removes the cached thumbnail after a successful trash', async () => {
-    mockTrashItem.mockResolvedValue(undefined);
-    const result = (await handlerFor('fs:trash-files')({}, ['/photos/a.jpg'] as never)) as {
+describe('deleting', () => {
+  it('removes the cached thumbnail after a delete', async () => {
+    mockUnlink.mockResolvedValue(undefined);
+    const result = (await handlerFor('fs:delete-files')({}, ['/photos/a.jpg'] as never)) as {
       succeeded: string[];
     };
 
@@ -119,63 +116,28 @@ describe('trashing and deleting', () => {
     );
   });
 
-  it('does NOT remove the thumbnail when the trash operation failed', async () => {
-    mockTrashItem.mockRejectedValue(new Error('locked'));
-    const result = (await handlerFor('fs:trash-files')({}, ['/photos/a.jpg'] as never)) as {
+  it('does NOT remove the thumbnail when the image could not be deleted', async () => {
+    mockUnlink.mockRejectedValueOnce(new Error('locked'));
+    const result = (await handlerFor('fs:delete-files')({}, ['/photos/a.jpg'] as never)) as {
       failed: unknown[];
     };
 
     expect(result.failed).toHaveLength(1);
-    expect(mockUnlink).not.toHaveBeenCalled();
-  });
-
-  it('removes the cached thumbnail after a permanent delete', async () => {
-    mockUnlink.mockResolvedValue(undefined);
-    await handlerFor('fs:delete-files')({}, ['/photos/a.jpg'] as never);
-
-    expect(mockUnlink.mock.calls.map((c) => norm(c[0]))).toContain(
-      '/photos/.photo-culler-thumbs/a.jpg.thumb.webp',
-    );
+    // The only unlink attempted is the image itself — never the thumbnail of a
+    // file that is still on disk.
+    expect(mockUnlink.mock.calls.map((c) => norm(c[0]))).toEqual(['/photos/a.jpg']);
   });
 
   it('reports success even when the thumbnail cannot be removed', async () => {
-    mockTrashItem.mockResolvedValue(undefined);
-    mockUnlink.mockRejectedValue(new Error('EPERM'));
+    mockUnlink.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('EPERM'));
 
-    const result = (await handlerFor('fs:trash-files')({}, ['/photos/a.jpg'] as never)) as {
+    const result = (await handlerFor('fs:delete-files')({}, ['/photos/a.jpg'] as never)) as {
       succeeded: string[];
       failed: unknown[];
     };
 
     expect(result.succeeded).toEqual(['/photos/a.jpg']);
     expect(result.failed).toEqual([]);
-  });
-});
-
-describe('moving to picks/', () => {
-  it('follows the thumbnail into the picks cache directory', async () => {
-    mockMkdir.mockResolvedValue(undefined);
-    mockRename.mockResolvedValue(undefined);
-
-    await handlerFor('fs:move-to-picks')({}, '/photos' as never, ['/photos/a.jpg'] as never);
-
-    const renames = mockRename.mock.calls.map((c) => [norm(c[0]), norm(c[1])]);
-    expect(renames).toContainEqual([
-      '/photos/.photo-culler-thumbs/a.jpg.thumb.webp',
-      '/photos/picks/.photo-culler-thumbs/a.jpg.thumb.webp',
-    ]);
-  });
-
-  it('drops the source thumbnail when the relocation fails', async () => {
-    mockMkdir.mockResolvedValue(undefined);
-    // First rename moves the image, second (the thumbnail) fails.
-    mockRename.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('EXDEV'));
-
-    await handlerFor('fs:move-to-picks')({}, '/photos' as never, ['/photos/a.jpg'] as never);
-
-    expect(mockUnlink.mock.calls.map((c) => norm(c[0]))).toContain(
-      '/photos/.photo-culler-thumbs/a.jpg.thumb.webp',
-    );
   });
 });
 
@@ -316,7 +278,7 @@ describe('planCleanUp', () => {
       version: 1,
       folderPath: '/photos',
       updatedAt: 'x',
-      images: Object.fromEntries(names.map((n) => [n, { classification: 'keep' }])),
+      images: Object.fromEntries(names.map((n) => [n, { qualityScore: 70 }])),
     });
   }
 
@@ -331,22 +293,23 @@ describe('planCleanUp', () => {
     expect(plan.results[0]!.names).toEqual(['gone.jpg']);
   });
 
-  it('keeps records for images that were moved into picks/', async () => {
-    // Execute moves keeps into picks/ and the scanner files them back under the
-    // parent, so the parent's results file legitimately describes them. Pruning
-    // against the bare directory listing would delete every moved pick.
+  it('judges a record against its own directory only, not against a subfolder', async () => {
+    // A directory's results file describes exactly the images in that directory.
+    // The `picks/` union that used to widen this is gone with the keep feature —
+    // a subfolder's images are described by the subfolder's own file.
     mountTree(
       {
-        '/photos': ['a.jpg', 'picks', '.photo-culler-results.json'],
-        '/photos/picks': ['moved.jpg'],
+        '/photos': ['a.jpg', 'eventA', '.photo-culler-results.json'],
+        '/photos/eventA': ['nested.jpg'],
       },
-      new Set(['/photos/picks']),
-      { '/photos/.photo-culler-results.json': resultsFile(['a.jpg', 'moved.jpg']) },
+      new Set(['/photos/eventA']),
+      { '/photos/.photo-culler-results.json': resultsFile(['a.jpg', 'nested.jpg']) },
     );
 
     const plan = await planCleanUp('/photos');
 
-    expect(plan.results).toHaveLength(0);
+    expect(plan.results).toHaveLength(1);
+    expect(plan.results[0]!.names).toEqual(['nested.jpg']);
   });
 
   it('descends into subfolders', async () => {
@@ -429,8 +392,8 @@ describe('applyCleanUp', () => {
       folderPath: '/photos',
       updatedAt: 'x',
       images: {
-        'a.jpg': { classification: 'keep', qualityScore: 88 },
-        'gone.jpg': { classification: 'delete' },
+        'a.jpg': { qualityScore: 88, rotation: 90 },
+        'gone.jpg': { qualityScore: 12 },
       },
     });
     mockReadFile.mockResolvedValue(onDisk);
@@ -458,7 +421,7 @@ describe('applyCleanUp', () => {
         version: 1,
         folderPath: '/photos',
         updatedAt: 'x',
-        images: { 'gone.jpg': {}, 'added-since.jpg': { classification: 'review' } },
+        images: { 'gone.jpg': {}, 'added-since.jpg': { qualityScore: 55 } },
       }),
     );
     mockWriteFile.mockResolvedValue(undefined);

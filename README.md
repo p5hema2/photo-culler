@@ -1,6 +1,8 @@
 # Photo Culler
 
-A fast, keyboard-driven desktop app for culling photo shoots. Open a folder, review your images, classify them as keep/review/delete, and execute batch actions — all without leaving the keyboard.
+A fast, keyboard-driven desktop app for culling photo shoots. Open a folder, review your images, rate them 0-5 stars, and batch-delete the ones that did not make it — all without leaving the keyboard.
+
+Ratings are written into the image files themselves, so Lightroom, Bridge, darktable and Windows Explorer all see the same stars.
 
 Built with Electron, React, TypeScript, and Tailwind CSS.
 
@@ -8,14 +10,21 @@ Built with Electron, React, TypeScript, and Tailwind CSS.
 
 - **Thumbnail grid** with virtual scrolling — handles thousands of images
 - **Auto-grouping** by timestamp — burst shots are grouped together
-- **Quality scoring** — automatic sharpness, exposure, contrast, and noise analysis
-- **Keyboard-first workflow** — arrow keys to navigate, 1/2/3 to classify, Space to cycle
+- **Star ratings in the file** — 0-5, written as `xmp:Rating` plus the EXIF rating tag, so other
+  photo tools and the OS file browser read them back
+- **Rating filter** — a two-handle slider narrows the grid to a star range; 0 means unrated
+- **Quality scoring** — automatic sharpness, exposure, contrast, and noise analysis, shown per
+  thumbnail
+- **Keyboard-first workflow** — arrow keys to navigate, 0-5 to rate
 - **Image rotation** — Alt+Arrow to rotate, applied losslessly on execute
 - **EXIF display** — camera body, lens, exposure settings, histogram
-- **Focus peaking & clipping overlays** — spot soft focus and blown highlights
+- **Focus peaking, clipping & AF point overlays** — spot soft focus, blown highlights, and where the
+  camera actually focused
 - **Zoom/pan preview** — scroll to zoom, drag to pan in the info panel
-- **Batch execute** — trash rejects, move picks to subfolder, apply rotations
-- **Persistent state** — classifications, scores, and rotations saved per folder
+- **Batch execute** — permanently delete a 1-to-_x_ star range among the images you can see, and
+  apply pending rotations
+- **Persistent state** — quality scores and pending rotations saved per folder; ratings live in the
+  images
 
 ## Installing
 
@@ -66,20 +75,23 @@ certificate is trusted on sight.
 | Key | Action |
 |-----|--------|
 | Arrow keys | Navigate thumbnails |
-| 1 | Classify as Keep |
-| 2 | Classify as Review |
-| 3 | Classify as Delete |
-| 0 | Clear classification |
-| Space | Cycle classification |
+| 1 – 5 | Rate the focused image |
+| 0 | Clear the rating |
 | Alt+Arrow Left/Right | Rotate image 90 CCW/CW |
-| Enter | Open preview mode |
-| Escape | Exit preview / clear selection |
-| Ctrl/Cmd+A | Select all |
-| Ctrl/Cmd+Click | Toggle select |
-| Shift+Click | Range select |
-| Backspace | Trash focused image |
-| Delete | Trash selected images |
+| Backspace / Delete | Permanently delete the focused image (asks first) |
 | Home / End | Jump to first / last image |
+| V | Cycle layout: grid / loupe / filmstrip |
+| Ctrl/Cmd+1 / 2 / 3 | Go straight to grid / loupe / filmstrip |
+| I | Toggle metadata overlay (loupe/filmstrip) |
+| Ctrl/Cmd+I | Toggle the info panel |
+| P / C / A | Toggle focus peaking / exposure clipping / AF point |
+| Ctrl/Cmd+O | Open a folder |
+| F5 | Rescan the folder |
+| Ctrl/Cmd+S | Execute — delete the low-rated images |
+| ? | Show / hide the shortcuts panel |
+
+Clicking a star rates that many stars; clicking the star that is already lit clears the rating. Press
+`?` in the app for the full list.
 
 ## Getting Started
 
@@ -141,7 +153,7 @@ photo-culler/
     desktop/          # Electron app (main + preload + renderer)
   packages/
     types/            # Shared TypeScript types (IPC, image metadata)
-    image-utils/      # Image scanning, sorting, grouping utilities
+    image-utils/      # Image scanning, metadata, rating, sorting, grouping utilities
     ui/               # Shared UI components (future)
     tsconfig/         # Shared TypeScript configurations
 ```
@@ -150,23 +162,34 @@ photo-culler/
 
 ### Quick Start Workflow
 
-1. **Open a folder** — Click "Open" or drag a folder onto the window
-2. **Wait for processing** — EXIF extraction and quality scoring run automatically
-3. **Review images** — Arrow keys to move through the grid, Enter for full preview
-4. **Classify** — Press 1 (keep), 2 (review), or 3 (delete) on each image
+1. **Open a folder** — Click "Open" or drag a folder onto the window. Subfolders are scanned too, one
+   collapsible section per folder.
+2. **Wait for processing** — EXIF and any existing ratings are read while the folder is scanned;
+   quality scoring runs in the background afterwards
+3. **Review images** — Arrow keys to move through the grid, V to switch to the loupe or filmstrip
+4. **Rate** — Press 1-5, or click a star. Press 0 (or click the lit star) to clear. Each keypress is
+   written straight into the image file.
 5. **Rotate if needed** — Alt+Left/Right to rotate images
-6. **Execute** — Click "Save / Delete" to batch-process:
-   - Trash or permanently delete images marked as "delete"
-   - Optionally move "keep" images to a `picks/` subfolder
-   - Optionally apply rotations to files on disk
+6. **Execute** — Ctrl/Cmd+S, or the "Execute" button:
+   - The slider picks the top of the delete range; the bottom is always 1 star, so unrated images are
+     never deleted
+   - Those images are **permanently deleted** — there is no trash step and no undo
+   - Only images currently visible are considered, so a filter also scopes the delete
+   - Optionally applies pending rotations to files on disk
 
 ### Tips
 
-- **Quality scores** appear on each thumbnail (0-100%). The info panel shows the breakdown: sharpness (40%), exposure (25%), contrast (20%), noise (15%).
+- **Ratings live in the photos, not in the app.** Nothing is lost if you move the files, and stars set
+  in Lightroom or Explorer show up here. The per-folder `.photo-culler-results.json` only caches
+  quality scores and rotations you have not applied yet.
+- **The rating filter** (toolbar) is an inclusive window: `0-0` shows only what you have not judged
+  yet, `4-5` only the best. Execute always works on what the filter leaves visible.
+- **Quality scores** appear on each thumbnail (0-100%). The info panel shows the breakdown: sharpness (40%), exposure (25%), contrast (20%), noise (15%). They are advisory — nothing filters or sorts by them.
+- **Sorting** is by filename, ascending or descending. If your files are named after capture time, that is capture order.
 - **Rescan** re-processes the folder from scratch if you add/remove files externally.
 - **Grouping threshold** (View menu) controls how close timestamps must be to form a burst group. Default is 5 seconds.
-- **Focus peaking** and **clipping overlays** (in the info panel) help evaluate technical quality without pixel-peeping.
-- Right-click any thumbnail to cycle its classification without selecting it.
+- **Focus peaking**, **clipping** and **AF point** overlays (in the info panel) help evaluate technical quality without pixel-peeping.
+- **Clean Up Folder** (File menu) prunes cached thumbnails and score records whose images are gone. It never touches images, and never touches ratings.
 
 ## License
 

@@ -3,16 +3,21 @@
 ## What this is
 
 **Photo Culler** — a local-first Electron desktop app for triaging photo shoots. Open a folder,
-review images, classify them keep/review/delete, then batch-execute: trash the rejects, move the
-picks to a `picks/` subfolder, apply rotations to disk.
+review images, rate them 0-5 stars, then batch-execute: permanently delete everything inside a
+`1..x` star range and apply the pending rotations to disk.
+
+0 stars and "unrated" are the same thing, and Execute's range always starts at 1 — that is the one
+structural safety property in the app, because it means an image nobody has looked at cannot be
+deleted.
 
 Opening a folder scans it **recursively**, so a parent holding several shoots can be culled in one
 session; the grid shows one collapsible section per folder.
 
 No server, no accounts, no network calls. All state lives beside the user's photos:
-`.photo-culler-results.json` (classifications, scores, rotations, cached EXIF) and a
-`.photo-culler-thumbs/` cache dir — **one of each per directory**, beside the photos they describe.
-Treat both as user data; losing them costs real culling work.
+`.photo-culler-results.json` (quality scores and pending rotations) and a `.photo-culler-thumbs/`
+cache dir — **one of each per directory**, beside the photos they describe. Treat both as user data;
+losing them costs real culling work. Ratings are the exception: they live in the image files
+themselves, which is a trap of its own below.
 
 Stack: Electron 41 + React 19 + TypeScript + Tailwind 4, in a pnpm/Turborepo monorepo.
 
@@ -38,18 +43,20 @@ Toolchain: pnpm 10.32.1 (`packageManager` field), Node >= 20.19.0 locally, Node 
 ## Architecture
 
 ```
-main/          Node side: fs ops, native dialogs, shell.trashItem, sharp rotation,
-               electron-store session, app:// protocol handler, the native menu
+main/          Node side: fs ops, native dialogs, permanent delete (unlink), sharp
+               rotation, exifr metadata at scan time, exiftool rating writes and
+               deep metadata reads, electron-store session, app:// protocol
+               handler, the native menu
   |            typed IPC — contract lives in packages/types/src/ipc.ts
 preload/       contextBridge -> window.api + window.menuEvents
                (contextIsolation on, sandbox on, nodeIntegration off — keep it that way)
 renderer/      React. usePhotoStore.ts is the state brain (~1000 lines).
-               Three Web Workers do the pixel work: thumbnail, exif, scoring.
+               Two Web Workers do the pixel work: thumbnail and scoring.
 ```
 
 Shared packages: `@photo-culler/types` (IPC contract + domain types), `@photo-culler/image-utils`
-(scanner, grouping, sorting), `@photo-culler/tsconfig` (shared TS configs), `@photo-culler/ui`
-(empty placeholder).
+(scanner, metadata, rating, grouping, sorting), `@photo-culler/tsconfig` (shared TS configs),
+`@photo-culler/ui` (empty placeholder).
 
 ## Traps
 
@@ -70,32 +77,91 @@ configs plus `exports`. If it works at runtime but `pnpm typecheck` cannot find 
 entry is what is missing.
 
 **Renderer state is keyed by absolute PATH; results files are keyed by basename.** Both matter.
-With subfolders in play `IMG_001.JPG` is not unique, so every in-memory map (`classifications`,
+With subfolders in play `IMG_001.JPG` is not unique, so every in-memory map (`ratings`,
 `qualityScores`, `qualitySubscores`, `rotations`) keys by full path. The files on disk keep their
 original basename keying, which is only unambiguous because there is one file per directory — and
 which is why every results file written before recursive scanning still loads unchanged.
 `projectFolderResults` in `lib/results.ts` is the single place that translates between the two.
+`ratings` is in that list of maps but is deliberately **not** in the projection — see the next trap.
 
 **Mutations do not write the results file; they mark a folder dirty.** `markDirty(folder)` queues a
 debounced flush that projects state onto that folder's file. Setters used to mirror each field into
-the results object by hand, which is how `trashImages` came to drop two of six fields. Do not
-reintroduce inline writes.
+the results object by hand, which is how the delete path came to drop two of six fields — a single
+Delete stripped `qualitySubscores` and `rotation` from every remaining image in the folder.
+`rebuildResults` and `projectFolderResults` in `lib/results.ts` are now the only two projections,
+both spread the existing entry so a new `ImageResult` field cannot be lost by omission, and
+`results-rebuild.test.ts` guards them. Do not reintroduce inline writes.
 
-**`picks/` is scanned but folded into its parent folder.** The scanner attributes those images to
-the directory above, so a shot moved by Execute stays in the section it was culled in rather than
-reappearing as its own folder.
+**The keep classification and `picks/` are gone, data and all.** Up to 1.5.x images were classified
+keep/review/delete, Execute moved the keeps into a `picks/` subfolder, the scanner folded those
+images back into the parent section, and the clean-up planner therefore had to accept that a parent's
+results file legitimately described its `picks/` children (`describableNames`). All of it went with
+the rating rewrite, and no user ever ran keep, so no `picks/` directory exists anywhere. A `picks/`
+folder is now an ordinary shoot subfolder with its own results file and its own thumbnail cache: do
+not reintroduce the fold-up or the name union to "stay compatible" with data that was never written.
 
-That fold-up has a sharp edge: a folder's results file legitimately describes images that live in
-its `picks/` subfolder. Anything deciding whether a record is orphaned must therefore compare
-against the directory's files **plus** its `picks/` children — see `describableNames` in
-`ipc-handlers.ts`. Comparing against the bare listing would delete the classification of every
-moved pick. Thumbnails are not affected: `picks/` keeps its own cache beside its own images.
+**The image file is the authority for a rating; the results file must never hold a copy.**
+`xmp:Rating` plus `EXIF:Rating`/`RatingPercent` in IFD0 is where a rating lives — read by
+`readImageMetadata` during `scanFolder` into `ImageFileInfo.rating`, written by
+`window.api.writeRating` on every change. `ImageResult` has no rating field and
+`projectFolderResults` projects none, on purpose: a second copy would drift the moment Lightroom,
+Explorer or a re-import touched a file, and nothing could then say which one won. Two consequences
+worth keeping: the renderer's write is optimistic with rollback (`persistRating` in
+`usePhotoStore.ts` restores the previous value and surfaces an error, because a star left on screen
+over a failed write is a rating the user believes they have), and `settleFileLocks` runs on quit so a
+rating typed a moment before the window closes still lands in the file.
+
+**`-P` in the rating write deliberately defeats the thumbnail freshness check.** `writeRating` passes
+`-P`, which makes exiftool restore FileModifyDate. Without it every rating keypress bumps the source
+mtime, and `LOAD_THUMB_CACHE` discards any thumbnail older than its source: rating 2000 photos would
+destroy 2000 cache entries and force 2000 full-size decodes. It would also corrupt burst grouping,
+which falls back to `lastModified` where a file has no `DateTimeOriginal`, and evict the
+detail-metadata cache, which is keyed on mtime. Suppressing a freshness signal is only safe because a
+rating write changes no pixels — do not carry `-P` over to any path that does.
+
+**The rating tags must stay split across exiftool's `tags` and `writeArgs`.** Measured, not
+stylistic. A plain `Rating` in `tags` reaches XMP but never IFD0, so Windows Explorer would not see
+it. Passing every assignment through `writeArgs` with an EMPTY `tags` object does write both groups —
+but loses the mtime, because the library takes a different path and `-P` stops taking effect.
+Non-empty `tags` plus the EXIF assignments as explicit args is the only combination that yields
+IFD0:Rating, IFD0:RatingPercent and XMP-xmp:Rating with zero drift.
+
+**exifr's `pick` list filters the XMP block out.** `PARSE_OPTIONS` in
+`packages/image-utils/src/metadata.ts` sets `xmp: true` and no `pick`, deliberately. Measured over 20
+files carrying only `xmp:Rating`: a pick list containing `'Rating'` found 0 of 20, these options found
+20 of 20, at the same 0.2-0.5 ms per file. A rating written by Lightroom lives in the XMP packet
+alone, so adding a pick list back "to make the scan cheaper" would make exactly the interoperability
+case invisible.
+
+**exifr must stay in `externalizeDepsPlugin`'s `exclude` list.** It runs in the MAIN process now,
+because the scanner reads ratings there, and `electron-builder.yml` excludes `node_modules` and ships
+only the vendored subset (sharp, exiftool-vendored). An externalised pure-JS dependency is therefore
+simply absent at runtime: dev and `pnpm build` look fine, and the installed app throws on the first
+scan.
+
+**READ_FILE and the rating write share a per-path lock.** `withFileLock` in `main/file-lock.ts`.
+exiftool writes by renaming a temp file over the original, and Windows fails that rename while a
+handle is open — and the app opens the same image from a dozen places at once: one READ_FILE per
+thumbnail worker (there are `hardwareConcurrency` of them), plus the scoring worker, the detail
+viewer and its neighbour preload. The lock is keyed by path, so reads of *different* images stay
+fully parallel and the thumbnail burst is unaffected; only the set that can actually collide queues.
+A new handler that opens an original belongs inside it.
+
+**Deletion is permanent and nothing in the app has undo.** `DELETE_FILES` unlinks; there is no
+OS-trash path any more, no restore, and no history. Both entry points confirm first — the
+Delete/Backspace dialog naming the count, and the Execute panel naming the star range plus the
+visible count it is scoped to. `useKeyboardNav` takes a `modalOpen` flag for the same reason: it
+listens on the *document*, so without the gate a Delete aimed at a dialog also reaches the photo
+behind it. And Execute's range floor is fixed at 1 in `ExecutePanel.tsx` rather than being a second
+slider handle, which is what makes "an unrated image is never deleted" true by construction
+(`isInRatingRange`).
 
 **The renderer must never import the `image-utils` barrel.** It aliases
-`@photo-culler/image-utils/sorting`, `/grouping`, `/focus` and `/folders` deep, on purpose: the
-barrel re-exports `scanner.ts`, which imports `node:fs/promises` and would break the browser bundle.
-Import deep paths in renderer code, and register each new one in **both** `electron.vite.config.ts`
-and `vitest.config.ts`.
+`@photo-culler/image-utils/sorting`, `/grouping`, `/focus`, `/folders` and `/rating` deep, on
+purpose: the barrel re-exports `scanner.ts`, which imports `node:fs/promises` and would break the
+browser bundle. `metadata.ts` is off limits to the renderer for the same reason — it imports `exifr`
+at module scope. Import deep paths in renderer code, and register each new one in **both**
+`electron.vite.config.ts` and `vitest.config.ts`.
 
 **`pnpm typecheck` is real as of 1.5.3 — trust it, and keep it honest.** It was a no-op until
 then (no package defined the script, so Turbo resolved every task to nothing) and CI plus the
@@ -184,16 +250,19 @@ because it ships prebuilt binaries. Any dependency that compiles at install time
 `src/main/ipc-handlers.ts` (register the handler). `MENU_COMMANDS` is a closed union for the same
 reason — the menu and the renderer handler cannot drift.
 
-**Menu accelerators must use modifiers.** Bare keys (`1`/`2`/`3` for classification, `V`, arrows)
+**Menu accelerators must use modifiers.** Bare keys (`0`-`5` for rating, `V`, arrows)
 belong to the renderer; a menu accelerator swallows them before the window ever sees the keypress.
 See the comments in `src/main/index.ts`. The Edit menu's roles are also load-bearing on macOS — they
 bind Cmd+C/V/X inside the toolbar search field.
 
-**Two EXIF paths, deliberately.** `exifr` runs in a renderer worker over every image in the folder
-for the fields sorting and grouping need. `exiftool` runs as a long-lived child process in the main
-process, on demand, for the ONE focused image — that is where the maker-note data lives (AF point,
-face detection), which exifr returns as an undecoded blob. Don't merge them: the bulk path must stay
-cheap, and exiftool must stay off the per-image hot path.
+**Two EXIF paths, deliberately.** `exifr` runs in the main process, inside `scanFolder`, over every
+image in the tree — the handful of fields grouping, sorting and the rating need, at ~0.3 ms each with
+`METADATA_CONCURRENCY` reads in flight. `exiftool` runs as a long-lived child process in the same
+process, on demand, for the ONE focused image: that is where the maker-note data lives (AF point,
+face detection), which exifr returns as an undecoded blob, and it is also what writes ratings. Don't
+merge them — the bulk path must stay cheap, and exiftool must stay off the per-image hot path. It
+used to be three paths: a renderer `exif.worker.ts` carried the bulk pass until the scanner took it
+over, so a rating could be known before the first thumbnail drew.
 
 **The grid virtualizes a flat row list, not a tree.** `buildRows` in `PhotoGrid.tsx` flattens
 folder headers and timestamp groups into one array so a single virtualizer keeps working across
@@ -219,9 +288,11 @@ filmstrip each centre it — `lib/focus-scroll.ts`, assigning `scrollTop`/`scrol
 calling `scrollIntoView`, which walks every scrollable ancestor. Two things are load-bearing:
 scrolling is **instant**, because Chromium's smooth scroll restarts on each call and never catches
 up under key repeat; and a **pointer-driven** focus change does not scroll at all
-(`usePointerFocus`). That second rule is not cosmetic — with select-on-hover, centring drags the
-next thumbnail under a resting cursor, which selects it, which scrolls again, and the list runs to
-one end.
+(`usePointerFocus`). That second rule is not cosmetic: re-centring on a click shifts every other
+thumbnail out from under the cursor mid-gesture. It was originally load-bearing for select-on-hover,
+which is gone — hover centred the next thumbnail under a resting cursor, which selected it, which
+scrolled again, and the list ran to one end. `FocusOrigin` is a one-member union (`'click'`) as a
+result; the rule it protects still holds.
 
 **The thumbnail cache has no version folder — the filename suffix is the format marker.**
 `.photo-culler-thumbs/<name>.thumb.webp`, flat, 512px longest edge, WebP q0.82. Change
@@ -250,7 +321,8 @@ main thread — where `self` is `window`. Only `import type` from a worker file.
 **Quality-score weights are a persisted contract.** Sharpness 40% / exposure 25% / contrast 20% /
 noise 15%, in `src/renderer/src/workers/scoring.worker.ts` and documented in the README. Scores are
 cached in every user's results file, so changing the weights silently makes old and new scores
-incomparable.
+incomparable. They are advisory since 1.6.0 — a badge on the thumbnail and a breakdown in the info
+panel, nothing filters or sorts by them — but they are still persisted, so the contract stands.
 
 **Results-file writes are queued and epoch-guarded.** `ipc-handlers.ts` serializes writes per file;
 `usePhotoStore.ts` tags pending saves with an `openEpochRef` so a save queued for a folder you've
