@@ -2,6 +2,28 @@ import exifr from 'exifr';
 import { clampRating } from './rating';
 
 /**
+ * The embedded-preview parser, re-exported so the main process can reach it.
+ *
+ * `mpf.ts` is where the byte parsing lives — it has no business next to exifr —
+ * but a consumer resolves a deep import through this package's `exports` map,
+ * which lists `./metadata` and not `./mpf`. This is the metadata entry point the
+ * main process already uses, and where a preview sits in a file is metadata, so
+ * it forwards rather than adding a fifth copy of the alias table. Whoever next
+ * edits the manifest may promote `./mpf` to its own entry and drop this.
+ */
+export {
+  findMpfPreview,
+  isPlausiblePreviewRange,
+  checkMpfPreview,
+  readJpegOrientation,
+  readJpegSize,
+  type MpfPreview,
+  type MpfPreviewCheck,
+  type MpfPreviewRejection,
+  type JpegSize,
+} from './mpf';
+
+/**
  * Metadata lifted off an image file at scan time.
  *
  * Every field is optional: a stripped JPEG, a PNG straight out of a screenshot

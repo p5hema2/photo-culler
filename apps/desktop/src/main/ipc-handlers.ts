@@ -1,10 +1,34 @@
 import { app, ipcMain, dialog } from 'electron';
-import { writeFile, readFile, mkdir, rename, unlink, stat, readdir, rm } from 'node:fs/promises';
+import {
+  writeFile,
+  readFile,
+  mkdir,
+  open,
+  rename,
+  unlink,
+  stat,
+  readdir,
+  rm,
+  type FileHandle,
+} from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { IPC_CHANNELS } from '@photo-culler/types';
-import type { FileOpResult, SessionConfig } from '@photo-culler/types';
+import type {
+  FileOpResult,
+  ScanProgress,
+  SessionConfig,
+  ThumbSource,
+  ThumbSourceFallback,
+} from '@photo-culler/types';
 import { scanFolder } from '@photo-culler/image-utils';
+// Deep import: `mpf.ts` holds the parsing, and `./metadata` is the entry point
+// this package's `exports` map publishes for it. See the note there.
+import {
+  findMpfPreview,
+  isPlausiblePreviewRange,
+  checkMpfPreview,
+} from '@photo-culler/image-utils/metadata';
 import { getSession, updateSession } from './store';
 import { readDetailedMetadata, writeRating, type RatingWriteResult } from './exiftool';
 import { withFileLock } from './file-lock';
@@ -29,6 +53,19 @@ const THUMB_CACHE_DIR = '.photo-culler-thumbs';
  *   pre-1.3.0     256x256 centre-cropped JPEG, loose in THUMB_CACHE_DIR
  *   1.3.0-1.5.1   longest edge 256 JPEG, in a `v2/` subdirectory
  *   1.5.2+        longest edge 512 WebP, loose in THUMB_CACHE_DIR
+ *
+ * Sourcing thumbnail pixels from the camera's embedded preview rather than from
+ * the original — see `readThumbSource` — deliberately did NOT change it, and the
+ * reason is worth recording. `fitWithin` decides geometry from the source's
+ * aspect ratio alone, so a 1620x1080 preview and the 6000x4000 original it came
+ * from both yield exactly 512x341; same for 4000x3000/1600x1200 and
+ * 5472x3648/1824x1216. Container and quality are untouched. What does differ is
+ * resampling detail, because the reduction is 3.2x instead of 11.7x, so the
+ * encoded bytes are not identical — but an entry written either way is a valid
+ * current-format thumbnail, and bumping the suffix would discard every user's
+ * cache (235 s of generation on the folder that motivated all this) to gain an
+ * imperceptible difference. Only a change to the geometry, container or quality
+ * belongs here.
  */
 const THUMB_SUFFIX = '.thumb.webp';
 
@@ -354,6 +391,12 @@ export async function vacuumThumbCache(folderPath: string): Promise<{ removed: n
  */
 const vacuumTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/**
+ * The deferred metadata pass of the most recent scan, so the next scan can stop
+ * it. One at a time by construction: there is one window and it shows one tree.
+ */
+let activeScanPass: AbortController | null = null;
+
 function scheduleVacuum(folderPath: string): void {
   const existing = vacuumTimers.get(folderPath);
   if (existing) clearTimeout(existing);
@@ -400,6 +443,107 @@ async function writeResultsFile(folderPath: string, data: string): Promise<void>
 }
 
 /**
+ * Leading bytes read while looking for an embedded preview.
+ *
+ * The MPF index lives in an APP2 segment near the front of a camera JPEG —
+ * normally only APP1 (EXIF plus its 160x120 IFD1 thumbnail) is ahead of it — so
+ * this window is deliberately generous. It is pure overhead on a file that has
+ * no preview, but 128 kB against the measured 6.2 MB average is ~2%, whereas a
+ * window too small to reach the index would cost the whole optimisation
+ * silently: an unreachable index is indistinguishable from an absent one.
+ */
+const THUMB_SOURCE_HEAD_BYTES = 128 * 1024;
+
+/**
+ * Copy out to a plain ArrayBuffer for the structured clone across IPC. A copy
+ * either way — `Buffer.prototype.buffer` is an ArrayBufferLike over a possibly
+ * pooled allocation, so it cannot be handed over as it stands.
+ */
+function toArrayBuffer(buffer: Buffer): ArrayBuffer {
+  const copy = new ArrayBuffer(buffer.byteLength);
+  new Uint8Array(copy).set(buffer);
+  return copy;
+}
+
+/**
+ * Read up to `length` bytes from `position`, looping because a short read is
+ * legal even on a regular file. Returns whatever it actually got.
+ */
+async function readRange(handle: FileHandle, position: number, length: number): Promise<Buffer> {
+  const buffer = Buffer.allocUnsafe(length);
+  let filled = 0;
+  while (filled < length) {
+    const { bytesRead } = await handle.read(buffer, filled, length - filled, position + filled);
+    if (bytesRead === 0) break;
+    filled += bytesRead;
+  }
+  return buffer.subarray(0, filled);
+}
+
+/**
+ * Read the bytes a thumbnail should be generated from.
+ *
+ * Generating from the original meant reading 6.2 MB and decoding 6000x4000
+ * (measured 94 ms) for a 19 kB result — a 270:1 read amplification, and why the
+ * first open of the folder that motivated this spent 235 s disk-bound at
+ * ~45 MB/s. Where the camera embedded a 1620x1080 MPF preview (417-544 kB,
+ * 11.6 ms to decode) this reads that byte range instead.
+ *
+ * The fallback is not optional and not an error path: a PNG, a TIFF, a stripped
+ * JPEG or an unfamiliar camera must keep behaving exactly as before, so every
+ * way of not getting a preview ends in the whole file plus a named reason. The
+ * decoder is the last of those checks — the renderer treats a failed decode of
+ * preview bytes as one more fallback rather than as a broken cell.
+ */
+export async function readThumbSource(filePath: string, minEdge: number): Promise<ThumbSource> {
+  const handle = await open(filePath, 'r');
+  try {
+    const { size } = await handle.stat();
+    const head = await readRange(handle, 0, Math.min(size, THUMB_SOURCE_HEAD_BYTES));
+
+    const wholeFile = async (fallback: ThumbSourceFallback): Promise<ThumbSource> => {
+      // The header window already covered the whole file when the file is small
+      // enough — re-reading it would double the I/O on a folder of small images.
+      const covered = head.length >= size;
+      const bytes = covered ? head : await readRange(handle, 0, size);
+      return {
+        kind: 'full-file',
+        buffer: toArrayBuffer(bytes),
+        bytesRead: covered ? head.length : head.length + bytes.length,
+        fallback,
+      };
+    };
+
+    let preview: Buffer;
+    let entryLength: number;
+    try {
+      const entry = findMpfPreview(head);
+      if (!entry) return await wholeFile('no-mpf-preview');
+      if (!isPlausiblePreviewRange(entry, size)) return await wholeFile('implausible-range');
+      entryLength = entry.length;
+      preview = await readRange(handle, entry.offset, entry.length);
+    } catch {
+      return await wholeFile('read-failed');
+    }
+
+    if (preview.length < entryLength) return await wholeFile('short-read');
+
+    const check = checkMpfPreview(head, preview, minEdge);
+    if (!check.usable) return await wholeFile(check.reason);
+
+    return {
+      kind: 'mpf-preview',
+      buffer: toArrayBuffer(preview),
+      bytesRead: head.length + preview.length,
+      width: check.width,
+      height: check.height,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * Register all IPC handlers for the main process.
  * Each handler corresponds to a channel defined in @photo-culler/types.
  */
@@ -416,10 +560,38 @@ export function registerIpcHandlers(): void {
     return result.filePaths[0] ?? null;
   });
 
-  ipcMain.handle(IPC_CHANNELS.SCAN_FOLDER, async (_event, folderPath: string) => {
-    const images = await scanFolder(folderPath);
+  ipcMain.handle(IPC_CHANNELS.SCAN_FOLDER, async (event, folderPath: string, scanId = 0) => {
+    // Stop the previous scan's deferred pass before starting this one. Two
+    // reasons: it reads EXIF headers off the same platter the new folder's
+    // blocking prefix is queued behind, and a batch for a tree the user has
+    // left has nowhere useful to land anyway.
+    activeScanPass?.abort();
+    const pass = new AbortController();
+    activeScanPass = pass;
+
+    const sender = event.sender;
+    const scan = await scanFolder(folderPath, {
+      signal: pass.signal,
+      onProgress: (update) => {
+        if (pass.signal.aborted) return;
+        // Nobody left to tell. Stop reading too: on macOS the app outlives its
+        // window, and a folder's worth of header reads would carry on for it.
+        if (sender.isDestroyed()) {
+          pass.abort();
+          return;
+        }
+        sender.send(IPC_CHANNELS.SCAN_PROGRESS, { scanId, ...update } satisfies ScanProgress);
+      },
+    });
     scheduleVacuum(folderPath);
-    return images;
+
+    // Deliberately not awaited: handing the file list back now, with only a
+    // screenful of headers read, is the entire point — the rest arrive over
+    // SCAN_PROGRESS. The renderer buffers a batch that overtakes this reply, so
+    // nothing here depends on which of the two messages lands first.
+    void scan.readRemainingMetadata();
+
+    return scan.images;
   });
 
   ipcMain.handle(IPC_CHANNELS.SAVE_RESULTS, async (_event, folderPath: string, data: string) => {
@@ -537,6 +709,16 @@ export function registerIpcHandlers(): void {
       return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     });
   });
+
+  ipcMain.handle(
+    IPC_CHANNELS.READ_THUMB_SOURCE,
+    async (_event, filePath: string, minEdge: number): Promise<ThumbSource> => {
+      // Under the same per-path lock as READ_FILE, for the same reason: this
+      // holds a handle open, and a rating write renames a temp file over the
+      // original, which Windows refuses while any handle is open.
+      return withFileLock(filePath, () => readThumbSource(filePath, minEdge));
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.WRITE_RATING,

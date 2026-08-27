@@ -4,6 +4,8 @@ import type { DetailedMetadata } from './focus';
 export const IPC_CHANNELS = {
   SELECT_FOLDER: 'dialog:select-folder',
   SCAN_FOLDER: 'fs:scan-folder',
+  /** Main -> renderer push, not an invoke. See ScanProgress. */
+  SCAN_PROGRESS: 'fs:scan-progress',
   SAVE_RESULTS: 'fs:save-results',
   LOAD_RESULTS: 'fs:load-results',
   CLEAR_RESULTS: 'fs:clear-results',
@@ -11,6 +13,7 @@ export const IPC_CHANNELS = {
   SET_SESSION: 'store:set-session',
   DELETE_FILES: 'fs:delete-files',
   READ_FILE: 'fs:read-file',
+  READ_THUMB_SOURCE: 'fs:read-thumb-source',
   LOAD_THUMB_CACHE: 'fs:load-thumb-cache',
   SAVE_THUMB_CACHE: 'fs:save-thumb-cache',
   ROTATE_FILES: 'fs:rotate-files',
@@ -71,6 +74,93 @@ export interface SessionConfig {
   focusPeakingThreshold: number;
 }
 
+/**
+ * Why a thumbnail had to be generated from the whole file rather than from the
+ * preview the camera embedded.
+ *
+ * Every value is a normal outcome, not an error: the fallback produces exactly
+ * the thumbnail the app produced before previews were used at all. They are
+ * named individually because they are otherwise indistinguishable from the
+ * renderer — a folder that mysteriously stopped being fast is diagnosed by which
+ * of these it reports.
+ */
+export type ThumbSourceFallback =
+  /** No MPF index in the leading bytes: a PNG, a stripped JPEG, an old camera. */
+  | 'no-mpf-preview'
+  /** The index named a byte range that is not in the file, or not a sane length. */
+  | 'implausible-range'
+  /** The positioned read came up short — the file changed under us. */
+  | 'short-read'
+  /** The read itself failed; the whole file is tried instead. */
+  | 'read-failed'
+  /** The extracted bytes do not start with a JPEG SOI marker. */
+  | 'not-a-jpeg'
+  /** The preview's longest edge is below the thumbnail's, so it would upscale. */
+  | 'too-small'
+  /** The preview disagrees with the original about which way is up. */
+  | 'orientation-mismatch';
+
+/**
+ * Bytes to generate a thumbnail from, and which bytes they turned out to be.
+ *
+ * A discriminated union rather than a buffer plus flags: the caller has to pick
+ * a MIME type for the decode, and 'mpf-preview' is JPEG by definition while
+ * 'full-file' is whatever the file on disk is.
+ */
+export type ThumbSource =
+  | {
+      kind: 'mpf-preview';
+      buffer: ArrayBuffer;
+      /** Bytes actually read from disk, header window included. */
+      bytesRead: number;
+      width: number;
+      height: number;
+    }
+  | {
+      kind: 'full-file';
+      buffer: ArrayBuffer;
+      bytesRead: number;
+      fallback: ThumbSourceFallback;
+    };
+
+/**
+ * How far a folder scan has got, pushed from the main process while it runs.
+ *
+ * A scan reports rather than simply resolving because only its first phase is
+ * awaited: `scanFolder` returns once the tree is walked and a bounded prefix of
+ * EXIF headers is read, and the remaining headers arrive here in batches while
+ * the grid is already on screen. Each header costs two seeking 64 kB reads, and
+ * awaiting all of them — 3470 of them, in the folder that motivated this — is
+ * what used to keep the window blank for the length of the whole scan.
+ */
+export interface ScanProgress {
+  /**
+   * The `scanId` the renderer passed to `scanFolder` — its own open epoch.
+   *
+   * The renderer chooses it so that it can drop a report belonging to a tree it
+   * has since left without having to ask main anything. Same guard, and the
+   * same reason, as the epoch on a queued results-file write.
+   */
+  scanId: number;
+  /** 'walking' = building the file list; 'metadata' = reading EXIF headers. */
+  phase: 'walking' | 'metadata';
+  /**
+   * Image files the walk has found. Once `phase` is 'metadata' the walk is
+   * finished, so this is also the total the counts below are out of.
+   */
+  found: number;
+  /** Images whose metadata has been read, the blocking prefix included. */
+  completed: number;
+  /**
+   * The images this report delivers, metadata filled in.
+   *
+   * Empty while walking, and empty for the blocking prefix — those images
+   * travel in `scanFolder`'s own result, and sending them twice would double
+   * the cost of the phase that the user is actually waiting on.
+   */
+  images: ImageFileInfo[];
+}
+
 export interface QualitySubscores {
   sharpness: number;
   exposure: number;
@@ -110,7 +200,21 @@ export interface ResultsFile {
 
 export interface ElectronAPI {
   selectFolder: () => Promise<string | null>;
-  scanFolder: (folderPath: string) => Promise<ImageFileInfo[]>;
+  /**
+   * Walk a folder tree and return every image in it, with the metadata of a
+   * bounded prefix already read. The rest arrives over `onScanProgress`.
+   *
+   * `scanId` is optional because it is only a correlation token for those
+   * pushes: a caller that does not listen has no use for one, and main defaults
+   * it to 0.
+   */
+  scanFolder: (folderPath: string, scanId?: number) => Promise<ImageFileInfo[]>;
+  /**
+   * Subscribe to scan progress. One subscriber by construction — the photo
+   * store — which is why the unsubscribe below takes no handle.
+   */
+  onScanProgress: (listener: (progress: ScanProgress) => void) => void;
+  removeScanProgressListener: () => void;
   saveResults: (folderPath: string, data: string) => Promise<void>;
   loadResults: (folderPath: string) => Promise<string | null>;
   /** Delete the results file for a folder (used by Rescan). */
@@ -120,6 +224,16 @@ export interface ElectronAPI {
   /** Permanently delete files. There is no trash path — deletion is final. */
   deleteFiles: (filePaths: string[]) => Promise<FileOpResult>;
   readFile: (filePath: string) => Promise<ArrayBuffer>;
+  /**
+   * Bytes to generate a thumbnail of `filePath` from — the camera's embedded
+   * preview where there is a usable one, the whole file otherwise.
+   *
+   * Separate from `readFile` because that channel's other callers (scoring, the
+   * detail viewer, its neighbour preload) all genuinely want full resolution.
+   * `minEdge` is the thumbnail's longest edge, passed in so the size floor stays
+   * single-sourced in the renderer rather than being duplicated in main.
+   */
+  readThumbSource: (filePath: string, minEdge: number) => Promise<ThumbSource>;
   /**
    * Cached thumbnail for a file, or null when absent or stale.
    * Freshness is decided in the main process against the source file's current

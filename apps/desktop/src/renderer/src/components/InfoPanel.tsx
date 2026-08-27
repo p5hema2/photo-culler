@@ -3,6 +3,8 @@ import type { ImageFileInfo, QualitySubscores } from '@photo-culler/types';
 import { StarRating } from './StarRating';
 import { Histogram } from './Histogram';
 import { useZoomPan } from '../hooks/useZoomPan';
+import { useFullImage } from '../hooks/useFullImage';
+import { fitRotated } from '../lib/thumbnail-geometry';
 import { FocusPeakingOverlay } from './FocusPeakingOverlay';
 import { ExposureClippingOverlay } from './ExposureClippingOverlay';
 import { RotatedImageStage } from './RotatedImageStage';
@@ -11,6 +13,8 @@ import { OverlayControls } from './OverlayControls';
 import { CollapsibleSection } from './CollapsibleSection';
 import type { OverlaySettings, OverlayActions } from '../hooks/useOverlaySettings';
 import type { DetailedMetadataState } from '../hooks/useDetailedMetadata';
+
+type ThumbnailStatus = ImageBitmap | 'loading' | 'error';
 
 interface InfoPanelProps {
   image: ImageFileInfo | null;
@@ -26,6 +30,12 @@ interface InfoPanelProps {
   overlaySettings: OverlaySettings;
   overlayActions: OverlayActions;
   detailedMeta: DetailedMetadataState;
+  /**
+   * The grid's decoded thumbnails, used as the placeholder while an original is
+   * read. Optional so the panel still works without one — it simply keeps the
+   * previous photo on screen for that moment instead.
+   */
+  getThumbnail?: (id: string) => ThumbnailStatus;
 }
 
 function formatFileSize(bytes: number): string {
@@ -141,6 +151,7 @@ export function InfoPanel({
   overlaySettings,
   overlayActions,
   detailedMeta,
+  getThumbnail,
 }: InfoPanelProps): React.JSX.Element {
   const { showFocusPeaking, showClipping, showAfPoint, focusPeakingThreshold } = overlaySettings;
   const focus = detailedMeta.status === 'ready' ? detailedMeta.data.focus : null;
@@ -150,12 +161,41 @@ export function InfoPanel({
   const faceCount =
     focus?.facesDetected ?? focus?.regions.filter((r) => r.kind === 'face').length ?? 0;
   const [tagFilter, setTagFilter] = useState('');
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [loadingPreview, setLoadingPreview] = useState(false);
   const previewImgRef = useRef<HTMLImageElement | null>(null);
   const [previewImgElement, setPreviewImgElement] = useState<HTMLImageElement | null>(null);
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
+  const placeholderCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  /**
+   * The full-resolution original, which is what the user judges sharpness and
+   * highlight clipping by — never a downscaled substitute.
+   *
+   * Debounced 180 ms because this is the one place a focus change costs a whole
+   * file: 6.2 MB average, off a spinning disk that manages ~7 files/s. Under key
+   * repeat only the image you land on is read, and an image you scroll past
+   * cannot be judged anyway. A cache hit skips the wait — nothing is read.
+   */
+  const {
+    url: previewUrl,
+    urlPath: previewUrlPath,
+    isLoading: loadingPreview,
+  } = useFullImage(isOpen ? (image?.path ?? null) : null, { debounceMs: 180 });
+
+  /**
+   * What is on screen is not the focused image yet. Three phases count as "not
+   * yet", and the third is easy to miss: the 180 ms debounce, the read, and then
+   * the browser decoding the blob — 94 ms for a 6000x4000 JPEG, during which the
+   * <img> is mounted but has painted nothing.
+   */
+  const paintedUrl = previewImgElement?.src ?? null;
+  const showPlaceholder =
+    image != null && (previewUrlPath !== image.path || paintedUrl !== previewUrl);
+  const placeholderStatus = showPlaceholder && getThumbnail ? getThumbnail(image.path) : null;
+  const placeholderBitmap =
+    placeholderStatus === null || placeholderStatus === 'loading' || placeholderStatus === 'error'
+      ? null
+      : placeholderStatus;
 
   const zoomPan = useZoomPan({
     imageWidth: imageDimensions.width,
@@ -168,78 +208,35 @@ export function InfoPanel({
     zoomPan.resetZoom();
   }, [image?.path]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load large preview via IPC — runs on every image change
+  /**
+   * Progressive first paint: the 512px thumbnail the grid cell is already
+   * showing, blurred, until the original lands on top of it. Blurred on purpose
+   * — a 512px frame upscaled to the panel must not be mistaken for the original
+   * anyone would judge focus by. The histogram never sees it: `previewImgElement`
+   * is only ever set from the <img> holding a full-resolution original.
+   *
+   * The rotation is baked into the pixels rather than applied in CSS, so
+   * `object-contain` scales the result the way it will scale the original.
+   */
   useEffect(() => {
-    setPreviewImgElement(null);
-
-    if (!isOpen || !image) {
-      setPreviewUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadPreview = async (): Promise<void> => {
-      setLoadingPreview(true);
-      try {
-        const buffer = await window.api.readFile(image.path);
-        if (cancelled) return;
-
-        const ext = image.extension.toLowerCase();
-        const mimeMap: Record<string, string> = {
-          jpg: 'image/jpeg',
-          jpeg: 'image/jpeg',
-          png: 'image/png',
-          webp: 'image/webp',
-          tiff: 'image/tiff',
-          tif: 'image/tiff',
-        };
-        const mimeType = mimeMap[ext] ?? 'image/jpeg';
-        const blob = new Blob([buffer], { type: mimeType });
-        const url = URL.createObjectURL(blob);
-
-        if (cancelled) {
-          URL.revokeObjectURL(url);
-          return;
-        }
-
-        setPreviewUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return url;
-        });
-      } catch {
-        if (!cancelled) {
-          setPreviewUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
-            return null;
-          });
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingPreview(false);
-        }
-      }
-    };
-
-    loadPreview();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen, image?.path]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      setPreviewUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
-    };
-  }, []);
+    const canvas = placeholderCanvasRef.current;
+    if (!canvas || !placeholderBitmap) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const longestEdge = Math.max(placeholderBitmap.width, placeholderBitmap.height);
+    const {
+      canvas: size,
+      draw,
+      radians,
+    } = fitRotated(placeholderBitmap.width, placeholderBitmap.height, longestEdge, rotation);
+    canvas.width = size.width;
+    canvas.height = size.height;
+    ctx.clearRect(0, 0, size.width, size.height);
+    ctx.translate(size.width / 2, size.height / 2);
+    if (radians !== 0) ctx.rotate(radians);
+    ctx.drawImage(placeholderBitmap, -draw.width / 2, -draw.height / 2, draw.width, draw.height);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }, [placeholderBitmap, rotation]);
 
   // Compute quick stats
   const megapixels =
@@ -284,11 +281,6 @@ export function InfoPanel({
                 onWheel={zoomPan.handlers.onWheel}
                 onMouseDown={zoomPan.handlers.onMouseDown}
               >
-                {loadingPreview && (
-                  <div className="absolute inset-0 flex items-center justify-center z-10">
-                    <div className="w-6 h-6 border-2 border-gray-600 border-t-blue-500 rounded-full animate-spin" />
-                  </div>
-                )}
                 {previewUrl && (
                   <div
                     style={{
@@ -305,6 +297,11 @@ export function InfoPanel({
                       rotation={rotation ?? 0}
                     >
                       <img
+                        // Keyed on the URL so every original mounts its own
+                        // element: the histogram is keyed on element identity,
+                        // and reusing one would leave it showing the previous
+                        // image's data.
+                        key={previewUrl}
                         ref={(el) => {
                           previewImgRef.current = el;
                         }}
@@ -351,6 +348,24 @@ export function InfoPanel({
                     </RotatedImageStage>
                   </div>
                 )}
+                {/* Placeholder over whatever original is still on screen. */}
+                {placeholderBitmap && (
+                  <div className="absolute inset-0 flex items-center justify-center z-10">
+                    <canvas
+                      ref={placeholderCanvasRef}
+                      className="max-w-full max-h-full object-contain"
+                      style={{ filter: 'blur(4px)' }}
+                      data-testid="info-panel-placeholder"
+                    />
+                  </div>
+                )}
+                {/* The read, as an overlay rather than a void: emptying the
+                    panel first is what made every keypress feel like a wait. */}
+                {loadingPreview && (
+                  <div className="absolute bottom-2 right-2 z-20" data-testid="info-panel-loading">
+                    <div className="w-6 h-6 border-2 border-gray-600 border-t-blue-500 rounded-full animate-spin" />
+                  </div>
+                )}
                 {/* Zoom controls */}
                 <div className="absolute top-2 left-2 flex gap-1 z-20">
                   <button
@@ -372,7 +387,10 @@ export function InfoPanel({
               <div className="flex-shrink-0 overflow-y-auto" style={{ scrollbarGutter: 'stable' }}>
                 {/* RGB Histogram — fixed height to prevent layout shift */}
                 <div className="px-5 pt-3" style={{ height: '92px' }}>
-                  <Histogram imageElement={previewImgElement} />
+                  {/* Always an original — the placeholder is a canvas and is
+                      never handed here. It lags the placeholder by one read
+                      rather than blanking on every keypress. */}
+                  <Histogram imageElement={previewUrl ? previewImgElement : null} />
                 </div>
 
                 {/* Overlay toggles — kept mounted so the layout does not jump

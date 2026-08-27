@@ -1,5 +1,10 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import type { ImageFileInfo, ResultsFile, QualitySubscores } from '@photo-culler/types';
+import type {
+  ImageFileInfo,
+  ResultsFile,
+  QualitySubscores,
+  ScanProgress,
+} from '@photo-culler/types';
 import { sortImages } from '@photo-culler/image-utils/sorting';
 import type { SortDirection } from '@photo-culler/image-utils/sorting';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
@@ -8,6 +13,7 @@ import type { FolderSection } from '@photo-culler/image-utils/folders';
 import { MIN_RATING, clampRating, isInRatingRange } from '@photo-culler/image-utils/rating';
 import {
   loadAllResults,
+  loadResults,
   saveResults,
   emptyResults,
   projectFolderResults,
@@ -23,6 +29,28 @@ import {
   selectionTargets as computeSelectionTargets,
 } from '../lib/selection';
 import type { SelectionClickModifier, SelectionState } from '../lib/selection';
+
+/**
+ * How far the open folder's scan has got.
+ *
+ * 'idle' means nothing is outstanding, which is also the state of a build whose
+ * preload has no SCAN_PROGRESS channel: the counts stay at zero, the UI shows
+ * nothing extra, and the app behaves as it did before the scan was split.
+ */
+export interface ScanProgressState {
+  phase: 'idle' | 'walking' | 'metadata';
+  /** Image files the walk has found — the total, once it has finished. */
+  found: number;
+  /** Images whose metadata has been read, the blocking prefix included. */
+  completed: number;
+}
+
+const IDLE_SCAN: ScanProgressState = { phase: 'idle', found: 0, completed: 0 };
+
+/** Whether the scan still owes metadata for images already on screen. */
+export function isScanIncomplete(progress: ScanProgressState): boolean {
+  return progress.phase !== 'idle' && progress.completed < progress.found;
+}
 
 export interface PhotoState {
   folderPath: string | null;
@@ -42,6 +70,15 @@ export interface PhotoState {
   thumbnailSize: 'small' | 'medium' | 'large';
   groupingThresholdMs: number;
   isLoading: boolean;
+  /**
+   * Progress of the scan, which outlives `isLoading`.
+   *
+   * `isLoading` covers only the blocking phase now — the walk plus a screenful
+   * of EXIF headers — and the remaining headers keep arriving after the grid has
+   * painted. Something has to say so on screen, or dates and ratings filling
+   * themselves in looks like a bug.
+   */
+  scanProgress: ScanProgressState;
   focusedImageId: string | null;
   /**
    * The images a batch action acts on. See lib/selection.ts — it is a separate
@@ -72,6 +109,7 @@ const initialState: PhotoState = {
   thumbnailSize: 'medium',
   groupingThresholdMs: 5000,
   isLoading: false,
+  scanProgress: IDLE_SCAN,
   focusedImageId: null,
   selection: EMPTY_SELECTION.selection,
   selectionAnchor: EMPTY_SELECTION.anchor,
@@ -168,6 +206,56 @@ function selectionAfterRemoval(
   return { selection, selectionAnchor: anchor };
 }
 
+/**
+ * Fold a batch of freshly read metadata into the image list.
+ *
+ * By absolute path, and only into images that are still there: a batch is read
+ * off the disk while the user is already culling, so it can name an image that
+ * has been deleted since — and, keyed by path rather than name, it cannot
+ * deliver one shoot's EXIF to another shoot's `IMG_001.JPG`.
+ *
+ * The batch entry wins field by field rather than replacing the object, so a
+ * field the renderer has put on an image cannot be dropped by a scan that never
+ * knew about it.
+ */
+function mergeMetadata(images: ImageFileInfo[], batch: readonly ImageFileInfo[]): ImageFileInfo[] {
+  if (batch.length === 0) return images;
+  const byPath = new Map(batch.map((img) => [img.path, img]));
+  return images.map((img) => {
+    const fresh = byPath.get(img.path);
+    return fresh ? { ...img, ...fresh } : img;
+  });
+}
+
+/**
+ * Ratings from a batch, refusing to overwrite one the user has set since the
+ * folder opened.
+ *
+ * The image file is the authority for a rating, but a rating typed a moment ago
+ * is not in the file yet — it is sitting out RATING_WRITE_DEBOUNCE_MS — so a
+ * header read that started before it would hand back the old value and silently
+ * undo the keypress on screen. `userRated` is what makes the in-memory value win
+ * for exactly those images and nothing else.
+ *
+ * Returns the same object when nothing moved, so an all-unrated batch does not
+ * invalidate every memo that hangs off `ratings`.
+ */
+function mergeRatings(
+  ratings: Record<string, number>,
+  batch: readonly ImageFileInfo[],
+  userRated: ReadonlySet<string>,
+): Record<string, number> {
+  let next: Record<string, number> | null = null;
+  for (const img of batch) {
+    if (userRated.has(img.path)) continue;
+    const value = img.rating ?? MIN_RATING;
+    if (ratings[img.path] === value) continue;
+    next ??= { ...ratings };
+    next[img.path] = value;
+  }
+  return next ?? ratings;
+}
+
 export interface PhotoStoreAPI {
   state: PhotoState;
   /** Folder sections, each with its own timestamp groups. */
@@ -260,6 +348,30 @@ export function usePhotoStore(): PhotoStoreAPI {
     Map<string, { timer: ReturnType<typeof setTimeout>; value: number; revertTo: number }>
   >(new Map());
   /**
+   * Paths the user has rated since the folder opened.
+   *
+   * Not the same set as `ratingWritesRef`, which empties when the debounce
+   * fires: this one has to remember for the whole session, because a header read
+   * queued behind 3000 others can land minutes after the write it would undo.
+   */
+  const userRatedRef = useRef<Set<string>>(new Set());
+  /**
+   * Metadata batches that arrived before openFolder had put the image list in
+   * state.
+   *
+   * The reply to scanFolder and the batches that follow it travel the same
+   * channel in order, but openFolder still awaits the results files between
+   * receiving one and setting the other — and a batch landing in that window
+   * would have nothing to merge into and be dropped silently, which is a
+   * rating and a group boundary quietly missing. Buffered here, folded in by
+   * openFolder itself, and reset by it.
+   */
+  const metadataBufferRef = useRef<ImageFileInfo[]>([]);
+  /**
+   * The scan whose image list is in state. Until it matches, batches buffer.
+   */
+  const scanAppliedRef = useRef<number | null>(null);
+  /**
    * The flat order the grid is rendering, as absolute paths. Fed by
    * syncVisibleOrder; a Shift-click range is defined over exactly this.
    */
@@ -287,6 +399,49 @@ export function usePhotoStore(): PhotoStoreAPI {
     return () => {
       mountedRef.current = false;
     };
+  }, []);
+
+  /**
+   * Metadata that the scan is still delivering after the grid has painted.
+   *
+   * Subscribed once for the life of the hook rather than per folder: the
+   * `scanId` on every report is the open epoch this store handed to
+   * `scanFolder`, so a report from a tree we have left is dropped here without
+   * having to unsubscribe in a race with it. That is the same guard, for the
+   * same reason, as the epoch on a queued results-file write.
+   */
+  useEffect(() => {
+    if (!window.api.onScanProgress) return;
+
+    window.api.onScanProgress((progress: ScanProgress) => {
+      if (progress.scanId !== openEpochRef.current) return;
+
+      // Not yet in state: openFolder is still between the scan reply and its
+      // setState. Buffered rather than merged, and deliberately outside the
+      // updater below, which has to stay pure.
+      const buffer = progress.images.length > 0 && scanAppliedRef.current !== progress.scanId;
+      if (buffer) metadataBufferRef.current.push(...progress.images);
+
+      setState((prev) => {
+        const scanProgress: ScanProgressState = {
+          phase: progress.phase,
+          found: progress.found,
+          completed: progress.completed,
+        };
+        if (buffer || progress.images.length === 0) return { ...prev, scanProgress };
+        return {
+          ...prev,
+          scanProgress,
+          // One re-sort and one re-group per batch, not per image. Focus,
+          // selection and anchor are untouched on purpose: a batch changes
+          // where group boundaries fall, and nothing about where the user is.
+          images: mergeMetadata(prev.images, progress.images),
+          ratings: mergeRatings(prev.ratings, progress.images, userRatedRef.current),
+        };
+      });
+    });
+
+    return () => window.api.removeScanProgressListener?.();
   }, []);
 
   /**
@@ -440,12 +595,18 @@ export function usePhotoStore(): PhotoStoreAPI {
       // save landing in that window would persist images: {}.
       flushPendingSave();
       openEpochRef.current += 1;
+      const scanId = openEpochRef.current;
       resultsRef.current = new Map();
       // Nothing is on screen until the scan comes back, so the range a
       // Shift-click could span is empty until App reports the new order — and
       // so is the set that permits the fallback to the focused image.
       visibleOrderRef.current = [];
       setVisiblePathSet(EMPTY_PATH_SET);
+      // Both belong to the tree we are leaving: its ratings are gone from state
+      // and its buffered batches name images we no longer hold.
+      userRatedRef.current = new Set();
+      metadataBufferRef.current = [];
+      scanAppliedRef.current = null;
 
       setState((prev) => ({
         ...prev,
@@ -461,16 +622,41 @@ export function usePhotoStore(): PhotoStoreAPI {
         qualitySubscores: {},
         filterRatingRange: FULL_RATING_RANGE,
         scoringProgress: { completed: 0, total: 0 },
+        scanProgress: { phase: 'walking', found: 0, completed: 0 },
       }));
 
       thumbnailWorker.clearAll();
 
       try {
-        const images = await window.api.scanFolder(folderPath);
+        // The root's results file is the one file we can read before the walk,
+        // and reading it here overlaps it with the scan instead of adding it to
+        // the window the user is waiting on — 2.83 MB, and a serial read of it
+        // used to sit after the whole metadata pass. The subfolders' files
+        // cannot start early: their paths ARE the walk's output.
+        const rootResults = loadResults(folderPath).catch(() => null);
+
+        const scanned = await window.api.scanFolder(folderPath, scanId);
 
         // One results file per folder in the tree, loaded in parallel.
-        const folders = foldersOf(images);
-        const allResults = await loadAllResults(folders);
+        const folders = foldersOf(scanned);
+        const [root, allResults] = await Promise.all([
+          rootResults,
+          loadAllResults(folders.filter((folder) => folder !== folderPath)),
+        ]);
+        if (root) allResults.set(folderPath, root);
+
+        // A second openFolder has overtaken this one — the user picked another
+        // folder while this tree was still being walked. Its epoch is the live
+        // one now, so everything below, the drained batches included, would be
+        // the wrong tree's: bail before touching any of it.
+        if (!mountedRef.current || openEpochRef.current !== scanId) return;
+
+        // Batches that overtook the reply above; see metadataBufferRef. From
+        // the mark below onwards they merge straight into state, and there is
+        // no await between the two, so none can be lost in between.
+        const images = mergeMetadata(scanned, metadataBufferRef.current);
+        metadataBufferRef.current = [];
+        scanAppliedRef.current = scanId;
 
         // Keyed by absolute PATH, not filename: with subfolders in play the
         // same basename can occur in several shoots, and name keying would
@@ -483,6 +669,11 @@ export function usePhotoStore(): PhotoStoreAPI {
         for (const img of images) {
           // From the file, never from the results file — the scan already read
           // xmp:Rating, and an image rated elsewhere has to show up rated here.
+          //
+          // Past the blocking prefix the header has not been read yet, so this
+          // shows unrated for a few seconds and the image's batch corrects it.
+          // Rating one in that window is not lost: mergeRatings lets the value
+          // the user typed win over the one the batch brings back.
           ratings[img.path] = img.rating ?? MIN_RATING;
 
           const stored = allResults.get(img.folder)?.images[img.name];
@@ -497,8 +688,6 @@ export function usePhotoStore(): PhotoStoreAPI {
         for (const folder of folders) {
           resultsRef.current.set(folder, allResults.get(folder) ?? emptyResults(folder));
         }
-
-        if (!mountedRef.current) return;
 
         const first = images.length > 0 ? images[0]!.path : null;
         setState((prev) => ({
@@ -523,6 +712,8 @@ export function usePhotoStore(): PhotoStoreAPI {
         setState((prev) => ({
           ...prev,
           isLoading: false,
+          // The scan never got as far as reporting, and nothing is outstanding.
+          scanProgress: IDLE_SCAN,
           error: `Cannot access ${folderPath} -- check permissions`,
         }));
       }
@@ -543,6 +734,11 @@ export function usePhotoStore(): PhotoStoreAPI {
       // value from before this burst of keypresses, not the one it replaced.
       const revertTo = pending?.revertTo ?? stateRef.current.ratings[imagePath] ?? MIN_RATING;
       if (pending) clearTimeout(pending.timer);
+
+      // From here on this image's rating is the user's, not the scan's: a
+      // metadata batch still in flight read the file before this keypress and
+      // must not put the old value back. See mergeRatings.
+      userRatedRef.current.add(imagePath);
 
       setState((prev) => ({ ...prev, ratings: { ...prev.ratings, [imagePath]: value } }));
 

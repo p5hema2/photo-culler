@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { ImageFileInfo, QualitySubscores } from '@photo-culler/types';
 import { StarRating } from './StarRating';
 import { useZoomPan } from '../hooks/useZoomPan';
+import { useFullImage } from '../hooks/useFullImage';
 import { FocusPeakingOverlay } from './FocusPeakingOverlay';
 import { ExposureClippingOverlay } from './ExposureClippingOverlay';
 import { RotatedImageStage } from './RotatedImageStage';
@@ -9,21 +10,6 @@ import { AfPointOverlay } from './AfPointOverlay';
 import { OverlayControls } from './OverlayControls';
 import type { OverlaySettings, OverlayActions } from '../hooks/useOverlaySettings';
 import type { DetailedMetadataState } from '../hooks/useDetailedMetadata';
-
-const mimeMap: Record<string, string> = {
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  png: 'image/png',
-  webp: 'image/webp',
-  tiff: 'image/tiff',
-  tif: 'image/tiff',
-  heic: 'image/jpeg',
-};
-
-function getExtension(path: string): string {
-  const dot = path.lastIndexOf('.');
-  return dot >= 0 ? path.slice(dot + 1).toLowerCase() : '';
-}
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -136,13 +122,25 @@ export function DetailImageViewer({
 }: DetailImageViewerProps): React.JSX.Element {
   const { showFocusPeaking, showClipping, showAfPoint, focusPeakingThreshold } = overlaySettings;
   const focus = detailedMeta.status === 'ready' ? detailedMeta.data.focus : null;
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   const [showMetadata, setShowMetadata] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const placeholderCanvasRef = useRef<HTMLCanvasElement>(null);
-  const preloadCacheRef = useRef<Map<string, string>>(new Map());
+
+  /** The two images an arrow key can reach from here — read ahead, not on demand. */
+  const neighbours = useMemo(() => {
+    if (!focusedImageId) return [];
+    const idx = allImages.findIndex((img) => img.path === focusedImageId);
+    if (idx === -1) return [];
+    const paths: string[] = [];
+    if (idx > 0) paths.push(allImages[idx - 1]!.path);
+    if (idx < allImages.length - 1) paths.push(allImages[idx + 1]!.path);
+    return paths;
+  }, [allImages, focusedImageId]);
+
+  // No debounce here: this view has nothing else to show, and its prefetch
+  // already makes the common case a cache hit.
+  const { url: imageUrl, isLoading } = useFullImage(focusedImageId, { neighbours });
 
   const { zoom, panX, panY, isDragging, handlers, resetZoom, zoomTo100, fitToWindow } = useZoomPan({
     imageWidth: imageDimensions.width,
@@ -177,127 +175,12 @@ export function DetailImageViewer({
     ctx.drawImage(thumb, 0, 0);
   }, [focusedImageId, isLoading, getThumbnail]);
 
-  // Load full-size image
-  useEffect(() => {
-    if (!focusedImageId) {
-      setImageUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
-      return;
-    }
-
-    let cancelled = false;
-    setIsLoading(true);
-
-    const cache = preloadCacheRef.current;
-    const cached = cache.get(focusedImageId);
-    if (cached) {
-      // Transfer ownership from cache to imageUrl — remove from cache
-      // so the cache can't revoke a URL that imageUrl is still using.
-      cache.delete(focusedImageId);
-      setImageUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return cached;
-      });
-      setIsLoading(false);
-      return;
-    }
-
-    const load = async (): Promise<void> => {
-      try {
-        const buffer = await window.api.readFile(focusedImageId);
-        if (cancelled) return;
-        const ext = getExtension(focusedImageId);
-        const mimeType = mimeMap[ext] ?? 'image/jpeg';
-        const blob = new Blob([buffer], { type: mimeType });
-        const url = URL.createObjectURL(blob);
-        if (cancelled) {
-          URL.revokeObjectURL(url);
-          return;
-        }
-        setImageUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return url;
-        });
-      } catch {
-        if (!cancelled) {
-          setImageUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
-            return null;
-          });
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    };
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [focusedImageId]);
-
   // Fit image to window when focused image or dimensions change.
   // Using fitToWindow (not resetZoom) in deps ensures we re-fit after
   // handleImageLoad updates imageDimensions, even for same-size images.
   useEffect(() => {
     fitToWindow();
   }, [focusedImageId, fitToWindow]);
-
-  // Preload adjacent images
-  useEffect(() => {
-    if (isLoading || !focusedImageId) return;
-    const idx = allImages.findIndex((img) => img.path === focusedImageId);
-    if (idx === -1) return;
-
-    const toPreload: string[] = [];
-    if (idx > 0) toPreload.push(allImages[idx - 1]!.path);
-    if (idx < allImages.length - 1) toPreload.push(allImages[idx + 1]!.path);
-
-    const cache = preloadCacheRef.current;
-    for (const path of toPreload) {
-      if (cache.has(path)) continue;
-      if (cache.size >= 3) {
-        const keep = new Set([focusedImageId, ...toPreload]);
-        for (const [key, url] of cache) {
-          if (!keep.has(key)) {
-            URL.revokeObjectURL(url);
-            cache.delete(key);
-          }
-        }
-      }
-      const preload = async (): Promise<void> => {
-        try {
-          const buffer = await window.api.readFile(path);
-          const ext = getExtension(path);
-          const mimeType = mimeMap[ext] ?? 'image/jpeg';
-          const blob = new Blob([buffer], { type: mimeType });
-          cache.set(path, URL.createObjectURL(blob));
-        } catch {
-          /* non-critical */
-        }
-      };
-      preload();
-    }
-  }, [focusedImageId, isLoading, allImages]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      for (const url of preloadCacheRef.current.values()) URL.revokeObjectURL(url);
-      preloadCacheRef.current.clear();
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      setImageUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
-    };
-  }, []);
 
   const handleImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;

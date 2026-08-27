@@ -18,6 +18,9 @@ export type {
   QualitySubscores,
   ResultsFile,
   MenuCommand,
+  ScanProgress,
+  ThumbSource,
+  ThumbSourceFallback,
 } from './ipc';
 export type { ImageFileInfo } from './image';
 export type {

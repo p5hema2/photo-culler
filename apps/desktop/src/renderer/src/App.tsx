@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { MenuCommand } from '@photo-culler/types';
-import { usePhotoStore } from './hooks/usePhotoStore';
+import { usePhotoStore, isScanIncomplete } from './hooks/usePhotoStore';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useScoringWorker } from './hooks/useScoringWorker';
 import { useOverlaySettings } from './hooks/useOverlaySettings';
@@ -9,6 +9,7 @@ import { DropZone } from './components/DropZone';
 import { Toolbar } from './components/Toolbar';
 import { PhotoGrid } from './components/PhotoGrid';
 import { EmptyState } from './components/EmptyState';
+import { LoadingState, scanDetail } from './components/LoadingState';
 import { ExecutePanel } from './components/ExecutePanel';
 import { InfoPanel } from './components/InfoPanel';
 import { LoupeView } from './components/LoupeView';
@@ -44,18 +45,6 @@ function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX
       >
         Open Folder
       </button>
-    </div>
-  );
-}
-
-function LoadingState(): React.JSX.Element {
-  return (
-    <div
-      className="flex flex-col items-center justify-center h-full text-gray-400"
-      data-testid="loading-state"
-    >
-      <div className="w-8 h-8 border-2 border-gray-600 border-t-blue-500 rounded-full animate-spin mb-4" />
-      <p className="text-lg">Scanning folder...</p>
     </div>
   );
 }
@@ -473,8 +462,19 @@ function App(): React.JSX.Element {
     };
   }, []);
 
+  const scanIncomplete = isScanIncomplete(state.scanProgress);
+
   useEffect(() => {
     if (!state.folderPath || state.isLoading) {
+      return;
+    }
+
+    // Also waits out the metadata pass, which now runs while the grid is up.
+    // Scoring reads WHOLE files — 6.2 MB each, and 7.2 a second is all the
+    // spinning disk this was measured on gives — so starting it here would put
+    // that in front of the 64 kB header reads still filling in dates and
+    // ratings. Scores are advisory; a date the grid groups by is not.
+    if (scanIncomplete) {
       return;
     }
 
@@ -507,7 +507,7 @@ function App(): React.JSX.Element {
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [state.folderPath, state.isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state.folderPath, state.isLoading, scanIncomplete]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scoring progress read directly from hook — no sync needed
   const scoringProgress = scoringWorker.progress;
@@ -560,7 +560,7 @@ function App(): React.JSX.Element {
 
   const renderContent = (): React.JSX.Element => {
     if (state.isLoading) {
-      return <LoadingState />;
+      return <LoadingState progress={state.scanProgress} />;
     }
     if (!state.folderPath) {
       return <WelcomeState onOpenFolder={handleSelectFolder} />;
@@ -651,6 +651,21 @@ function App(): React.JSX.Element {
             <button onClick={store.clearError} className="text-red-400 hover:text-red-200 ml-4">
               Dismiss
             </button>
+          </div>
+        )}
+
+        {/* The scan is still reading headers, and it shows: dates regroup and
+            stars appear on their own for a few seconds. A count is the whole
+            difference between that looking like progress and looking like a
+            bug — and, unlike a spinner, it distinguishes two seconds left from
+            twenty. */}
+        {scanIncomplete && !state.isLoading && (
+          <div
+            className="bg-gray-800 text-gray-400 px-4 py-1 text-xs flex items-center gap-2 border-b border-gray-700"
+            data-testid="scan-progress"
+          >
+            <span className="w-3 h-3 border-2 border-gray-700 border-t-blue-500 rounded-full animate-spin" />
+            <span>{scanDetail(state.scanProgress)}</span>
           </div>
         )}
 
