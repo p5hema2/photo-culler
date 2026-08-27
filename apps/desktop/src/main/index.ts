@@ -4,6 +4,7 @@ import type { MenuCommand } from '@photo-culler/types';
 import { registerSchemes, registerProtocolHandlers } from './protocol';
 import { registerIpcHandlers } from './ipc-handlers';
 import { endExifTool } from './exiftool';
+import { settleFileLocks } from './file-lock';
 
 // Ensure store module is initialized early
 import './store';
@@ -236,10 +237,16 @@ let exiftoolStopped = false;
 app.on('will-quit', (event) => {
   if (exiftoolStopped) return;
   event.preventDefault();
-  void endExifTool().finally(() => {
-    exiftoolStopped = true;
-    app.quit();
-  });
+  // Drain queued file work before shutting exiftool down. A rating typed a
+  // moment before the window closes only exists once its write has landed —
+  // the file is the authority for it, there is no results-file copy to fall
+  // back on. Bounded, because a wedged write must not stop the app exiting.
+  void Promise.race([settleFileLocks(), new Promise<void>((resolve) => setTimeout(resolve, 3000))])
+    .then(() => endExifTool())
+    .finally(() => {
+      exiftoolStopped = true;
+      app.quit();
+    });
 });
 
 app.on('window-all-closed', () => {

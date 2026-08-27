@@ -16,6 +16,7 @@ export const IPC_CHANNELS = {
   LOAD_THUMB_CACHE: 'fs:load-thumb-cache',
   SAVE_THUMB_CACHE: 'fs:save-thumb-cache',
   ROTATE_FILES: 'fs:rotate-files',
+  WRITE_RATING: 'fs:write-rating',
   CLEAN_UP_FOLDER: 'fs:clean-up-folder',
   READ_DETAILED_METADATA: 'meta:read-detailed',
   GET_APP_VERSION: 'app:get-version',
@@ -157,6 +158,15 @@ export interface ElectronAPI {
   rotateFiles: (
     files: Array<{ path: string; degrees: number }>,
   ) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
+  /**
+   * Write a star rating (0-5, 0 = unrated) into the image file's XMP and EXIF.
+   *
+   * The file is the authority for a rating, so this is not a cache update — it
+   * is the save. The result is reported rather than swallowed: a failed write
+   * with a star still on screen is a lost rating, and there is nowhere else it
+   * lives.
+   */
+  writeRating: (filePath: string, rating: number) => Promise<{ ok: boolean; error?: string }>;
   /**
    * Deep metadata for one image, read on demand via exiftool in the main
    * process. Resolves null when exiftool is unavailable or the file yields

@@ -6,7 +6,8 @@ import { IPC_CHANNELS } from '@photo-culler/types';
 import type { SessionConfig, TrashResult } from '@photo-culler/types';
 import { scanFolder } from '@photo-culler/image-utils';
 import { getSession, updateSession } from './store';
-import { readDetailedMetadata } from './exiftool';
+import { readDetailedMetadata, writeRating, type RatingWriteResult } from './exiftool';
+import { withFileLock } from './file-lock';
 
 const RESULTS_FILENAME = '.photo-culler-results.json';
 /** Pre-1.2.0 name. Read once and migrated to RESULTS_FILENAME on first load. */
@@ -632,9 +633,22 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.READ_FILE, async (_event, filePath: string) => {
-    const buffer = await readFile(filePath);
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    // Under the per-path lock so a rating write cannot land while a thumbnail,
+    // scoring or preview read holds this file open. exiftool writes by renaming
+    // a temp over the original, and on Windows an open handle fails that rename.
+    // Different files still read fully in parallel — only same-file work queues.
+    return withFileLock(filePath, async () => {
+      const buffer = await readFile(filePath);
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    });
   });
+
+  ipcMain.handle(
+    IPC_CHANNELS.WRITE_RATING,
+    async (_event, filePath: string, rating: number): Promise<RatingWriteResult> => {
+      return withFileLock(filePath, () => writeRating(filePath, rating));
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.DELETE_FILES, async (_event, filePaths: string[]) => {
     const result: TrashResult = { succeeded: [], failed: [] };
