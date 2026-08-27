@@ -27,6 +27,10 @@ export default defineConfig({
         __dirname,
         '../../packages/image-utils/src/folders',
       ),
+      '@photo-culler/image-utils/rating': resolve(
+        __dirname,
+        '../../packages/image-utils/src/rating',
+      ),
       '@photo-culler/image-utils': resolve(__dirname, '../../packages/image-utils/src'),
     },
   },

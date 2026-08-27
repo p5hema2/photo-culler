@@ -7,7 +7,12 @@ export default defineConfig({
   main: {
     plugins: [
       externalizeDepsPlugin({
-        exclude: ['electron-store', '@photo-culler/image-utils', '@photo-culler/types'],
+        // Bundled rather than externalised. electron-builder.yml excludes
+        // node_modules and ships only the vendored subset (sharp,
+        // exiftool-vendored), so an externalised pure-JS dependency would be
+        // missing at runtime in a packaged build. exifr is pure JS, and the
+        // scanner needs it in the main process to read ratings.
+        exclude: ['electron-store', 'exifr', '@photo-culler/image-utils', '@photo-culler/types'],
       }),
     ],
     resolve: {
@@ -45,6 +50,12 @@ export default defineConfig({
         '@photo-culler/image-utils/folders': resolve(
           __dirname,
           '../../packages/image-utils/src/folders',
+        ),
+        // rating.ts and NOT metadata.ts: the latter imports exifr at module
+        // scope, which the browser bundle has no business carrying.
+        '@photo-culler/image-utils/rating': resolve(
+          __dirname,
+          '../../packages/image-utils/src/rating',
         ),
       },
     },

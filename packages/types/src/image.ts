@@ -53,4 +53,13 @@ export interface ImageFileInfo {
   exposureProgram?: string;
   /** Color space (e.g., "sRGB", "Adobe RGB") */
   colorSpace?: string;
+  /**
+   * Star rating, 0-5, where 0 means unrated.
+   *
+   * Read from the file itself (xmp:Rating and the EXIF Rating tag), not from the
+   * results file — the image is the authority, so a rating set in Lightroom
+   * shows up here and a rescan cannot lose one. Absent means the scan has not
+   * looked yet; 0 means it looked and the image is unrated.
+   */
+  rating?: number;
 }

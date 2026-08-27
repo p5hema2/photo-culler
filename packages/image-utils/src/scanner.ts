@@ -1,6 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { ImageFileInfo } from '@photo-culler/types';
+import { readImageMetadata } from './metadata';
 
 const SUPPORTED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.webp']);
 
@@ -16,6 +17,35 @@ const PICKS_DIR = 'picks';
 const MAX_DIRECTORIES = 2000;
 
 /**
+ * Concurrent metadata reads.
+ *
+ * Each read is ~0.3 ms of CPU and one seeking file open, so the limit is about
+ * not queueing thousands of file handles at once rather than about throughput.
+ * Modest on purpose: a network drive punishes a wide fan-out far more than a
+ * local SSD rewards it.
+ */
+const METADATA_CONCURRENCY = 8;
+
+/**
+ * Fill in each image's metadata, in place, with a bounded number of concurrent
+ * reads.
+ *
+ * A second pass rather than part of the walk: the walk is depth-first and
+ * sequential by design (MAX_DIRECTORIES has to stay meaningful), while these
+ * reads have no ordering constraint at all.
+ */
+async function attachMetadata(images: ImageFileInfo[]): Promise<void> {
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < images.length) {
+      const image = images[next++]!;
+      Object.assign(image, await readImageMetadata(image.path));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(METADATA_CONCURRENCY, images.length) }, worker));
+}
+
+/**
  * Recursively scan a folder tree for supported image files.
  *
  * Every directory below `folderPath` is visited, so a user can open the parent
@@ -26,6 +56,10 @@ const MAX_DIRECTORIES = 2000;
  *  - A `picks/` directory is scanned, but its images are attributed to the
  *    PARENT folder. Execute moves keeps into picks/, and they should stay
  *    visible where they were culled rather than jumping to a new section.
+ *
+ * Each image's metadata — including its star rating — is read here rather than
+ * cached in the results file, because the file on disk is the authority for the
+ * rating. It costs ~0.3 ms per image; see readImageMetadata.
  */
 export async function scanFolder(folderPath: string): Promise<ImageFileInfo[]> {
   const images: ImageFileInfo[] = [];
@@ -90,5 +124,6 @@ export async function scanFolder(folderPath: string): Promise<ImageFileInfo[]> {
   };
 
   await walk(folderPath, folderPath);
+  await attachMetadata(images);
   return images;
 }
