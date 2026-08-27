@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { ResultsFile } from '@photo-culler/types';
-import { rebuildResults } from '../lib/results';
+import type { ImageFileInfo, ResultsFile } from '@photo-culler/types';
+import { projectFolderResults, rebuildResults } from '../lib/results';
 
 function makeResults(): ResultsFile {
   return {
@@ -76,5 +76,60 @@ describe('rebuildResults', () => {
 
     expect(rebuilt.version).toBe(1);
     expect(rebuilt.folderPath).toBe('/photos');
+  });
+});
+
+describe('projectFolderResults', () => {
+  const A: ImageFileInfo = {
+    path: '/photos/a.jpg',
+    name: 'a.jpg',
+    folder: '/photos',
+    extension: 'jpg',
+    size: 100,
+    lastModified: 1,
+  };
+
+  /** Nothing in state at all — the shape openFolder produces for a fresh folder. */
+  const empty = {
+    classifications: {},
+    qualityScores: {},
+    qualitySubscores: {},
+    rotations: {},
+  };
+
+  it('clears a rotation that state no longer holds', () => {
+    // Regression for a live bug: Execute applied the rotation to disk, deleted
+    // it from state and marked the folder dirty — but the projection read
+    // `state.rotations[path] ?? prior?.rotation`, so the old 90 came straight
+    // back from the file. The next open then re-applied a visual 90 degrees on
+    // top of the already physically rotated image.
+    const projected = projectFolderResults(makeResults(), '/photos', [A], empty);
+
+    expect(projected.images['a.jpg']!.rotation).toBeUndefined();
+  });
+
+  it('keeps a rotation that state does hold', () => {
+    const projected = projectFolderResults(makeResults(), '/photos', [A], {
+      ...empty,
+      rotations: { '/photos/a.jpg': 180 },
+    });
+
+    expect(projected.images['a.jpg']!.rotation).toBe(180);
+  });
+
+  it('leaves the other fields of the projected image alone', () => {
+    const projected = projectFolderResults(makeResults(), '/photos', [A], empty);
+
+    // Scores and cached EXIF are only ever set, never cleared, so they keep
+    // falling back to the value on disk.
+    expect(projected.images['a.jpg']!.qualityScore).toBe(81);
+    expect(projected.images['a.jpg']!.exif).toEqual({ iso: 160, cameraModel: 'DC-S5D' });
+  });
+
+  it('does not touch an image that is not in the projected list', () => {
+    // b.jpg is on disk but outside `images`; its entry survives via the spread.
+    const projected = projectFolderResults(makeResults(), '/photos', [A], empty);
+
+    expect(projected.images['b.jpg']!.qualityScore).toBe(12);
   });
 });

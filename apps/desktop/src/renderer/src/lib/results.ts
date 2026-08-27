@@ -138,7 +138,15 @@ export function projectFolderResults(
       userOverride: prior?.userOverride ?? false,
       qualityScore: state.qualityScores[image.path] ?? prior?.qualityScore,
       qualitySubscores: state.qualitySubscores[image.path] ?? prior?.qualitySubscores,
-      rotation: state.rotations[image.path] ?? prior?.rotation,
+      // NO `?? prior?.rotation` here, deliberately: absence in state has to mean
+      // "cleared", not "look it up on disk". openFolder loads every stored
+      // rotation into the map and writeFolder passes the folder's FULL image
+      // list, so the map is authoritative for every image iterated here.
+      //
+      // With the fallback, Execute's "rotation applied, drop it from state" left
+      // the old angle sitting in `prior`, and the next open re-applied a visual
+      // 90 degrees on top of the file it had just physically rotated.
+      rotation: state.rotations[image.path],
       exif: prior?.exif,
     };
   }
