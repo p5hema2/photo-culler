@@ -370,11 +370,20 @@ export function usePhotoStore(): PhotoStoreAPI {
                 exposureProgram: metadata.exposureProgram ?? undefined,
                 colorSpace: metadata.colorSpace ?? undefined,
               };
+              // A never-culled folder holds no record for this image yet, so
+              // caching EXIF is what creates one — and it has to carry the
+              // required fields, on the same defaults projectFolderResults uses.
+              const prior = folderResults.images[source.name];
               resultsRef.current.set(source.folder, {
                 ...folderResults,
                 images: {
                   ...folderResults.images,
-                  [source.name]: { ...folderResults.images[source.name], exif: exifData },
+                  [source.name]: {
+                    ...prior,
+                    classification: prior?.classification ?? null,
+                    userOverride: prior?.userOverride ?? false,
+                    exif: exifData,
+                  },
                 },
               });
               markDirty(source.folder);
@@ -899,8 +908,16 @@ export function usePhotoStore(): PhotoStoreAPI {
             groupingThresholdMs: session.groupingThresholdMs ?? 5000,
           }));
         }
-        if (false && session.lastFolderPath) {
-          // Disabled: always start blank
+        // Disabled: always start blank. Kept rather than deleted because this
+        // is where restoring would go, and the decision not to is deliberate.
+        //
+        // The `: boolean` annotation is load-bearing, not decoration. Without
+        // it TS infers the literal type `false`, decides the branch cannot run,
+        // and stops applying the `&& session.lastFolderPath` narrowing inside
+        // it — which is exactly the TS2345 this replaced (`string | undefined`
+        // passed to openFolder). Same reason the old `if (false && …)` failed.
+        const restoreLastFolder: boolean = false;
+        if (restoreLastFolder && session.lastFolderPath) {
           openFolder(session.lastFolderPath);
         }
       } catch {

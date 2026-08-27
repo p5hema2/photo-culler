@@ -1,8 +1,13 @@
 {
   "extends": "@photo-culler/tsconfig/node.json",
   "compilerOptions": {
-    "outDir": "./out",
-    "composite": true
+    "composite": true,
+    // composite forbids noEmit, so emit declarations only, into a throwaway
+    // directory. ./out is electron-vite's output — writing tsc artifacts there
+    // would interleave two build systems in one folder.
+    "emitDeclarationOnly": true,
+    "outDir": "./.tscheck/node",
+    "tsBuildInfoFile": "./.tscheck/node.tsbuildinfo"
   },
   "include": ["src/main/**/*", "src/preload/**/*", "electron.vite.config.ts"]
 }

@@ -7,9 +7,11 @@
   "scripts": {
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@photo-culler/tsconfig": "workspace:*",
     "typescript": "^5.7.0"
   }
 }

@@ -6,6 +6,7 @@ function makeImage(name: string, overrides: Partial<ImageFileInfo> = {}): ImageF
   return {
     path: `/test/${name}`,
     name,
+    folder: '/test',
     extension: 'jpg',
     size: 1024,
     lastModified: 1000000,

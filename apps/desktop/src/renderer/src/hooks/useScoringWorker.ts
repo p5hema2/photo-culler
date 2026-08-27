@@ -45,7 +45,7 @@ export function useScoringWorker(): ScoringWorkerAPI {
 
       const sendNext = async (): Promise<void> => {
         if (fileIndex >= files.length) return;
-        const file = files[fileIndex++];
+        const file = files[fileIndex++]!;
         try {
           const buffer = await window.api.readFile(file.path);
           worker.postMessage({ path: file.path, buffer }, [buffer]);

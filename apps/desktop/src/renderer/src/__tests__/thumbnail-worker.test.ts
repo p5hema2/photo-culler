@@ -75,7 +75,7 @@ describe('useThumbnailWorker', () => {
     expect(window.api.readFile).toHaveBeenCalledWith('/test/img.jpg');
 
     const calledWorker = mockWorkers.find((w) => w.postMessage.mock.calls.length > 0)!;
-    const call = calledWorker.postMessage.mock.calls[0];
+    const call = calledWorker.postMessage.mock.calls[0]!;
     expect(call[0]).toMatchObject({
       id: '/test/img.jpg',
       mimeType: 'image/jpeg',
@@ -229,12 +229,13 @@ describe('useThumbnailWorker', () => {
     });
 
     const mockBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    const firstWorker = mockWorkers[0]!;
     act(() => {
-      mockWorkers[0].simulateMessage({ id: '/test/img-0.jpg', bitmap: mockBitmap });
+      firstWorker.simulateMessage({ id: '/test/img-0.jpg', bitmap: mockBitmap });
     });
 
     await waitFor(() => {
-      expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(2);
+      expect(firstWorker.postMessage).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -263,15 +264,16 @@ describe('useThumbnailWorker', () => {
     });
 
     const mockBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    const firstWorker = mockWorkers[0]!;
     act(() => {
-      mockWorkers[0].simulateMessage({ id: '/test/busy-0.jpg', bitmap: mockBitmap });
+      firstWorker.simulateMessage({ id: '/test/busy-0.jpg', bitmap: mockBitmap });
     });
 
     await waitFor(() => {
-      expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(2);
+      expect(firstWorker.postMessage).toHaveBeenCalledTimes(2);
     });
 
-    const lastCall = mockWorkers[0].postMessage.mock.calls[1];
+    const lastCall = firstWorker.postMessage.mock.calls[1]!;
     expect(lastCall[0].id).toBe('/test/near.jpg');
   });
 
@@ -288,14 +290,15 @@ describe('useThumbnailWorker', () => {
     });
 
     const mockBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    const firstWorker = mockWorkers[0]!;
     act(() => {
-      mockWorkers[0].simulateMessage({ id: '/test/img.jpg', bitmap: mockBitmap });
+      firstWorker.simulateMessage({ id: '/test/img.jpg', bitmap: mockBitmap });
     });
 
     act(() => {
       result.current.requestThumbnail('/test/img.jpg', 'unused', THUMB_MAX_EDGE);
     });
 
-    expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(1);
+    expect(firstWorker.postMessage).toHaveBeenCalledTimes(1);
   });
 });

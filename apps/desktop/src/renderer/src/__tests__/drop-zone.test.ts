@@ -1,13 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { render, fireEvent, act, cleanup } from '@testing-library/react';
 import { createElement } from 'react';
 import { DropZone } from '../components/DropZone';
 
 describe('DropZone', () => {
-  let onFolderDrop: ReturnType<typeof vi.fn>;
+  let onFolderDrop: Mock<(folderPath: string) => void>;
 
   beforeEach(() => {
-    onFolderDrop = vi.fn();
+    onFolderDrop = vi.fn<(folderPath: string) => void>();
     vi.useFakeTimers();
   });
 
@@ -17,12 +17,14 @@ describe('DropZone', () => {
   });
 
   function renderDropZone() {
+    // `children` goes in the props object, not as a createElement vararg:
+    // DropZoneProps declares it required, and React's typings expect every
+    // declared prop to be present in that first argument.
     return render(
-      createElement(
-        DropZone,
-        { onFolderDrop },
-        createElement('div', { 'data-testid': 'content' }, 'Content'),
-      ),
+      createElement(DropZone, {
+        onFolderDrop,
+        children: createElement('div', { 'data-testid': 'content' }, 'Content'),
+      }),
     );
   }
 

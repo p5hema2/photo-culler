@@ -27,7 +27,7 @@ Run from the repo root unless noted.
 | `pnpm lint` | ESLint across all packages |
 | `pnpm test` | Vitest in `apps/desktop` + `packages/image-utils` |
 | `pnpm format` / `pnpm format:check` | Prettier |
-| `pnpm typecheck` | **No-op — see Traps below** |
+| `pnpm typecheck` | `tsc` across all packages — real since 1.5.3, and it can fail |
 
 Packaging (from `apps/desktop`): `pnpm build && pnpm package:win` (or `package:mac`, or `package`
 for the current platform). Each of those vendors the target's native binaries first — see the
@@ -63,6 +63,12 @@ blocks of `apps/desktop/electron.vite.config.ts`, plus `apps/desktop/vitest.conf
 package or a new deep import and you must register it in every relevant one — a miss fails at
 runtime, not build time.
 
+`tsc` deliberately does **not** use those aliases — it resolves through the packages' own manifests
+instead, so a new deep import needs one entry in `packages/image-utils`'s `exports` map rather than
+two more copies of the alias table. Net effect: a new deep import touches the two vite/vitest
+configs plus `exports`. If it works at runtime but `pnpm typecheck` cannot find it, the `exports`
+entry is what is missing.
+
 **Renderer state is keyed by absolute PATH; results files are keyed by basename.** Both matter.
 With subfolders in play `IMG_001.JPG` is not unique, so every in-memory map (`classifications`,
 `qualityScores`, `qualitySubscores`, `rotations`) keys by full path. The files on disk keep their
@@ -91,12 +97,41 @@ barrel re-exports `scanner.ts`, which imports `node:fs/promises` and would break
 Import deep paths in renderer code, and register each new one in **both** `electron.vite.config.ts`
 and `vitest.config.ts`.
 
-**`pnpm typecheck` cannot fail.** No package defines a `typecheck` script, so Turbo resolves every
-task to nothing. It runs in CI and in the `pre-push` hook and is green regardless of type errors.
-The reason it was left that way is documented in `.github/workflows/ci.yml`: making it real needs
-`@types/node` plus TS path mappings mirroring the Vite aliases, and adding those re-resolves vite
-6 to 8, which breaks electron-vite's peer range. **Do not trust it — verify types by other means
-before claiming a change typechecks.**
+**`pnpm typecheck` is real as of 1.5.3 — trust it, and keep it honest.** It was a no-op until
+then (no package defined the script, so Turbo resolved every task to nothing) and CI plus the
+`pre-push` hook were green regardless of type errors. Four things hold it up:
+
+- Every package defines `typecheck`. `apps/desktop` runs `tsc -b`, which follows the `references`
+  in `tsconfig.json`; the shared packages run `tsc --noEmit`.
+- `composite: true` is required by those references and **forbids `noEmit`**, so the two app
+  projects emit declarations only, into `apps/desktop/.tscheck/` — never into `./out`, which is
+  electron-vite's output directory. Two build systems writing one folder is not worth debugging.
+- `@types/node` is a real devDependency of `apps/desktop` and `packages/image-utils`, whose
+  tsconfigs both inherit `types: ["node"]`. The old note in `ci.yml` claimed adding it re-resolves
+  vite 6 to 8; that was written one day before `pnpm.overrides` pinned vite, and the pin makes it
+  false. Verified: adding it moved only the `@types/node` peer identity in the lockfile's
+  resolution keys, not vite's version.
+- Module resolution works through the packages' own manifests, **not** through a copy of the Vite
+  alias table. `@photo-culler/types` resolves via `main`/`types`; the deep `image-utils` entry
+  points resolve via its `exports` map. Add a new deep import and you add it there — do not add
+  `paths` to a tsconfig, or the alias table gains yet another copy to drift out of sync.
+
+`packages/types/src/index.ts` re-exports a type from `window.d.ts` for one reason only: that pulls
+the file into the program, and with it the `declare global { interface Window }` augmentation. An
+editor loads every file in a package and applied it anyway, which is why `window.api` type-checked
+in the IDE and produced 30-odd TS2339s the moment `tsc` ran for real. Deleting that re-export
+because "nothing imports MenuEvents" breaks the build, not just a lint.
+
+**A missing `@tailwindcss/oxide` native binding does not fail the build — it silently ships broken
+CSS.** The loader falls back to a WASI build whose source scanner finds a fraction of the classes:
+36 kB of CSS becomes 5 kB, the build exits 0, and the only trace is one
+`ExperimentalWarning: WASI` line in the log. It happens when an incremental `pnpm add`/`pnpm install`
+leaves `node_modules/.pnpm/@tailwindcss+oxide-win32-x64-msvc@*/…/oxide-win32-x64-msvc/` holding the
+`.node` file but no `package.json` — the loader does
+`require('@tailwindcss/oxide-win32-x64-msvc/package.json')` and gives up. Fix by deleting that
+`.pnpm` directory and re-running `pnpm install`. Sanity check after any dependency change: the
+renderer CSS should be ~36 kB, and the build log should NOT mention WASI. Fresh CI installs link
+correctly, so released artifacts have not been affected.
 
 **Native dependencies are vendored per target.** `scripts/vendor-native-deps.mjs` flattens `sharp`
 and `exiftool-vendored` out of pnpm's virtual store into `vendor/<os>-<arch>/node_modules/`, because
@@ -245,8 +280,8 @@ x64) and publishes a GitHub Release with the installers attached.
 (`node scripts/set-version.mjs 1.3.0`) — but that **modifies the tracked package.json**, so revert
 it before committing.
 
-`ci.yml` runs on push/PR to `main` across a macOS + Windows matrix: format:check, lint, typecheck
-(no-op), test, build, native-addon guard.
+`ci.yml` runs on push/PR to `main` across a macOS + Windows matrix: format:check, lint, typecheck,
+test, build, native-addon guard.
 
 ## Conventions
 

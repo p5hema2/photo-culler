@@ -34,6 +34,7 @@ describe('folder selection IPC flow', () => {
       {
         path: '/Users/test/photos/IMG_001.jpg',
         name: 'IMG_001.jpg',
+        folder: '/Users/test/photos',
         extension: 'jpg',
         size: 1024000,
         lastModified: Date.now(),
@@ -41,6 +42,7 @@ describe('folder selection IPC flow', () => {
       {
         path: '/Users/test/photos/IMG_002.jpg',
         name: 'IMG_002.jpg',
+        folder: '/Users/test/photos',
         extension: 'jpg',
         size: 2048000,
         lastModified: Date.now(),
@@ -51,8 +53,8 @@ describe('folder selection IPC flow', () => {
 
     const result = await mockApi.scanFolder!('/Users/test/photos');
     expect(result).toHaveLength(2);
-    expect(result[0].name).toBe('IMG_001.jpg');
-    expect(result[1].extension).toBe('jpg');
+    expect(result[0]!.name).toBe('IMG_001.jpg');
+    expect(result[1]!.extension).toBe('jpg');
   });
 
   it('scanFolder returns empty array for folder with no images', async () => {
@@ -68,6 +70,7 @@ describe('folder selection IPC flow', () => {
       {
         path: '/Users/test/photos/IMG_001.jpg',
         name: 'IMG_001.jpg',
+        folder: '/Users/test/photos',
         extension: 'jpg',
         size: 1024000,
         lastModified: Date.now(),

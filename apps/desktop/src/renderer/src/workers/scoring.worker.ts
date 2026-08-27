@@ -71,7 +71,7 @@ function computeExposure(gray: Float32Array, width: number, height: number): num
 
   for (let i = 0; i < totalPixels; i++) {
     const lum = Math.round(clamp(gray[i]!, 0, 255));
-    histogram[lum]++;
+    histogram[lum]!++;
     lumSum += gray[i]!;
 
     if (gray[i]! < 5 || gray[i]! > 250) {

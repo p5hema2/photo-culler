@@ -213,8 +213,13 @@ function panasonicFaces(raw: RawTags): FocusRegion[] {
             .map(num)
         : null;
     if (!parts || parts.length < 4) continue;
+    // `== null` rather than `=== null`, to catch undefined as well: indexed
+    // access into a plain array is `| undefined` under noUncheckedIndexedAccess
+    // no matter what the length check above says, and a hole in a sparse array
+    // really does survive `.map` and read back as undefined. Narrowing this
+    // back to `=== null` does not compile.
     const [x, y, w, h] = parts;
-    if (x === null || y === null || w === null || h === null) continue;
+    if (x == null || y == null || w == null || h == null) continue;
 
     const rect: NormRect = { cx: x / refW, cy: y / refH, w: w / refW, h: h / refH };
     if (![rect.cx, rect.cy, rect.w, rect.h].every((v) => Number.isFinite(v))) continue;

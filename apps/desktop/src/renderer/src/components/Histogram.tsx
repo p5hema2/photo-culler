@@ -44,10 +44,11 @@ function computeHistogram(imageElement: HTMLImageElement): HistogramData | null 
   const g = new Uint32Array(256);
   const b = new Uint32Array(256);
 
+  // Uint8ClampedArray samples are 0-255, so every one of them indexes an existing bin
   for (let i = 0; i < pixels.length; i += 4) {
-    r[pixels[i]!]++;
-    g[pixels[i + 1]!]++;
-    b[pixels[i + 2]!]++;
+    r[pixels[i]!]!++;
+    g[pixels[i + 1]!]!++;
+    b[pixels[i + 2]!]!++;
   }
 
   return { r, g, b };

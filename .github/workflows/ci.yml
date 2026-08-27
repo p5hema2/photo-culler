@@ -36,10 +36,6 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      # NOTE: currently a no-op — no package defines a "typecheck" script yet.
-      # Making it real needs @types/node plus TS path mappings mirroring the
-      # electron-vite aliases, and adding those re-resolves vite 6 -> 8, which
-      # breaks electron-vite's peer range. Tracked separately.
       - name: Typecheck
         run: pnpm typecheck
 

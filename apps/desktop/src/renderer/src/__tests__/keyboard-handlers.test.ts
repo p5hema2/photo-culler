@@ -36,13 +36,22 @@ const GROUP: PhotoGroup = {
   endTime: 1,
 };
 
-let handlers: {
-  onFocusChange: ReturnType<typeof vi.fn>;
-  onCycleClassification: ReturnType<typeof vi.fn>;
-  onSetClassification: ReturnType<typeof vi.fn>;
-  onTrashFocused: ReturnType<typeof vi.fn>;
-  onRotate: ReturnType<typeof vi.fn>;
-};
+/**
+ * The signatures are spelled out because a bare `vi.fn()` types as an
+ * unnarrowed `Mock<Procedure | Constructable>`, which no hook prop accepts.
+ */
+function makeHandlers() {
+  return {
+    onFocusChange: vi.fn<(path: string | null) => void>(),
+    onCycleClassification: vi.fn<(imagePath: string) => void>(),
+    onSetClassification:
+      vi.fn<(imagePath: string, classification: 'keep' | 'review' | 'delete' | null) => void>(),
+    onTrashFocused: vi.fn<() => void>(),
+    onRotate: vi.fn<(imagePath: string, direction: 'cw' | 'ccw') => void>(),
+  };
+}
+
+let handlers: ReturnType<typeof makeHandlers>;
 
 let unmountHook: (() => void) | null = null;
 
@@ -52,13 +61,7 @@ afterEach(() => {
 });
 
 function mount(options: { groups?: PhotoGroup[]; focusedImageId?: string | null } = {}) {
-  handlers = {
-    onFocusChange: vi.fn(),
-    onCycleClassification: vi.fn(),
-    onSetClassification: vi.fn(),
-    onTrashFocused: vi.fn(),
-    onRotate: vi.fn(),
-  };
+  handlers = makeHandlers();
 
   const rendered = renderHook(() =>
     useKeyboardNav({

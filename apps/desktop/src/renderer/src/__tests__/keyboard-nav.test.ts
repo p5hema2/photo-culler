@@ -6,9 +6,11 @@ import type { ImageFileInfo } from '@photo-culler/types';
 // Since useKeyboardNav depends on React refs and callbacks, we test the navigation logic.
 
 function makeImage(name: string, path?: string): ImageFileInfo {
+  const filePath = path ?? `/photos/${name}`;
   return {
-    path: path ?? `/photos/${name}`,
+    path: filePath,
     name,
+    folder: filePath.slice(0, filePath.lastIndexOf('/')),
     extension: 'jpg',
     size: 1000,
     lastModified: Date.now(),

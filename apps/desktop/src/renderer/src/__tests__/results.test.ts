@@ -82,7 +82,7 @@ describe('saveResults', () => {
     await mod.saveResults('/Users/test/photos', validResults);
 
     expect(mockApi.saveResults).toHaveBeenCalledTimes(1);
-    const [folderPath, data] = vi.mocked(mockApi.saveResults!).mock.calls[0];
+    const [folderPath, data] = vi.mocked(mockApi.saveResults!).mock.calls[0]!;
     expect(folderPath).toBe('/Users/test/photos');
 
     const parsed = JSON.parse(data);
@@ -101,7 +101,7 @@ describe('saveResults', () => {
 
     await mod.saveResults('/Users/test/photos', validResults);
 
-    const [, data] = vi.mocked(mockApi.saveResults!).mock.calls[0];
+    const [, data] = vi.mocked(mockApi.saveResults!).mock.calls[0]!;
     const parsed = JSON.parse(data);
     expect(parsed.updatedAt).toBe('2026-03-14T12:00:00.000Z');
   });

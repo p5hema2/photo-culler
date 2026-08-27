@@ -6,6 +6,7 @@ function makeImage(name: string, dateTaken?: number, lastModified = 1000000): Im
   return {
     path: `/test/${name}`,
     name,
+    folder: '/test',
     extension: 'jpg',
     size: 1024,
     lastModified,

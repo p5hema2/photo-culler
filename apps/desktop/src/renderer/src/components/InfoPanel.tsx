@@ -25,7 +25,10 @@ interface InfoPanelProps {
   detailedMeta: DetailedMetadataState;
 }
 
-const CLASSIFICATION_BADGES: Record<string, { label: string; className: string }> = {
+const CLASSIFICATION_BADGES: Record<
+  NonNullable<Classification> | 'null',
+  { label: string; className: string }
+> = {
   keep: { label: 'Keep', className: 'bg-green-900 text-green-300 border-green-500' },
   review: { label: 'Review', className: 'bg-yellow-900 text-yellow-300 border-yellow-500' },
   delete: { label: 'Delete', className: 'bg-red-900 text-red-300 border-red-500' },
@@ -244,7 +247,14 @@ export function InfoPanel({
     };
   }, []);
 
-  const badge = CLASSIFICATION_BADGES[String(classification)] ?? CLASSIFICATION_BADGES['null'];
+  // The key set is closed, so the type says this lookup cannot miss — and the
+  // `??` is still load-bearing, because the value does not come from the type
+  // system. `loadResults` validates only `version` and `folderPath`, so a
+  // hand-edited or corrupted .photo-culler-results.json can put any string in
+  // `classification`. Without the fallback that renders as a TypeError on
+  // `badge.className`, and with no ErrorBoundary in the app that means a blank
+  // window instead of one wrong badge.
+  const badge = CLASSIFICATION_BADGES[classification ?? 'null'] ?? CLASSIFICATION_BADGES.null;
 
   // Compute quick stats
   const megapixels =

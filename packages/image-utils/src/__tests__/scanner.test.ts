@@ -1,18 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { scanFolder } from '../scanner';
-import type { Dirent, Stats } from 'node:fs';
+import type { Dirent, PathLike, Stats } from 'node:fs';
 import { join } from 'node:path';
 
-// Mock node:fs/promises
-vi.mock('node:fs/promises', () => ({
-  readdir: vi.fn(),
-  stat: vi.fn(),
+/**
+ * Declare the mocks with the ONE signature scanner.ts actually calls, rather
+ * than deriving them from the real `readdir`. `vi.mocked(readdir)` picks the
+ * last of node's many overloads — the `{ encoding: 'buffer' }` one, which
+ * returns `Dirent<NonSharedBuffer>[]` — so every `Dirent[]` the fixtures build
+ * was rejected. Same arrangement as apps/desktop's thumb-cache.test.ts.
+ */
+const { mockReaddir, mockStat } = vi.hoisted(() => ({
+  mockReaddir: vi.fn<(dirPath: PathLike, options?: unknown) => Promise<Dirent[]>>(),
+  mockStat: vi.fn<(path: PathLike) => Promise<Stats>>(),
 }));
 
-import { readdir, stat } from 'node:fs/promises';
-
-const mockReaddir = vi.mocked(readdir);
-const mockStat = vi.mocked(stat);
+vi.mock('node:fs/promises', () => ({
+  readdir: mockReaddir,
+  stat: mockStat,
+}));
 
 /** Compare paths regardless of the platform separator. */
 const norm = (p: unknown): string => String(p).split(String.fromCharCode(92)).join('/');
