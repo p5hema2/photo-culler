@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useThumbnailWorker } from '../hooks/useThumbnailWorker';
+import { THUMB_MAX_EDGE, THUMB_MIME } from '../lib/thumbnail-geometry';
 
 // Mock Worker
 class MockWorker {
@@ -48,6 +49,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  // Also drops the Worker stub, which beforeEach reinstalls — without this the
+  // createImageBitmap stub from the cache-hit test leaks into later ones.
+  vi.unstubAllGlobals();
 });
 
 describe('useThumbnailWorker', () => {
@@ -60,7 +64,7 @@ describe('useThumbnailWorker', () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     act(() => {
-      result.current.requestThumbnail('/test/img.jpg', 'unused-url', 256);
+      result.current.requestThumbnail('/test/img.jpg', 'unused-url', THUMB_MAX_EDGE);
     });
 
     await waitFor(() => {
@@ -75,17 +79,72 @@ describe('useThumbnailWorker', () => {
     expect(call[0]).toMatchObject({
       id: '/test/img.jpg',
       mimeType: 'image/jpeg',
-      size: 256,
+      size: THUMB_MAX_EDGE,
     });
     expect(call[0].buffer).toBe(mockArrayBuffer);
     expect(call[1]).toEqual([mockArrayBuffer]);
+  });
+
+  it('saves the encoded thumbnail the worker returns to the disk cache', async () => {
+    const { result } = renderHook(() => useThumbnailWorker());
+
+    act(() => {
+      result.current.requestThumbnail('/test/img.jpg', 'unused', THUMB_MAX_EDGE);
+    });
+
+    await waitFor(() => {
+      expect(mockWorkers.some((w) => w.postMessage.mock.calls.length > 0)).toBe(true);
+    });
+
+    const encoded = new ArrayBuffer(4);
+    const mockBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+
+    act(() => {
+      const calledWorker = mockWorkers.find((w) => w.postMessage.mock.calls.length > 0)!;
+      calledWorker.simulateMessage({
+        id: '/test/img.jpg',
+        bitmap: mockBitmap,
+        thumbBuffer: encoded,
+      });
+    });
+
+    // The field name is the whole contract between worker and host here — a
+    // mismatch leaves the disk cache silently empty and every folder slow.
+    expect(window.api.saveThumbCache).toHaveBeenCalledWith('/test/img.jpg', encoded);
+  });
+
+  it('decodes a cache hit as the stored container and never touches a worker', async () => {
+    const cached = new ArrayBuffer(8);
+    const mockBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    (window.api.loadThumbCache as ReturnType<typeof vi.fn>).mockResolvedValue(cached);
+
+    const decoded: Blob[] = [];
+    vi.stubGlobal('createImageBitmap', async (blob: Blob) => {
+      decoded.push(blob);
+      return mockBitmap;
+    });
+
+    const { result } = renderHook(() => useThumbnailWorker());
+
+    act(() => {
+      result.current.requestThumbnail('/test/img.jpg', 'unused', THUMB_MAX_EDGE);
+    });
+
+    await waitFor(() => {
+      expect(result.current.getThumbnail('/test/img.jpg')).toBe(mockBitmap);
+    });
+
+    // The container is declared rather than sniffed, so a stale 'image/jpeg'
+    // here is exactly how a WebP cache would stop decoding.
+    expect(decoded[0]!.type).toBe(THUMB_MIME);
+    expect(window.api.readFile).not.toHaveBeenCalled();
   });
 
   it('getThumbnail returns loading for pending requests', async () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     act(() => {
-      result.current.requestThumbnail('/test/img.jpg', 'unused', 256);
+      result.current.requestThumbnail('/test/img.jpg', 'unused', THUMB_MAX_EDGE);
     });
 
     expect(result.current.getThumbnail('/test/img.jpg')).toBe('loading');
@@ -95,7 +154,7 @@ describe('useThumbnailWorker', () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     act(() => {
-      result.current.requestThumbnail('/test/img.jpg', 'unused', 256);
+      result.current.requestThumbnail('/test/img.jpg', 'unused', THUMB_MAX_EDGE);
     });
 
     await waitFor(() => {
@@ -117,7 +176,7 @@ describe('useThumbnailWorker', () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     act(() => {
-      result.current.requestThumbnail('/test/img.jpg', 'unused', 256);
+      result.current.requestThumbnail('/test/img.jpg', 'unused', THUMB_MAX_EDGE);
     });
 
     await waitFor(() => {
@@ -155,7 +214,7 @@ describe('useThumbnailWorker', () => {
 
     act(() => {
       for (let i = 0; i < 4; i++) {
-        result.current.requestThumbnail(`/test/img-${i}.jpg`, 'unused', 256);
+        result.current.requestThumbnail(`/test/img-${i}.jpg`, 'unused', THUMB_MAX_EDGE);
       }
     });
 
@@ -166,7 +225,7 @@ describe('useThumbnailWorker', () => {
     });
 
     act(() => {
-      result.current.requestThumbnail('/test/img-4.jpg', 'unused', 256, 5);
+      result.current.requestThumbnail('/test/img-4.jpg', 'unused', THUMB_MAX_EDGE, 5);
     });
 
     const mockBitmap = { close: vi.fn() } as unknown as ImageBitmap;
@@ -184,7 +243,7 @@ describe('useThumbnailWorker', () => {
 
     act(() => {
       for (let i = 0; i < 4; i++) {
-        result.current.requestThumbnail(`/test/busy-${i}.jpg`, 'unused', 256);
+        result.current.requestThumbnail(`/test/busy-${i}.jpg`, 'unused', THUMB_MAX_EDGE);
       }
     });
 
@@ -195,8 +254,8 @@ describe('useThumbnailWorker', () => {
     });
 
     act(() => {
-      result.current.requestThumbnail('/test/far.jpg', 'unused', 256, 100);
-      result.current.requestThumbnail('/test/near.jpg', 'unused', 256, 2);
+      result.current.requestThumbnail('/test/far.jpg', 'unused', THUMB_MAX_EDGE, 100);
+      result.current.requestThumbnail('/test/near.jpg', 'unused', THUMB_MAX_EDGE, 2);
     });
 
     act(() => {
@@ -220,7 +279,7 @@ describe('useThumbnailWorker', () => {
     const { result } = renderHook(() => useThumbnailWorker());
 
     act(() => {
-      result.current.requestThumbnail('/test/img.jpg', 'unused', 256);
+      result.current.requestThumbnail('/test/img.jpg', 'unused', THUMB_MAX_EDGE);
     });
 
     await waitFor(() => {
@@ -234,7 +293,7 @@ describe('useThumbnailWorker', () => {
     });
 
     act(() => {
-      result.current.requestThumbnail('/test/img.jpg', 'unused', 256);
+      result.current.requestThumbnail('/test/img.jpg', 'unused', THUMB_MAX_EDGE);
     });
 
     expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(1);

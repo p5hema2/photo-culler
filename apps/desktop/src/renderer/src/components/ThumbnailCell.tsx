@@ -1,7 +1,7 @@
 import { useRef, useEffect } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
 import type { FocusOrigin } from '../lib/focus-scroll';
-import { fitRotated } from '../lib/thumbnail-geometry';
+import { fitRotated, THUMB_MAX_EDGE } from '../lib/thumbnail-geometry';
 
 export type Classification = 'keep' | 'review' | 'delete' | null;
 type ThumbnailStatus = ImageBitmap | 'loading' | 'error';
@@ -51,12 +51,18 @@ export function ThumbnailCell({
 }: ThumbnailCellProps): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const thumbnail = getThumbnail(image.path);
+  /**
+   * Read during render, not inside the effect, so it lands in the dependency
+   * list: moving the window to a display with a different scale factor (or
+   * zooming) changes it, and the canvas has to be rebuilt at the new density.
+   */
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
 
   // Request thumbnail if not yet requested
   useEffect(() => {
     if (thumbnail === 'loading') {
       const encodedPath = image.path.split('/').map(encodeURIComponent).join('/');
-      requestThumbnail(image.path, `app://file${encodedPath}`, 256, groupIndex);
+      requestThumbnail(image.path, `app://file${encodedPath}`, THUMB_MAX_EDGE, groupIndex);
     }
   }, [image.path, thumbnail, requestThumbnail, groupIndex]);
 
@@ -74,12 +80,20 @@ export function ThumbnailCell({
       canvas: size,
       draw,
       radians,
-    } = fitRotated(thumbnail.width, thumbnail.height, box, rotation);
+    } = fitRotated(thumbnail.width, thumbnail.height, box * dpr, rotation);
 
     // The canvas takes the rotated footprint, so a portrait thumbnail rendered
     // at 90 degrees gets a landscape canvas rather than overflowing a square one.
+    //
+    // The backing store is sized in PHYSICAL pixels and scaled back down via
+    // CSS. Without that division the element would lay out at `box * dpr` CSS
+    // px and blow the cell apart; without the multiplication the thumbnail
+    // would be resampled to CSS pixels and stay soft on any scaled display,
+    // however large it was generated.
     canvas.width = size.width;
     canvas.height = size.height;
+    canvas.style.width = `${size.width / dpr}px`;
+    canvas.style.height = `${size.height / dpr}px`;
 
     ctx.clearRect(0, 0, size.width, size.height);
     ctx.imageSmoothingEnabled = true;
@@ -91,7 +105,7 @@ export function ThumbnailCell({
     if (radians !== 0) ctx.rotate(radians);
     ctx.drawImage(thumbnail, -draw.width / 2, -draw.height / 2, draw.width, draw.height);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-  }, [thumbnail, cellSize, rotation]);
+  }, [thumbnail, cellSize, rotation, dpr]);
 
   const handleClick = (): void => {
     if (!selectOnHover) {

@@ -148,7 +148,12 @@ export interface ElectronAPI {
    * mtime — the renderer's scan-time value went stale after a rotation.
    */
   loadThumbCache: (filePath: string) => Promise<ArrayBuffer | null>;
-  saveThumbCache: (filePath: string, jpegBuffer: ArrayBuffer) => Promise<void>;
+  /**
+   * Store an encoded thumbnail beside the image. The container is decided by
+   * the renderer (THUMB_MIME) and reflected in the cache filename by the main
+   * process (THUMB_SUFFIX) — the bytes travel opaquely.
+   */
+  saveThumbCache: (filePath: string, thumbBuffer: ArrayBuffer) => Promise<void>;
   rotateFiles: (
     files: Array<{ path: string; degrees: number }>,
   ) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
@@ -160,12 +165,20 @@ export interface ElectronAPI {
   readDetailedMetadata: (filePath: string) => Promise<DetailedMetadata | null>;
   /**
    * Remove cached thumbnails and saved records whose image no longer exists,
-   * anywhere below `folderPath`. Asks the user to confirm first, because
-   * records carry classifications, scores and rotations.
+   * anywhere below `folderPath`, plus anything left over from an older
+   * thumbnail format. Asks the user to confirm first, because records carry
+   * classifications, scores and rotations.
+   *
+   * `legacyRemoved` counts old-format cache items, which are reported apart
+   * from `thumbsRemoved` because one of them can be a directory holding
+   * thousands of thumbnails.
    */
-  cleanUpFolder: (
-    folderPath: string,
-  ) => Promise<{ thumbsRemoved: number; entriesRemoved: number; cancelled: boolean }>;
+  cleanUpFolder: (folderPath: string) => Promise<{
+    thumbsRemoved: number;
+    legacyRemoved: number;
+    entriesRemoved: number;
+    cancelled: boolean;
+  }>;
   /** Version of the running app, stamped from the git tag at build time. */
   getAppVersion: () => Promise<string>;
 }

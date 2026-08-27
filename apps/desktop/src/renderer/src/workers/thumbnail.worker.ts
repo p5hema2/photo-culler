@@ -1,12 +1,12 @@
 /**
  * Thumbnail generation Web Worker.
- * Receives image data as ArrayBuffer, generates aspect-preserving JPEG
+ * Receives image data as ArrayBuffer, generates aspect-preserving WebP
  * thumbnails using createImageBitmap + OffscreenCanvas, and transfers back as ImageBitmap.
  *
  * The main thread handles fetching (which requires app:// protocol access)
  * and passes raw image data to the worker for heavy processing.
  */
-import { fitWithin } from '../lib/thumbnail-geometry';
+import { fitWithin, THUMB_MIME, THUMB_QUALITY } from '../lib/thumbnail-geometry';
 
 export interface ThumbnailRequest {
   id: string;
@@ -24,7 +24,8 @@ export interface ThumbnailRequest {
 export interface ThumbnailResponse {
   id: string;
   bitmap?: ImageBitmap;
-  jpegBuffer?: ArrayBuffer;
+  /** Encoded thumbnail for the disk cache — WebP, see THUMB_MIME. */
+  thumbBuffer?: ArrayBuffer;
   error?: boolean;
   epoch?: number;
 }
@@ -51,19 +52,22 @@ self.onmessage = async (event: MessageEvent<ThumbnailRequest>) => {
       throw new Error('Could not get 2d context');
     }
 
-    // A single 6000 -> 256 downscale aliases badly at the default quality, and
+    // A single 6000 -> 512 downscale aliases badly at the default quality, and
     // the artefact is more visible on a letterboxed thumb than on a cropped one.
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(bitmap, 0, 0, tw, th);
     bitmap.close();
 
-    const thumbnailBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
-    const jpegBuffer = await thumbnailBlob.arrayBuffer();
+    const thumbnailBlob = await canvas.convertToBlob({
+      type: THUMB_MIME,
+      quality: THUMB_QUALITY,
+    });
+    const thumbBuffer = await thumbnailBlob.arrayBuffer();
     const thumbnailBitmap = await createImageBitmap(thumbnailBlob);
 
-    self.postMessage({ id, bitmap: thumbnailBitmap, jpegBuffer, epoch } as ThumbnailResponse, {
-      transfer: [thumbnailBitmap, jpegBuffer],
+    self.postMessage({ id, bitmap: thumbnailBitmap, thumbBuffer, epoch } as ThumbnailResponse, {
+      transfer: [thumbnailBitmap, thumbBuffer],
     });
   } catch {
     self.postMessage({ id, error: true, epoch } as ThumbnailResponse);

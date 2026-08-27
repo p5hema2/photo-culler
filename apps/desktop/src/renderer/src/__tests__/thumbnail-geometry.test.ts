@@ -3,29 +3,33 @@ import { fitWithin, fitRotated, THUMB_MAX_EDGE } from '../lib/thumbnail-geometry
 
 describe('fitWithin', () => {
   it('fits a landscape source to the long edge', () => {
-    expect(fitWithin(6000, 4000, 256)).toEqual({ width: 256, height: 171 });
+    expect(fitWithin(6000, 4000, 512)).toEqual({ width: 512, height: 341 });
   });
 
   it('fits a portrait source to the long edge', () => {
-    expect(fitWithin(4000, 6000, 256)).toEqual({ width: 171, height: 256 });
+    expect(fitWithin(4000, 6000, 512)).toEqual({ width: 341, height: 512 });
   });
 
   it('leaves a square source square', () => {
-    expect(fitWithin(4000, 4000, 256)).toEqual({ width: 256, height: 256 });
+    expect(fitWithin(4000, 4000, 512)).toEqual({ width: 512, height: 512 });
   });
 
   it('never upscales a source smaller than the box', () => {
-    // The old cover-crop maths blew this up to 256x256 and cached the result.
-    expect(fitWithin(100, 80, 256)).toEqual({ width: 100, height: 80 });
+    // The old cover-crop maths blew this up to a full square and cached it.
+    expect(fitWithin(100, 80, 512)).toEqual({ width: 100, height: 80 });
   });
 
   it('guards against zero and negative input', () => {
-    expect(fitWithin(0, 0, 256)).toEqual({ width: 0, height: 0 });
+    expect(fitWithin(0, 0, 512)).toEqual({ width: 0, height: 0 });
     expect(fitWithin(100, 100, 0)).toEqual({ width: 0, height: 0 });
   });
 
-  it('exposes the default long edge', () => {
-    expect(THUMB_MAX_EDGE).toBe(256);
+  it('exposes a long edge that covers the largest grid cell unscaled', () => {
+    // The 'large' preset draws into a 292px box (300 minus border and gap), so
+    // anything at or below that is upscaled even at devicePixelRatio 1 — which
+    // is exactly what 256 used to do.
+    expect(THUMB_MAX_EDGE).toBe(512);
+    expect(THUMB_MAX_EDGE).toBeGreaterThan(292);
   });
 });
 
@@ -54,12 +58,19 @@ describe('fitRotated', () => {
     expect(fitRotated(256, 171, 192, 450).radians).toBeCloseTo(Math.PI / 2);
   });
 
-  it('renders an already-cached square thumbnail exactly as before', () => {
-    // Guards the migration: v1 cache entries are 256x256, and must still fill
-    // the cell identically once the contain maths lands.
+  it('fills the cell with a square thumbnail rather than letterboxing it', () => {
     const r = fitRotated(256, 256, 192, 0);
     expect(r.canvas).toEqual({ width: 192, height: 192 });
     expect(r.draw).toEqual({ width: 192, height: 192 });
+  });
+
+  it('upscales into a box larger than the thumbnail, which is the HiDPI case', () => {
+    // The caller passes PHYSICAL pixels: the 'large' 292px box is 584px at
+    // devicePixelRatio 2, above THUMB_MAX_EDGE. Clamping here would letterbox
+    // every cell on a scaled display instead of resampling by ~1.14x.
+    const r = fitRotated(512, 341, 584, 0);
+    expect(r.canvas).toEqual({ width: 584, height: 389 });
+    expect(r.draw).toEqual({ width: 584, height: 389 });
   });
 
   it('guards against zero input', () => {

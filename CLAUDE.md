@@ -188,10 +188,29 @@ up under key repeat; and a **pointer-driven** focus change does not scroll at al
 next thumbnail under a resting cursor, which selects it, which scrolls again, and the list runs to
 one end.
 
-**Thumbnails are cached per format version.** `.photo-culler-thumbs/v2/<name>.thumb.jpg`. Bump
-`THUMB_CACHE_VERSION` in `ipc-handlers.ts` whenever the pixel format changes; the vacuum then deletes
-everything that is not the current version directory. Freshness is decided in the main process
-against the source file's *current* mtime, so a rotation invalidates the thumbnail automatically.
+**The thumbnail cache has no version folder — the filename suffix is the format marker.**
+`.photo-culler-thumbs/<name>.thumb.webp`, flat, 512px longest edge, WebP q0.82. Change
+`THUMB_SUFFIX` in `ipc-handlers.ts` whenever the pixel format changes, and keep `THUMB_MIME` in
+`lib/thumbnail-geometry.ts` in step with it. That pair *is* the migration story: the loader asks for
+one exact filename, so anything a past format left behind is unreachable rather than servable, and
+no fallback read path is needed. `partitionCacheEntries` then classifies everything in the cache
+directory that is not a current-suffix file — a subdirectory (the `v2/` layout used up to 1.5.1) or
+a stray `.thumb.jpg` — as legacy, and the vacuum removes it regardless of whether its image still
+exists. Do not reintroduce a version constant; the pre-1.5.2 arrangement needed one only because the
+filename could not tell formats apart.
+
+Freshness is decided in the main process against the source file's *current* mtime, so a rotation
+invalidates the thumbnail automatically. Note what that does **not** cover: mtime says nothing about
+pixel format, which is why an unchanged suffix plus a changed format would serve stale pixels forever.
+
+The size is chosen for physical pixels, not CSS ones. `ThumbnailCell` sizes its canvas backing store
+at `box * devicePixelRatio` and scales it back via CSS, so the 'large' preset's 292px box wants 584px
+on a 2x display. Drop either half of that and thumbnails go soft on every scaled display no matter
+how large they were generated.
+
+**Constants shared with a worker live in `lib/`, never in the worker module.** `thumbnail.worker.ts`
+assigns `self.onmessage` at module scope, so importing a *value* from it would execute that on the
+main thread — where `self` is `window`. Only `import type` from a worker file.
 
 **Quality-score weights are a persisted contract.** Sharpness 40% / exposure 25% / contrast 20% /
 noise 15%, in `src/renderer/src/workers/scoring.worker.ts` and documented in the README. Scores are

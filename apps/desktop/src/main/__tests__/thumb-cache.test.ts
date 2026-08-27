@@ -86,16 +86,23 @@ beforeEach(() => {
 });
 
 describe('getThumbCachePath', () => {
-  it('puts thumbnails in a version subdirectory beside the image', () => {
+  it('puts thumbnails straight into the cache directory beside the image', () => {
     expect(norm(getThumbCachePath('/photos/IMG_1.JPG'))).toBe(
-      '/photos/.photo-culler-thumbs/v2/IMG_1.JPG.thumb.jpg',
+      '/photos/.photo-culler-thumbs/IMG_1.JPG.thumb.webp',
     );
   });
 
   it('uses the picks/ subfolder for images that live there', () => {
     expect(norm(getThumbCachePath('/photos/picks/IMG_1.JPG'))).toBe(
-      '/photos/picks/.photo-culler-thumbs/v2/IMG_1.JPG.thumb.jpg',
+      '/photos/picks/.photo-culler-thumbs/IMG_1.JPG.thumb.webp',
     );
+  });
+
+  it('cannot address a past format, which is what removed the need for a fallback', () => {
+    // The suffix IS the format marker: the loader asks for this exact name, so
+    // an older `.thumb.jpg` left in the same directory is unreachable rather
+    // than servable — however new its mtime is.
+    expect(getThumbCachePath('/photos/IMG_1.JPG')).not.toMatch(/\.thumb\.jpg$/);
   });
 });
 
@@ -108,7 +115,7 @@ describe('trashing and deleting', () => {
 
     expect(result.succeeded).toEqual(['/photos/a.jpg']);
     expect(mockUnlink.mock.calls.map((c) => norm(c[0]))).toContain(
-      '/photos/.photo-culler-thumbs/v2/a.jpg.thumb.jpg',
+      '/photos/.photo-culler-thumbs/a.jpg.thumb.webp',
     );
   });
 
@@ -127,7 +134,7 @@ describe('trashing and deleting', () => {
     await handlerFor('fs:delete-files')({}, ['/photos/a.jpg'] as never);
 
     expect(mockUnlink.mock.calls.map((c) => norm(c[0]))).toContain(
-      '/photos/.photo-culler-thumbs/v2/a.jpg.thumb.jpg',
+      '/photos/.photo-culler-thumbs/a.jpg.thumb.webp',
     );
   });
 
@@ -154,8 +161,8 @@ describe('moving to picks/', () => {
 
     const renames = mockRename.mock.calls.map((c) => [norm(c[0]), norm(c[1])]);
     expect(renames).toContainEqual([
-      '/photos/.photo-culler-thumbs/v2/a.jpg.thumb.jpg',
-      '/photos/picks/.photo-culler-thumbs/v2/a.jpg.thumb.jpg',
+      '/photos/.photo-culler-thumbs/a.jpg.thumb.webp',
+      '/photos/picks/.photo-culler-thumbs/a.jpg.thumb.webp',
     ]);
   });
 
@@ -167,7 +174,7 @@ describe('moving to picks/', () => {
     await handlerFor('fs:move-to-picks')({}, '/photos' as never, ['/photos/a.jpg'] as never);
 
     expect(mockUnlink.mock.calls.map((c) => norm(c[0]))).toContain(
-      '/photos/.photo-culler-thumbs/v2/a.jpg.thumb.jpg',
+      '/photos/.photo-culler-thumbs/a.jpg.thumb.webp',
     );
   });
 });
@@ -197,18 +204,21 @@ describe('vacuumThumbCache', () => {
 
     const { removed } = await vacuumThumbCache('/photos');
 
+    // Note this also gates removal of the legacy `v2` directory: an EPERM on
+    // the image directory must stop every kind of deletion, not just orphans.
     expect(removed).toBe(0);
     expect(mockRm).not.toHaveBeenCalled();
     expect(mockUnlink).not.toHaveBeenCalled();
   });
 
-  it('removes loose v1 files and keeps the current version directory', async () => {
+  it('removes both shapes an older format left behind, even when the image is still there', async () => {
     mockReaddir.mockImplementation(
       readdirFrom(
         {
           '/photos': ['a.jpg'],
-          '/photos/.photo-culler-thumbs': ['v2', 'a.jpg.thumb.jpg'],
-          '/photos/.photo-culler-thumbs/v2': ['a.jpg.thumb.jpg'],
+          // A `v2/` directory from 1.3-1.5.1 and a loose `.thumb.jpg` from
+          // before that, next to the current-format thumbnail of a live image.
+          '/photos/.photo-culler-thumbs': ['v2', 'a.jpg.thumb.jpg', 'a.jpg.thumb.webp'],
         },
         new Set(['/photos/.photo-culler-thumbs/v2']),
       ),
@@ -217,12 +227,14 @@ describe('vacuumThumbCache', () => {
 
     const { removed } = await vacuumThumbCache('/photos');
 
-    // The loose v1 file goes; the live v2 thumbnail stays.
+    // Liveness of the source is irrelevant for a past format — those bytes can
+    // never be served again, so they go regardless.
     expect(mockRm.mock.calls.map((c) => norm(c[0]))).toEqual([
+      '/photos/.photo-culler-thumbs/v2',
       '/photos/.photo-culler-thumbs/a.jpg.thumb.jpg',
     ]);
     expect(mockUnlink).not.toHaveBeenCalled();
-    expect(removed).toBe(1);
+    expect(removed).toBe(2);
   });
 
   it('removes orphaned thumbnails whose image is gone', async () => {
@@ -230,10 +242,9 @@ describe('vacuumThumbCache', () => {
       readdirFrom(
         {
           '/photos': ['a.jpg'],
-          '/photos/.photo-culler-thumbs': ['v2'],
-          '/photos/.photo-culler-thumbs/v2': ['a.jpg.thumb.jpg', 'gone.jpg.thumb.jpg'],
+          '/photos/.photo-culler-thumbs': ['a.jpg.thumb.webp', 'gone.jpg.thumb.webp'],
         },
-        new Set(['/photos/.photo-culler-thumbs/v2']),
+        new Set(),
       ),
     );
     mockUnlink.mockResolvedValue(undefined);
@@ -241,7 +252,7 @@ describe('vacuumThumbCache', () => {
     const { removed } = await vacuumThumbCache('/photos');
 
     expect(mockUnlink.mock.calls.map((c) => norm(c[0]))).toEqual([
-      '/photos/.photo-culler-thumbs/v2/gone.jpg.thumb.jpg',
+      '/photos/.photo-culler-thumbs/gone.jpg.thumb.webp',
     ]);
     expect(removed).toBe(1);
   });
@@ -251,10 +262,9 @@ describe('vacuumThumbCache', () => {
       readdirFrom(
         {
           '/photos': ['img_1.jpg'],
-          '/photos/.photo-culler-thumbs': ['v2'],
-          '/photos/.photo-culler-thumbs/v2': ['IMG_1.JPG.thumb.jpg'],
+          '/photos/.photo-culler-thumbs': ['IMG_1.JPG.thumb.webp'],
         },
-        new Set(['/photos/.photo-culler-thumbs/v2']),
+        new Set(),
       ),
     );
 
@@ -270,10 +280,9 @@ describe('vacuumThumbCache', () => {
         {
           '/photos': ['eventA'],
           '/photos/eventA': ['a.jpg'],
-          '/photos/eventA/.photo-culler-thumbs': ['v2'],
-          '/photos/eventA/.photo-culler-thumbs/v2': ['a.jpg.thumb.jpg', 'gone.jpg.thumb.jpg'],
+          '/photos/eventA/.photo-culler-thumbs': ['a.jpg.thumb.webp', 'gone.jpg.thumb.webp'],
         },
-        new Set(['/photos/eventA', '/photos/eventA/.photo-culler-thumbs/v2']),
+        new Set(['/photos/eventA']),
       ),
     );
     mockUnlink.mockResolvedValue(undefined);
@@ -281,7 +290,7 @@ describe('vacuumThumbCache', () => {
     const { removed } = await vacuumThumbCache('/photos');
 
     expect(mockUnlink.mock.calls.map((c) => norm(c[0]))).toEqual([
-      '/photos/eventA/.photo-culler-thumbs/v2/gone.jpg.thumb.jpg',
+      '/photos/eventA/.photo-culler-thumbs/gone.jpg.thumb.webp',
     ]);
     expect(removed).toBe(1);
   });
@@ -361,15 +370,35 @@ describe('planCleanUp', () => {
     mountTree(
       {
         '/photos': ['a.jpg'],
-        '/photos/.photo-culler-thumbs': ['v2'],
-        '/photos/.photo-culler-thumbs/v2': ['a.jpg.thumb.jpg', 'gone.jpg.thumb.jpg'],
+        '/photos/.photo-culler-thumbs': ['a.jpg.thumb.webp', 'gone.jpg.thumb.webp'],
+      },
+      new Set(),
+    );
+
+    const plan = await planCleanUp('/photos');
+
+    expect(plan.thumbs.map(norm)).toEqual(['/photos/.photo-culler-thumbs/gone.jpg.thumb.webp']);
+    expect(plan.legacyCacheEntries).toEqual([]);
+  });
+
+  it('books past-format leftovers as legacy rather than as orphaned thumbnails', async () => {
+    mountTree(
+      {
+        '/photos': ['a.jpg'],
+        '/photos/.photo-culler-thumbs': ['v2', 'a.jpg.thumb.jpg', 'a.jpg.thumb.webp'],
       },
       new Set(['/photos/.photo-culler-thumbs/v2']),
     );
 
     const plan = await planCleanUp('/photos');
 
-    expect(plan.thumbs.map(norm)).toEqual(['/photos/.photo-culler-thumbs/v2/gone.jpg.thumb.jpg']);
+    // Kept apart because the confirmation dialog counts them separately: one
+    // legacy entry can be a directory holding thousands of thumbnails.
+    expect(plan.legacyCacheEntries.map(norm)).toEqual([
+      '/photos/.photo-culler-thumbs/v2',
+      '/photos/.photo-culler-thumbs/a.jpg.thumb.jpg',
+    ]);
+    expect(plan.thumbs).toEqual([]);
   });
 
   it('proposes nothing when a directory cannot be listed', async () => {
@@ -409,7 +438,7 @@ describe('applyCleanUp', () => {
 
     const result = await applyCleanUp({
       thumbs: [],
-      staleCacheDirs: [],
+      legacyCacheEntries: [],
       results: [{ file: '/photos/.photo-culler-results.json', names: ['gone.jpg'] }],
       directoriesScanned: 1,
     });
@@ -436,7 +465,7 @@ describe('applyCleanUp', () => {
 
     await applyCleanUp({
       thumbs: [],
-      staleCacheDirs: [],
+      legacyCacheEntries: [],
       results: [{ file: '/photos/.photo-culler-results.json', names: ['gone.jpg'] }],
       directoriesScanned: 1,
     });

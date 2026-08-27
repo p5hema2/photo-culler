@@ -13,16 +13,23 @@ const RESULTS_FILENAME = '.photo-culler-results.json';
 const LEGACY_RESULTS_FILENAME = 'photo-culler-results.json';
 const THUMB_CACHE_DIR = '.photo-culler-thumbs';
 /**
- * Bump when the thumbnail PIXEL FORMAT changes. Thumbnails live in a version
- * subdirectory so an old build's output can never be served by a new one, and
- * so the vacuum can delete every non-current entry without knowing anything
- * about past formats.
+ * Suffix of a current-format thumbnail — and the only marker of that format.
  *
- *   (implicit v1) 256x256 centre-cropped, written loose in THUMB_CACHE_DIR
- *   v2            longest edge 256, aspect ratio preserved
+ * Change it whenever the pixel format changes. It is what makes an entry from
+ * a past format *unfindable* to a new build rather than silently servable: the
+ * loader asks for this exact name and nothing else, so a leftover cannot be
+ * mistaken for a fresh thumbnail however new its mtime is. That replaces the
+ * version subdirectory this cache used up to 1.5.1, and it is why there is no
+ * fallback path to read one.
+ *
+ * Everything else in the cache directory is legacy by definition — see
+ * `partitionCacheEntries`. Formats so far:
+ *
+ *   pre-1.3.0     256x256 centre-cropped JPEG, loose in THUMB_CACHE_DIR
+ *   1.3.0-1.5.1   longest edge 256 JPEG, in a `v2/` subdirectory
+ *   1.5.2+        longest edge 512 WebP, loose in THUMB_CACHE_DIR
  */
-const THUMB_CACHE_VERSION = 'v2';
-const THUMB_SUFFIX = '.thumb.jpg';
+const THUMB_SUFFIX = '.thumb.webp';
 /** Mirrors the scanner: picks/ images are filed under their parent folder. */
 const PICKS_DIRNAME = 'picks';
 
@@ -68,11 +75,49 @@ export function getThumbCacheDir(imageDir: string): string {
   return path.join(imageDir, THUMB_CACHE_DIR);
 }
 
-/** `<imageDir>/.photo-culler-thumbs/v2/<name>.thumb.jpg` */
+/** `<imageDir>/.photo-culler-thumbs/<name>.thumb.webp` */
 export function getThumbCachePath(filePath: string): string {
   const dir = path.dirname(filePath);
   const name = path.basename(filePath);
-  return path.join(getThumbCacheDir(dir), THUMB_CACHE_VERSION, `${name}${THUMB_SUFFIX}`);
+  return path.join(getThumbCacheDir(dir), `${name}${THUMB_SUFFIX}`);
+}
+
+/** The shape of a `readdir(…, { withFileTypes: true })` entry we depend on. */
+interface CacheDirEntry {
+  name: string;
+  isDirectory: () => boolean;
+}
+
+/**
+ * Split one cache directory listing into current-format thumbnails and the
+ * remains of earlier ones.
+ *
+ * Legacy is defined by exclusion rather than by a list of past formats: a
+ * subdirectory (the `v2/` layout) or a file without the current suffix (an
+ * older `.thumb.jpg`). A future format change therefore needs no migration
+ * code — only a new THUMB_SUFFIX.
+ */
+function partitionCacheEntries(entries: readonly CacheDirEntry[]): {
+  thumbs: string[];
+  legacy: string[];
+} {
+  const thumbs: string[] = [];
+  const legacy: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() && entry.name.endsWith(THUMB_SUFFIX)) {
+      thumbs.push(entry.name);
+    } else {
+      legacy.push(entry.name);
+    }
+  }
+
+  return { thumbs, legacy };
+}
+
+/** Name of the image a current-format thumbnail describes. */
+function sourceNameOfThumb(thumbName: string): string {
+  return thumbName.slice(0, -THUMB_SUFFIX.length);
 }
 
 /** Best-effort removal — a cache problem must never fail the caller's operation. */
@@ -175,8 +220,12 @@ async function describableNames(dir: string): Promise<Set<string> | null> {
 export interface CleanUpPlan {
   /** Absolute paths of thumbnails whose source image is gone. */
   thumbs: string[];
-  /** Cache entries written by an older thumbnail format. */
-  staleCacheDirs: string[];
+  /**
+   * Cache entries left by an older thumbnail format — a `v2/` directory, or a
+   * loose file with a past suffix. Counted separately from `thumbs` because one
+   * such directory can hold thousands of them.
+   */
+  legacyCacheEntries: string[];
   /** Results files and the entries in them that describe missing images. */
   results: Array<{ file: string; names: string[] }>;
   /** Directories inspected, for the summary. */
@@ -192,7 +241,7 @@ export interface CleanUpPlan {
 export async function planCleanUp(rootPath: string): Promise<CleanUpPlan> {
   const plan: CleanUpPlan = {
     thumbs: [],
-    staleCacheDirs: [],
+    legacyCacheEntries: [],
     results: [],
     directoriesScanned: 0,
   };
@@ -210,29 +259,24 @@ export async function planCleanUp(rootPath: string): Promise<CleanUpPlan> {
     }
 
     const cacheDir = getThumbCacheDir(imageDir);
-    let cacheEntries;
+    let cacheEntries: CacheDirEntry[] | null;
     try {
       cacheEntries = await readdir(cacheDir, { withFileTypes: true });
     } catch {
-      cacheEntries = null;
+      cacheEntries = null; // no cache in this directory
     }
 
     if (cacheEntries) {
-      for (const entry of cacheEntries) {
-        if (entry.name !== THUMB_CACHE_VERSION) {
-          plan.staleCacheDirs.push(path.join(cacheDir, entry.name));
-        }
+      const { thumbs, legacy } = partitionCacheEntries(cacheEntries);
+
+      for (const name of legacy) {
+        plan.legacyCacheEntries.push(path.join(cacheDir, name));
       }
 
-      const versionDir = path.join(cacheDir, THUMB_CACHE_VERSION);
-      try {
-        for (const thumb of await readdir(versionDir)) {
-          if (!thumb.endsWith(THUMB_SUFFIX)) continue;
-          const source = thumb.slice(0, -THUMB_SUFFIX.length).toLowerCase();
-          if (!ownNames.has(source)) plan.thumbs.push(path.join(versionDir, thumb));
+      for (const name of thumbs) {
+        if (!ownNames.has(sourceNameOfThumb(name).toLowerCase())) {
+          plan.thumbs.push(path.join(cacheDir, name));
         }
-      } catch {
-        // no current-version directory yet
       }
     }
 
@@ -263,14 +307,17 @@ export async function planCleanUp(rootPath: string): Promise<CleanUpPlan> {
 /** Carry out a plan. Each step is best-effort; a failure never aborts the rest. */
 export async function applyCleanUp(
   plan: CleanUpPlan,
-): Promise<{ thumbsRemoved: number; entriesRemoved: number }> {
+): Promise<{ thumbsRemoved: number; legacyRemoved: number; entriesRemoved: number }> {
   let thumbsRemoved = 0;
+  let legacyRemoved = 0;
   let entriesRemoved = 0;
 
-  for (const dir of plan.staleCacheDirs) {
+  // `rm` rather than `unlink`: a legacy entry is a `v2/` directory as often as
+  // it is a single file from an older format.
+  for (const entry of plan.legacyCacheEntries) {
     try {
-      await rm(dir, { recursive: true, force: true });
-      thumbsRemoved++;
+      await rm(entry, { recursive: true, force: true });
+      legacyRemoved++;
     } catch {
       // ignored on purpose
     }
@@ -300,7 +347,7 @@ export async function applyCleanUp(
     }
   }
 
-  return { thumbsRemoved, entriesRemoved };
+  return { thumbsRemoved, legacyRemoved, entriesRemoved };
 }
 
 export async function vacuumThumbCache(folderPath: string): Promise<{ removed: number }> {
@@ -309,7 +356,7 @@ export async function vacuumThumbCache(folderPath: string): Promise<{ removed: n
   for (const imageDir of await imageDirectories(folderPath)) {
     const cacheDir = getThumbCacheDir(imageDir);
 
-    let cacheEntries;
+    let cacheEntries: CacheDirEntry[];
     try {
       cacheEntries = await readdir(cacheDir, { withFileTypes: true });
     } catch {
@@ -327,30 +374,22 @@ export async function vacuumThumbCache(folderPath: string): Promise<{ removed: n
       continue;
     }
 
-    // Anything that is not the current version directory is from a past format.
-    for (const entry of cacheEntries) {
-      if (entry.name === THUMB_CACHE_VERSION) continue;
+    const { thumbs, legacy } = partitionCacheEntries(cacheEntries);
+
+    // Anything that is not a current-format thumbnail was written by a past
+    // format and can never be served again — see THUMB_SUFFIX.
+    for (const name of legacy) {
       try {
-        await rm(path.join(cacheDir, entry.name), { recursive: true, force: true });
+        await rm(path.join(cacheDir, name), { recursive: true, force: true });
         removed++;
       } catch {
         // ignored on purpose
       }
     }
 
-    const versionDir = path.join(cacheDir, THUMB_CACHE_VERSION);
-    let thumbs: string[];
-    try {
-      thumbs = await readdir(versionDir);
-    } catch {
-      continue;
-    }
-
-    for (const thumb of thumbs) {
-      if (!thumb.endsWith(THUMB_SUFFIX)) continue;
-      const source = thumb.slice(0, -THUMB_SUFFIX.length);
-      if (present.has(source.toLowerCase())) continue;
-      await unlinkQuiet(path.join(versionDir, thumb));
+    for (const name of thumbs) {
+      if (present.has(sourceNameOfThumb(name).toLowerCase())) continue;
+      await unlinkQuiet(path.join(cacheDir, name));
       removed++;
     }
   }
@@ -475,10 +514,11 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.CLEAN_UP_FOLDER, async (_event, folderPath: string) => {
     const plan = await planCleanUp(folderPath);
-    const thumbCount = plan.thumbs.length + plan.staleCacheDirs.length;
+    const thumbCount = plan.thumbs.length;
+    const legacyCount = plan.legacyCacheEntries.length;
     const entryCount = plan.results.reduce((sum, r) => sum + r.names.length, 0);
 
-    if (thumbCount === 0 && entryCount === 0) {
+    if (thumbCount === 0 && legacyCount === 0 && entryCount === 0) {
       await dialog.showMessageBox({
         type: 'info',
         title: 'Clean Up',
@@ -488,31 +528,39 @@ export function registerIpcHandlers(): void {
           'saved record still has its image.',
         buttons: ['OK'],
       });
-      return { thumbsRemoved: 0, entriesRemoved: 0, cancelled: false };
+      return { thumbsRemoved: 0, legacyRemoved: 0, entriesRemoved: 0, cancelled: false };
     }
 
     // Removing saved records discards classifications, scores and rotations for
     // those images. Show the count and let the user decide before touching disk.
+    const detail = [
+      `Scanned ${plan.directoriesScanned} folder(s).`,
+      '',
+      `${thumbCount} cached thumbnail(s) whose image is gone`,
+      // A single legacy entry can be a whole `v2/` directory holding thousands
+      // of thumbnails, so it gets its own line instead of inflating the count
+      // above by one.
+      ...(legacyCount > 0
+        ? [`${legacyCount} cache item(s) left by an older thumbnail format`]
+        : []),
+      `${entryCount} saved record(s) whose image is gone`,
+      '',
+      'Records hold classifications, scores and rotations. Images themselves are never touched.',
+    ].join('\n');
+
     const { response } = await dialog.showMessageBox({
       type: 'warning',
       title: 'Clean Up',
       message: 'Remove orphaned thumbnails and records?',
-      detail:
-        `Scanned ${plan.directoriesScanned} folder(s).
-
-` +
-        `${thumbCount} cached thumbnail(s) whose image is gone
-` +
-        `${entryCount} saved record(s) whose image is gone
-
-` +
-        'Records hold classifications, scores and rotations. Images themselves are never touched.',
+      detail,
       buttons: ['Cancel', 'Remove'],
       defaultId: 0,
       cancelId: 0,
     });
 
-    if (response !== 1) return { thumbsRemoved: 0, entriesRemoved: 0, cancelled: true };
+    if (response !== 1) {
+      return { thumbsRemoved: 0, legacyRemoved: 0, entriesRemoved: 0, cancelled: true };
+    }
 
     const result = await applyCleanUp(plan);
     return { ...result, cancelled: false };
@@ -625,10 +673,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.SAVE_THUMB_CACHE,
-    async (_event, filePath: string, jpegBuffer: ArrayBuffer) => {
+    async (_event, filePath: string, thumbBuffer: ArrayBuffer) => {
       const thumbPath = getThumbCachePath(filePath);
       await mkdir(path.dirname(thumbPath), { recursive: true });
-      await writeFile(thumbPath, Buffer.from(jpegBuffer));
+      await writeFile(thumbPath, Buffer.from(thumbBuffer));
     },
   );
 

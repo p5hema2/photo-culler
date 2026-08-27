@@ -17,8 +17,8 @@ const api: ElectronAPI = {
   deleteFiles: (filePaths) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_FILES, filePaths),
   readFile: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.READ_FILE, filePath),
   loadThumbCache: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.LOAD_THUMB_CACHE, filePath),
-  saveThumbCache: (filePath, jpegBuffer) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SAVE_THUMB_CACHE, filePath, jpegBuffer),
+  saveThumbCache: (filePath, thumbBuffer) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SAVE_THUMB_CACHE, filePath, thumbBuffer),
   rotateFiles: (files) => ipcRenderer.invoke(IPC_CHANNELS.ROTATE_FILES, files),
   readDetailedMetadata: (filePath) =>
     ipcRenderer.invoke(IPC_CHANNELS.READ_DETAILED_METADATA, filePath),

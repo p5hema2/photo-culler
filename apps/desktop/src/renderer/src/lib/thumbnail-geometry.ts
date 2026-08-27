@@ -1,9 +1,13 @@
 /**
- * Pure geometry for thumbnail generation and display.
+ * The thumbnail format contract — geometry, container, quality — plus the pure
+ * maths that positions one.
  *
  * Kept free of DOM and canvas APIs so it can be unit-tested — the crop maths
  * used to live inline in the worker and in ThumbnailCell, where jsdom cannot
- * reach it.
+ * reach it. The constants live here rather than in the worker for a harder
+ * reason: the worker module's body installs `self.onmessage`, so importing a
+ * VALUE from it would run that on the main thread. Only its types may be
+ * imported outside a `new Worker()` call.
  */
 
 export interface Size {
@@ -11,8 +15,34 @@ export interface Size {
   height: number;
 }
 
-/** Longest edge, in px, of a generated thumbnail. */
-export const THUMB_MAX_EDGE = 256;
+/**
+ * Longest edge, in px, of a generated thumbnail.
+ *
+ * Sized for the largest grid cell at a HiDPI scale factor, not for the CSS
+ * pixel: the 'large' preset draws into a 292 px box, which is 584 physical px
+ * at devicePixelRatio 2. The previous 256 was therefore upscaled 2.3x there
+ * and looked soft on every scaled display. 512 keeps that within ~1.15x while
+ * staying a quarter of the encode cost of covering DPR 2 exactly.
+ */
+export const THUMB_MAX_EDGE = 512;
+
+/**
+ * Container the disk cache stores, and the type the cached bytes are handed
+ * back to `createImageBitmap` as.
+ *
+ * WebP at THUMB_QUALITY measures about half the size of JPEG q0.8 at the same
+ * dimensions on photographic content, which is what pays for quadrupling the
+ * pixel count above: a 512px WebP came out ~11% larger than the 256px JPEG it
+ * replaced, not 4x. Heavy sensor noise inverts that — WebP's prediction has
+ * nothing to work with and it loses to JPEG — so a folder of high-ISO frames
+ * will cache larger than a clean one.
+ *
+ * Must stay in step with THUMB_SUFFIX in the main process: that suffix is the
+ * only marker of the cache format, so a change here without a change there
+ * would leave WebP bytes sitting behind a `.jpg` name.
+ */
+export const THUMB_MIME = 'image/webp';
+export const THUMB_QUALITY = 0.82;
 
 /**
  * `object-fit: contain` — scale to fit inside a square of `maxEdge` while
@@ -46,8 +76,10 @@ export interface RotatedFit {
  * Layout for drawing a bitmap rotated by a multiple of 90 degrees, centred in a
  * square box of `box` px.
  *
- * Unlike `fitWithin` this DOES allow upscaling: a 256px thumbnail is expected
- * to fill a 292px `large` cell, which is the existing behaviour.
+ * `box` is a PHYSICAL pixel count — the caller multiplies the cell's CSS size
+ * by devicePixelRatio — so unlike `fitWithin` this DOES allow upscaling: a
+ * 512px thumbnail still has to fill a 584px box on a 2x display at the 'large'
+ * preset. Clamping instead would letterbox the cell.
  *
  * The caller draws uniformly for all four angles:
  *   translate(canvas.width / 2, canvas.height / 2)

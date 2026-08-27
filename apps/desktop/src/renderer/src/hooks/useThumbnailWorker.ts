@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
+import { THUMB_MIME } from '../lib/thumbnail-geometry';
 import type { ThumbnailResponse } from '../workers/thumbnail.worker';
 
 interface PendingRequest {
@@ -75,8 +76,8 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
         if (window.api.loadThumbCache) {
           const cached = await window.api.loadThumbCache(id);
           if (cached) {
-            // Cache hit — create ImageBitmap from JPEG buffer
-            const blob = new Blob([cached], { type: 'image/jpeg' });
+            // Cache hit — decode the stored container back into a bitmap
+            const blob = new Blob([cached], { type: THUMB_MIME });
             const bitmap = await createImageBitmap(blob);
             pendingRef.current.delete(id);
             cacheRef.current.set(id, bitmap);
@@ -117,7 +118,7 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
 
   const handleWorkerMessage = useCallback(
     (workerIndex: number, event: MessageEvent<ThumbnailResponse>) => {
-      const { id, bitmap, jpegBuffer, error, epoch } = event.data;
+      const { id, bitmap, thumbBuffer, error, epoch } = event.data;
 
       // Discard a response for a generation we have already invalidated.
       if (epoch !== undefined && epoch < (epochRef.current.get(id) ?? 0)) {
@@ -134,8 +135,8 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
         cacheRef.current.set(id, bitmap);
 
         // Save to disk cache in the background (fire-and-forget)
-        if (jpegBuffer && window.api.saveThumbCache) {
-          window.api.saveThumbCache(id, jpegBuffer).catch(() => {
+        if (thumbBuffer && window.api.saveThumbCache) {
+          window.api.saveThumbCache(id, thumbBuffer).catch(() => {
             // Ignore cache save errors
           });
         }
