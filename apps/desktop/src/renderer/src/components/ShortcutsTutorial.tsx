@@ -19,10 +19,20 @@ const SECTIONS: ShortcutSection[] = [
   {
     title: 'Rating',
     shortcuts: [
-      { keys: '1 \u2013 5', description: 'Rate the focused image' },
+      { keys: '1 \u2013 5', description: 'Rate the selection' },
       { keys: '0', description: 'Clear the rating' },
-      { keys: 'Click a star', description: 'Rate that many stars' },
-      { keys: 'Click the lit star', description: 'Clear the rating' },
+      { keys: 'Click a star', description: 'Rate that one image that many stars' },
+      { keys: 'Click the lit star', description: 'Clear that image’s rating' },
+    ],
+  },
+  {
+    title: 'Selection',
+    shortcuts: [
+      { keys: 'Click', description: 'Select one image' },
+      { keys: 'Shift + click', description: 'Select everything in between' },
+      { keys: '\u2318/Ctrl + click', description: 'Add or remove one image' },
+      { keys: 'Right click', description: 'Menu: rating, rotate, delete' },
+      { keys: 'Arrow keys', description: 'Move the cursor — collapses the selection' },
     ],
   },
   {
@@ -36,9 +46,9 @@ const SECTIONS: ShortcutSection[] = [
   {
     title: 'Actions',
     shortcuts: [
-      { keys: 'Alt + \u2192', description: 'Rotate clockwise' },
-      { keys: 'Alt + \u2190', description: 'Rotate counter-clockwise' },
-      { keys: 'Backspace / Delete', description: 'Delete focused image (permanent)' },
+      { keys: 'Alt + \u2192', description: 'Rotate the selection clockwise' },
+      { keys: 'Alt + \u2190', description: 'Rotate the selection counter-clockwise' },
+      { keys: 'Backspace / Delete', description: 'Delete the selection (permanent)' },
       { keys: '\u2318/Ctrl + O', description: 'Open folder' },
       { keys: 'F5', description: 'Rescan folder (discards cached scores)' },
       { keys: '\u2318/Ctrl + S', description: 'Execute \u2014 delete low-rated images' },

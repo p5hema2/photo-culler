@@ -1,6 +1,6 @@
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { ImageFileInfo } from '@photo-culler/types';
-import type { FocusOrigin } from '../lib/focus-scroll';
+import type { SelectionClickModifier } from '../lib/selection';
 import { ThumbnailCell } from './ThumbnailCell';
 
 /**
@@ -19,7 +19,13 @@ interface GroupRowProps {
   qualityScores: Record<string, number>;
   rotations: Record<string, number>;
   focusedImageId: string | null;
-  onImageFocus: (path: string, origin: FocusOrigin) => void;
+  /** The batch rating and deletion act on. Membership, not order. */
+  selection: ReadonlySet<string>;
+  /**
+   * A cell was clicked. The origin FocusOrigin carries elsewhere is fixed here —
+   * a grid cell can only ever be clicked — so PhotoGrid supplies it.
+   */
+  onImageClick: (path: string, modifier: SelectionClickModifier) => void;
   onRate: (imagePath: string, rating: number) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
@@ -61,7 +67,8 @@ export function GroupRow({
   qualityScores,
   rotations,
   focusedImageId,
-  onImageFocus,
+  selection,
+  onImageClick,
   onRate,
   getThumbnail,
   requestThumbnail,
@@ -112,7 +119,8 @@ export function GroupRow({
             qualityScore={qualityScores[image.path]}
             rotation={rotations[image.path]}
             isFocused={focusedImageId === image.path}
-            onFocus={(origin) => onImageFocus(image.path, origin)}
+            isSelected={selection.has(image.path)}
+            onFocus={(_origin, modifier) => onImageClick(image.path, modifier)}
             onRate={(rating) => onRate(image.path, rating)}
             getThumbnail={getThumbnail}
             requestThumbnail={requestThumbnail}

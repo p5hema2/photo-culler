@@ -162,6 +162,56 @@ behind it. And Execute's range floor is fixed at 1 in `ExecutePanel.tsx` rather 
 slider handle, which is what makes "an unrated image is never deleted" true by construction
 (`isInRatingRange`).
 
+**Focus and selection are two concepts and must never be merged.** Since 1.6.1 there is a cursor
+(`focusedImageId`) and a batch (`selection` + `selectionAnchor`), and they answer different questions.
+The cursor is *where you are looking*: it drives the loupe, the InfoPanel, the on-demand exiftool read
+and the centring scroll, there is exactly one of it, and every non-click way of moving it
+(`setFocusedImage` — arrow keys, the loupe, the filmstrip) collapses the batch onto it. The selection
+is *what a batch action spends*: click / Shift+click / Ctrl-Cmd+click build it, and the 0-5 keys,
+Alt+Arrow, Delete and every context-menu item act on all of it.
+
+Merging them looks tempting — the resting state is a one-image selection that equals the cursor — and
+it is exactly what makes the app dangerous. `1` and `Delete` can now touch a hundred files at once,
+and Delete is permanent with no undo. The rule that keeps that safe is:
+
+> **A batch action must never be able to name an image the user cannot see.**
+
+Which is why the selection is reconciled EAGERLY and the cursor is not. `reconcileSelection` runs on
+every event that can hide or remove an image — filter, search, sort direction, folder collapse,
+rescan, `openFolder`, delete, Execute — and drops anything no longer visible. The cursor recovers
+LAZILY instead: it stays on the hidden image until the next arrow key moves it somewhere visible,
+because that is what preserves the user's position when a folder is collapsed and reopened. So the two
+are legitimately out of step for a while, and in that window `focusedImageId` names a photo that is off
+screen. Read `store.selectionTargets`, never `state.selection` or `state.focusedImageId`, in anything
+that rates, rotates or deletes: it is the only value that applies the fallback to the cursor *and*
+checks the cursor is on screen first. `useKeyboardNav`'s `batchTargets` makes the same check for the
+same reason.
+
+The plumbing that closes the loop: **App owns the visible order, not the store.** Which folders are
+collapsed lives in `App.tsx`, so App reports `sortedFlatImages`' paths into the store through
+`syncVisibleOrder` in one effect, and that single call is what reconciles the selection and what
+defines the span a Shift-click may cover. Ranges are defined over that flat order and nothing else —
+any other order would select images lying invisibly between the two the user clicked.
+
+Two sharp edges in the same area:
+- `focusAfterRemoval` in `usePhotoStore.ts` finds the next *survivor* after the deleted cursor.
+  Indexing the shrunken array at the old index — which is what the single-image delete did until
+  1.6.1 — skips one image per deletion above the cursor, so deleting a selection of twelve landed
+  eleven photos past the one the user was looking at.
+- A star belongs to one photo, so `ThumbnailCell` stops the click on the star widget from bubbling
+  into the cell's selection handler and dispatches a `plain` click itself. Left to bubble, a
+  Shift-click on a star would rate one image while range-selecting a hundred others.
+
+**The context menu is a renderer overlay, on purpose — do not move it to `Menu.popup`.**
+`components/ContextMenu.tsx` is plain React. A native menu would have to be told which images it is
+for and which rating to tick, and `MENU_COMMANDS` is a closed, **payload-free** union precisely so the
+main-process menu and the renderer handler cannot drift (see the IPC trap below). Adding a target to
+it would trade that guarantee away to duplicate state the renderer already holds. The menu is also
+gated into `modalOpen` in `App.tsx`, like every other overlay, or its arrow and Delete keys would also
+reach the grid behind it — and App closes it on a folder change, a layout change and any change to the
+visible order, because Open Folder and Rescan arrive from the native menu without the outside mousedown
+it dismisses itself on.
+
 **The renderer must never import the `image-utils` barrel.** It aliases
 `@photo-culler/image-utils/sorting`, `/grouping`, `/focus`, `/folders` and `/rating` deep, on
 purpose: the barrel re-exports `scanner.ts`, which imports `node:fs/promises` and would break the
@@ -254,7 +304,8 @@ because it ships prebuilt binaries. Any dependency that compiles at install time
 **Adding an IPC channel touches three files, in order:** `packages/types/src/ipc.ts` (add to
 `IPC_CHANNELS` *and* to the `ElectronAPI` interface) -> `src/preload/index.ts` (wire the invoke) ->
 `src/main/ipc-handlers.ts` (register the handler). `MENU_COMMANDS` is a closed union for the same
-reason — the menu and the renderer handler cannot drift.
+reason — the menu and the renderer handler cannot drift. It carries no payload, which is why the
+right-click menu is a renderer overlay; see the focus-vs-selection trap.
 
 **Menu accelerators must use modifiers.** Bare keys (`0`-`5` for rating, `V`, arrows)
 belong to the renderer; a menu accelerator swallows them before the window ever sees the keypress.
@@ -298,7 +349,10 @@ up under key repeat; and a **pointer-driven** focus change does not scroll at al
 thumbnail out from under the cursor mid-gesture. It was originally load-bearing for select-on-hover,
 which is gone — hover centred the next thumbnail under a resting cursor, which selected it, which
 scrolled again, and the list ran to one end. `FocusOrigin` is a one-member union (`'click'`) as a
-result; the rule it protects still holds.
+result; the rule it protects still holds, and since 1.6.1 it also holds up the context menu: that
+opens at the pointer's viewport coordinates, so a centring scroll on the right click that opened it
+would slide a different photo under the menu. `PhotoGrid` therefore routes the right click through the
+same `handleCellClick` path as a left one instead of calling the store directly.
 
 **The thumbnail cache has no version folder — the filename suffix is the format marker.**
 `.photo-culler-thumbs/<name>.thumb.webp`, flat, 512px longest edge, WebP q0.82. Change

@@ -14,6 +14,8 @@ import { InfoPanel } from './components/InfoPanel';
 import { LoupeView } from './components/LoupeView';
 import { FilmstripView } from './components/FilmstripView';
 import { ShortcutsTutorial } from './components/ShortcutsTutorial';
+import { ContextMenu, sharedRating } from './components/ContextMenu';
+import type { ContextMenuAction } from './components/ContextMenu';
 
 function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX.Element {
   return (
@@ -141,6 +143,8 @@ function App(): React.JSX.Element {
   const [showShortcuts, setShowShortcuts] = useState(false);
   /** Paths awaiting the delete confirmation, or null when nothing is pending. */
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
+  /** Where the context menu is open, in viewport coordinates, or null. */
+  const [contextMenuAt, setContextMenuAt] = useState<{ x: number; y: number } | null>(null);
   const [viewLayout, setViewLayout] = useState<'default' | 'loupe' | 'filmstrip'>('default');
 
   const { settings: overlaySettings, actions: overlayActions } = useOverlaySettings();
@@ -169,6 +173,25 @@ function App(): React.JSX.Element {
     [folders, collapsedFolders],
   );
 
+  /**
+   * The same order as absolute paths, which is what a Shift-click range spans
+   * and what the selection is reconciled against.
+   */
+  const visibleOrder = useMemo(() => sortedFlatImages.map((img) => img.path), [sortedFlatImages]);
+
+  /**
+   * Keep the store's idea of the visible order current.
+   *
+   * The store cannot work this out for itself — it depends on which folders are
+   * collapsed, and that lives here. This one call is what reconciles the
+   * selection after a filter, a search, a sort flip, a collapse, a rescan, an
+   * open or a deletion: all of them move this list.
+   */
+  const { syncVisibleOrder } = store;
+  useEffect(() => {
+    syncVisibleOrder(visibleOrder);
+  }, [visibleOrder, syncVisibleOrder]);
+
   /** Timestamp groups of the visible folders, for grid-shaped keyboard motion. */
   const navGroups = useMemo(
     () =>
@@ -178,11 +201,15 @@ function App(): React.JSX.Element {
     [folders, collapsedFolders],
   );
 
-  const handleDeleteFocused = useCallback(() => {
-    if (state.focusedImageId) {
-      setPendingDelete([state.focusedImageId]);
+  /**
+   * Delete/Backspace takes the whole selection, which is the focused image on
+   * its own when nothing else is selected.
+   */
+  const handleDeleteSelection = useCallback(() => {
+    if (store.selectionTargets.length > 0) {
+      setPendingDelete(store.selectionTargets);
     }
-  }, [state.focusedImageId]);
+  }, [store.selectionTargets]);
 
   const handleCancelDelete = useCallback(() => {
     setPendingDelete(null);
@@ -194,20 +221,76 @@ function App(): React.JSX.Element {
     if (paths) void store.deleteImages(paths);
   }, [pendingDelete, store]);
 
+  const handleCloseContextMenu = useCallback(() => {
+    setContextMenuAt(null);
+  }, []);
+
+  /**
+   * Run a context-menu item against the selection.
+   *
+   * Delete goes through the same confirmation as the Delete key rather than
+   * straight to the store: deletion is permanent and has no undo, and a menu
+   * click is no more deliberate than a keypress.
+   */
+  const handleContextAction = useCallback(
+    (action: ContextMenuAction) => {
+      setContextMenuAt(null);
+      switch (action.kind) {
+        case 'rate':
+          store.rateSelection(action.rating);
+          break;
+        case 'rotate':
+          for (const path of store.selectionTargets) store.rotateImage(path, action.direction);
+          break;
+        case 'delete':
+          handleDeleteSelection();
+          break;
+      }
+    },
+    [store, handleDeleteSelection],
+  );
+
+  /**
+   * Close the context menu when the ground moves under it.
+   *
+   * It shuts itself on Escape, an outside mousedown and a scroll, which covers
+   * every dismissal a pointer can express — but the native menu reaches none of
+   * those: Open Folder, Rescan and the layout commands all arrive without a
+   * click in the renderer, and a menu left standing over a different folder
+   * would rate or delete that folder's images. `visibleOrder` covers the rest of
+   * the list — filter, search, sort, collapse, deletion — since every one of
+   * them moves it, and none of them can be provoked by opening the menu.
+   */
+  useEffect(() => {
+    setContextMenuAt(null);
+  }, [state.folderPath, viewLayout, visibleOrder]);
+
+  /**
+   * Whether the context menu is actually up. It needs a batch to act on, and a
+   * menu offering "Delete 0 images" is worse than no menu — so an emptied
+   * selection also takes the gate below down with it, rather than trapping the
+   * keyboard behind an overlay with nothing in it.
+   */
+  const contextMenuOpen = contextMenuAt !== null && store.selectionTargets.length > 0;
+
   /**
    * True while a dialog is up. Every keyboard handler in this app listens on
    * the document, so without this they all still fire behind a modal — and one
    * of them deletes a photo.
+   *
+   * The context menu counts: while it is open the arrow keys belong to it, and
+   * a Delete aimed at its own item must not also reach the grid.
    */
-  const modalOpen = showExecutePanel || showShortcuts || pendingDelete !== null;
+  const modalOpen = showExecutePanel || showShortcuts || pendingDelete !== null || contextMenuOpen;
 
   useKeyboardNav({
     groups: navGroups,
     focusedImageId: state.focusedImageId,
     onFocusChange: store.setFocusedImage,
     onRate: store.setRating,
+    selectedPaths: store.selectionTargets,
     containerRef: gridContainerRef,
-    onDeleteFocused: handleDeleteFocused,
+    onDeleteFocused: handleDeleteSelection,
     sortedFlatImages,
     thumbnailSize: state.thumbnailSize,
     onRotate: store.rotateImage,
@@ -515,7 +598,9 @@ function App(): React.JSX.Element {
         rotations={state.rotations}
         thumbnailSize={state.thumbnailSize}
         focusedImageId={state.focusedImageId}
-        onImageFocus={store.setFocusedImage}
+        selection={state.selection}
+        onImageSelect={store.selectImage}
+        onOpenContextMenu={setContextMenuAt}
         onRate={store.setRating}
         getThumbnail={thumbnailWorker.getThumbnail}
         requestThumbnail={thumbnailWorker.requestThumbnail}
@@ -539,6 +624,7 @@ function App(): React.JSX.Element {
           thumbnailSize={state.thumbnailSize}
           groupingThresholdMs={state.groupingThresholdMs}
           visibleCount={visibleCount}
+          selectionCount={state.selection.size}
           folderPath={state.folderPath}
           onSelectFolder={handleSelectFolder}
           onRescan={handleRescan}
@@ -601,6 +687,17 @@ function App(): React.JSX.Element {
           count={pendingDelete.length}
           onCancel={handleCancelDelete}
           onConfirm={handleConfirmDelete}
+        />
+      )}
+
+      {contextMenuOpen && contextMenuAt !== null && (
+        <ContextMenu
+          x={contextMenuAt.x}
+          y={contextMenuAt.y}
+          count={store.selectionTargets.length}
+          rating={sharedRating(store.selectionTargets, state.ratings)}
+          onAction={handleContextAction}
+          onClose={handleCloseContextMenu}
         />
       )}
 

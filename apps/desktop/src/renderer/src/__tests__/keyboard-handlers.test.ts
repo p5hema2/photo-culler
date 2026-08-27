@@ -63,6 +63,7 @@ function mount(
     groups?: PhotoGroup[];
     focusedImageId?: string | null;
     modalOpen?: boolean;
+    selectedPaths?: readonly string[];
   } = {},
 ) {
   handlers = makeHandlers();
@@ -73,6 +74,7 @@ function mount(
       focusedImageId: options.focusedImageId === undefined ? IMAGE.path : options.focusedImageId,
       onFocusChange: handlers.onFocusChange,
       onRate: handlers.onRate,
+      selectedPaths: options.selectedPaths,
       containerRef: { current: document.body },
       onDeleteFocused: handlers.onDeleteFocused,
       sortedFlatImages: (options.groups ?? [GROUP]).flatMap((g) => g.images),
@@ -188,6 +190,51 @@ describe('focus that is no longer on screen', () => {
   it('does not rate an image it cannot find', () => {
     expect(pressCancelable('1')).toBe(false);
     expect(handlers.onRate).not.toHaveBeenCalled();
+  });
+
+  it('does not rotate an image it cannot find either', () => {
+    press('ArrowRight', { altKey: true });
+    expect(handlers.onRotate).not.toHaveBeenCalled();
+  });
+});
+
+describe('keys that act on a selection', () => {
+  const OTHER = makeImage('/photos/eventA', 'IMG_2.JPG');
+  const BOTH: PhotoGroup = { id: 'g0', images: [IMAGE, OTHER], startTime: 1, endTime: 1 };
+  const SELECTED = [IMAGE.path, OTHER.path];
+
+  it('rates every selected image, not just the cursor', () => {
+    mount({ groups: [BOTH], selectedPaths: SELECTED });
+    press('3');
+
+    expect(handlers.onRate).toHaveBeenCalledTimes(2);
+    expect(handlers.onRate).toHaveBeenCalledWith(IMAGE.path, 3);
+    expect(handlers.onRate).toHaveBeenCalledWith(OTHER.path, 3);
+  });
+
+  it('rotates every selected image, which is what the shortcut sheet promises', () => {
+    mount({ groups: [BOTH], selectedPaths: SELECTED });
+    press('ArrowRight', { altKey: true });
+
+    expect(handlers.onRotate).toHaveBeenCalledTimes(2);
+    expect(handlers.onRotate).toHaveBeenCalledWith(IMAGE.path, 'cw');
+    expect(handlers.onRotate).toHaveBeenCalledWith(OTHER.path, 'cw');
+  });
+
+  it('never acts outside the selection it was given', () => {
+    // The selection is what has been reconciled against the visible list, so it
+    // — and never the cursor beside it — is what a batch key spends.
+    mount({ groups: [BOTH], focusedImageId: IMAGE.path, selectedPaths: [OTHER.path] });
+    press('4');
+
+    expect(handlers.onRate).toHaveBeenCalledExactlyOnceWith(OTHER.path, 4);
+  });
+
+  it('falls back to the cursor when nothing is selected', () => {
+    mount({ groups: [BOTH], selectedPaths: [] });
+    press('2');
+
+    expect(handlers.onRate).toHaveBeenCalledExactlyOnceWith(IMAGE.path, 2);
   });
 });
 

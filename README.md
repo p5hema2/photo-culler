@@ -2,6 +2,8 @@
 
 A fast, keyboard-driven desktop app for culling photo shoots. Open a folder, review your images, rate them 0-5 stars, and batch-delete the ones that did not make it — all without leaving the keyboard.
 
+Rate one photo or a hundred: click, Shift+click or Ctrl/Cmd+click builds a selection, and every rating, rotation and delete acts on all of it.
+
 Ratings are written into the image files themselves, so Lightroom, Bridge, darktable and Windows Explorer all see the same stars.
 
 Built with Electron, React, TypeScript, and Tailwind CSS.
@@ -16,6 +18,9 @@ Built with Electron, React, TypeScript, and Tailwind CSS.
 - **Quality scoring** — automatic sharpness, exposure, contrast, and noise analysis, shown per
   thumbnail
 - **Keyboard-first workflow** — arrow keys to navigate, 0-5 to rate
+- **Multi-select** — click, Shift+click for a range, Ctrl/Cmd+click to pick and choose; rating, rotation and
+  delete then act on the whole selection
+- **Right-click menu** — rating, rotate and delete for the selection, without reaching for a shortcut
 - **Image rotation** — Alt+Arrow to rotate, applied losslessly on execute
 - **EXIF display** — camera body, lens, exposure settings, histogram
 - **Focus peaking, clipping & AF point overlays** — spot soft focus, blown highlights, and where the
@@ -74,11 +79,11 @@ certificate is trusted on sight.
 
 | Key | Action |
 |-----|--------|
-| Arrow keys | Navigate thumbnails |
-| 1 – 5 | Rate the focused image |
-| 0 | Clear the rating |
-| Alt+Arrow Left/Right | Rotate image 90 CCW/CW |
-| Backspace / Delete | Permanently delete the focused image (asks first) |
+| Arrow keys | Move the cursor — and collapse the selection onto it |
+| 1 – 5 | Rate the selection |
+| 0 | Clear the rating of the selection |
+| Alt+Arrow Left/Right | Rotate the selection 90 CCW/CW |
+| Backspace / Delete | Permanently delete the selection (asks first, and names the count) |
 | Home / End | Jump to first / last image |
 | V | Cycle layout: grid / loupe / filmstrip |
 | Ctrl/Cmd+1 / 2 / 3 | Go straight to grid / loupe / filmstrip |
@@ -90,8 +95,24 @@ certificate is trusted on sight.
 | Ctrl/Cmd+S | Execute — delete the low-rated images |
 | ? | Show / hide the shortcuts panel |
 
-Clicking a star rates that many stars; clicking the star that is already lit clears the rating. Press
-`?` in the app for the full list.
+### Mouse
+
+| Gesture | Action |
+|---------|--------|
+| Click | Select one image, and move the cursor to it |
+| Shift+click | Select everything between the last click and this one |
+| Ctrl/Cmd+click | Add one image to the selection, or take it out |
+| Right click | Context menu — rating, rotate, delete — for the selection |
+| Click a star | Rate that one image; clicking the lit star clears its rating |
+| Scroll / drag | Zoom and pan in the info panel |
+
+Right-clicking an image that is not in the selection selects just that image first, so the menu never
+acts on something you cannot see. A star belongs to the photo it sits on: clicking it rates that photo
+alone, whatever else is selected.
+
+The toolbar shows a count while more than one image is selected, and every selected cell carries a
+white inner frame — distinct from the cursor's outline, because an image is usually both. Press `?` in
+the app for the full shortcut list.
 
 ## Getting Started
 
@@ -169,8 +190,11 @@ photo-culler/
 3. **Review images** — Arrow keys to move through the grid, V to switch to the loupe or filmstrip
 4. **Rate** — Press 1-5, or click a star. Press 0 (or click the lit star) to clear. Each keypress is
    written straight into the image file.
-5. **Rotate if needed** — Alt+Left/Right to rotate images
-6. **Execute** — Ctrl/Cmd+S, or the "Execute" button:
+5. **Or rate in batches** — Shift+click a run of near-identical frames, or Ctrl/Cmd+click a handful
+   across the shoot, then press one number. One file write per image, all optimistic: a star that
+   fails to save rolls back and says so.
+6. **Rotate if needed** — Alt+Left/Right, or right-click > Rotate — both act on the selection
+7. **Execute** — Ctrl/Cmd+S, or the "Execute" button:
    - The slider picks the top of the delete range; the bottom is always 1 star, so unrated images are
      never deleted
    - Those images are **permanently deleted** — there is no trash step and no undo
@@ -182,6 +206,10 @@ photo-culler/
 - **Ratings live in the photos, not in the app.** Nothing is lost if you move the files, and stars set
   in Lightroom or Explorer show up here. The per-folder `.photo-culler-results.json` only caches
   quality scores and rotations you have not applied yet.
+- **The selection is only ever what you can see.** Anything that hides an image — a filter, the search
+  box, collapsing a folder — drops it from the selection on the spot, so a number key or a Delete can
+  never reach a photo that is off screen. The cursor is separate: it stays where it was and drives the
+  loupe, the info panel and the metadata read.
 - **The rating filter** (toolbar) is an inclusive window: `0-0` shows only what you have not judged
   yet, `4-5` only the best. Execute always works on what the filter leaves visible.
 - **Quality scores** appear on each thumbnail (0-100%). The info panel shows the breakdown: sharpness (40%), exposure (25%), contrast (20%), noise (15%). They are advisory — nothing filters or sorts by them.

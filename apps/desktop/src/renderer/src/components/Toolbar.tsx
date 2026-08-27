@@ -13,6 +13,11 @@ interface ToolbarProps {
   groupingThresholdMs: number;
   /** How many images the filters currently let through. */
   visibleCount: number;
+  /**
+   * How many images are selected. Shown only above one: a single selected image
+   * is the resting state, and a permanent "1 selected" would be noise.
+   */
+  selectionCount: number;
   scoringProgress: { completed: number; total: number };
   folderPath: string | null;
   onSelectFolder: () => void;
@@ -113,6 +118,7 @@ export function Toolbar({
   thumbnailSize,
   groupingThresholdMs,
   visibleCount,
+  selectionCount,
   scoringProgress,
   folderPath,
   onSelectFolder,
@@ -409,6 +415,16 @@ export function Toolbar({
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {selectionCount > 1 && (
+        <span
+          className="px-1.5 py-0.5 rounded bg-sky-900/70 text-sky-200 text-[10px] font-medium"
+          data-testid="selection-count"
+          title="Rating and Delete act on all of these"
+        >
+          {selectionCount} selected
+        </span>
+      )}
 
       {/* Progress indicator — only while active */}
       {showScoringProgress && (

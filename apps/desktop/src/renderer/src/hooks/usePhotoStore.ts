@@ -16,6 +16,13 @@ import {
 import { useThumbnailWorker } from './useThumbnailWorker';
 import { FULL_RATING_RANGE, isFullRatingRange } from '../lib/filters';
 import type { RatingRange } from '../lib/filters';
+import {
+  EMPTY_SELECTION,
+  reconcileSelection,
+  resolveSelectionClick,
+  selectionTargets as computeSelectionTargets,
+} from '../lib/selection';
+import type { SelectionClickModifier, SelectionState } from '../lib/selection';
 
 export interface PhotoState {
   folderPath: string | null;
@@ -36,6 +43,17 @@ export interface PhotoState {
   groupingThresholdMs: number;
   isLoading: boolean;
   focusedImageId: string | null;
+  /**
+   * The images a batch action acts on. See lib/selection.ts — it is a separate
+   * concept from `focusedImageId`, which is the single cursor.
+   *
+   * A ReadonlySet, always replaced rather than mutated: the grid tests
+   * membership once per visible cell, and an immutable Set is still a usable
+   * dependency for the memos that hang off it.
+   */
+  selection: ReadonlySet<string>;
+  /** The image a Shift-click ranges from. Null when there is nothing to range from. */
+  selectionAnchor: string | null;
   error: string | null;
   qualityScores: Record<string, number>;
   qualitySubscores: Record<string, QualitySubscores>;
@@ -55,6 +73,8 @@ const initialState: PhotoState = {
   groupingThresholdMs: 5000,
   isLoading: false,
   focusedImageId: null,
+  selection: EMPTY_SELECTION.selection,
+  selectionAnchor: EMPTY_SELECTION.anchor,
   error: null,
   qualityScores: {},
   qualitySubscores: {},
@@ -92,22 +112,110 @@ export interface ExecuteResult {
  */
 const RATING_WRITE_DEBOUNCE_MS = 300;
 
+/** Nothing on screen. Shared, so the empty case does not allocate or re-render. */
+const EMPTY_PATH_SET: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Where the cursor lands when the image under it has been deleted.
+ *
+ * The next SURVIVOR at or after its old position, falling back to the nearest
+ * survivor before it. What a single-image delete used to do — index the shrunken
+ * array at the old index — is only correct for one deletion: every further image
+ * removed above the cursor shifts that index one photo too far, so deleting a
+ * selection of twelve landed eleven images past the one the user was looking at.
+ */
+function focusAfterRemoval(
+  images: readonly ImageFileInfo[],
+  focused: string | null,
+  removed: ReadonlySet<string>,
+): string | null {
+  if (focused === null || !removed.has(focused)) return focused;
+  const oldIndex = images.findIndex((img) => img.path === focused);
+  if (oldIndex === -1) return null;
+  for (let i = oldIndex + 1; i < images.length; i += 1) {
+    const path = images[i]!.path;
+    if (!removed.has(path)) return path;
+  }
+  for (let i = oldIndex - 1; i >= 0; i -= 1) {
+    const path = images[i]!.path;
+    if (!removed.has(path)) return path;
+  }
+  return null;
+}
+
+/**
+ * Selection fields for an update that takes images away.
+ *
+ * The one place the rule lives, because every removal path needs it and the two
+ * that already existed had drifted apart once: drop what is gone, and land the
+ * batch on wherever the cursor ended up rather than leaving it empty.
+ */
+function selectionAfterRemoval(
+  prev: PhotoState,
+  removed: ReadonlySet<string>,
+  nextFocused: string | null,
+): Pick<PhotoState, 'selection' | 'selectionAnchor'> {
+  const selection = new Set<string>();
+  for (const path of prev.selection) {
+    if (!removed.has(path)) selection.add(path);
+  }
+  if (selection.size === 0 && nextFocused !== null) selection.add(nextFocused);
+
+  const anchor =
+    prev.selectionAnchor !== null && !removed.has(prev.selectionAnchor)
+      ? prev.selectionAnchor
+      : nextFocused;
+  return { selection, selectionAnchor: anchor };
+}
+
 export interface PhotoStoreAPI {
   state: PhotoState;
   /** Folder sections, each with its own timestamp groups. */
   folders: FolderSection[];
   filteredImages: ImageFileInfo[];
+  /**
+   * The images a batch action acts on: the selection — or, when nothing is
+   * selected, the focused image on its own, and then only while it is on screen.
+   * Every caller that rates or deletes must read this rather than the raw
+   * selection or `focusedImageId`; it is the one value that cannot name a photo
+   * the user is unable to see.
+   */
+  selectionTargets: string[];
   thumbnailWorker: ReturnType<typeof useThumbnailWorker>;
   openFolder: (folderPath: string) => Promise<void>;
   /** Rate one image, 0-5, where 0 clears the rating. Writes to the file. */
   setRating: (imagePath: string, rating: number) => void;
+  /** Rate every image in `selectionTargets`, 0-5. One file write per image. */
+  rateSelection: (rating: number) => void;
   setSortDirection: (direction: SortDirection) => void;
   setFilterExtensions: (extensions: Set<string>) => void;
   setFilterRatingRange: (range: RatingRange) => void;
   setSearchQuery: (query: string) => void;
   setThumbnailSize: (size: 'small' | 'medium' | 'large') => void;
   setGroupingThresholdMs: (ms: number) => void;
+  /**
+   * Move the cursor, collapsing the selection onto it.
+   *
+   * Every non-click way of moving — arrow keys, the loupe, the filmstrip — goes
+   * through here, which is why it collapses: navigating away from a batch ends
+   * that batch, and a selection left behind the cursor would be invisible.
+   */
   setFocusedImage: (path: string | null) => void;
+  /**
+   * Apply a click to the selection, and move the cursor onto the clicked image.
+   * The modifier decides what the click means — see SelectionClickModifier.
+   */
+  selectImage: (path: string, modifier: SelectionClickModifier) => void;
+  /**
+   * Tell the store the flat order the grid is currently rendering, and drop any
+   * selected path that is no longer in it.
+   *
+   * The order is the view's to know, not the store's: it depends on which
+   * folders the user has collapsed, which lives in App. One call from there on
+   * every change covers the whole list of events that can hide an image —
+   * filter, search, sort direction, collapse, rescan, open, delete.
+   */
+  syncVisibleOrder: (visiblePaths: readonly string[]) => void;
   clearError: () => void;
   executeActions: (options: ExecuteOptions) => Promise<ExecuteResult>;
   /** Permanently delete the given images. There is no trash step. */
@@ -151,6 +259,24 @@ export function usePhotoStore(): PhotoStoreAPI {
   const ratingWritesRef = useRef<
     Map<string, { timer: ReturnType<typeof setTimeout>; value: number; revertTo: number }>
   >(new Map());
+  /**
+   * The flat order the grid is rendering, as absolute paths. Fed by
+   * syncVisibleOrder; a Shift-click range is defined over exactly this.
+   */
+  const visibleOrderRef = useRef<readonly string[]>([]);
+  /**
+   * The same paths as a membership Set.
+   *
+   * State and not a ref, unlike its sibling above, because `selectionTargets`
+   * reads it: the fallback to the focused image is only allowed while that image
+   * is on screen, and a ref would leave the memo answering with the *previous*
+   * order — which is precisely the order in which the hidden image was still
+   * visible. Costs one extra render per order change; the alternative was a
+   * derived flag that every focus mutation would have to remember to mirror.
+   */
+  const [visiblePathSet, setVisiblePathSet] = useState<ReadonlySet<string>>(EMPTY_PATH_SET);
+  /** The current batch, for callbacks that must read it without re-subscribing. */
+  const selectionTargetsRef = useRef<string[]>([]);
 
   // Keep stateRef in sync
   stateRef.current = state;
@@ -315,6 +441,11 @@ export function usePhotoStore(): PhotoStoreAPI {
       flushPendingSave();
       openEpochRef.current += 1;
       resultsRef.current = new Map();
+      // Nothing is on screen until the scan comes back, so the range a
+      // Shift-click could span is empty until App reports the new order — and
+      // so is the set that permits the fallback to the focused image.
+      visibleOrderRef.current = [];
+      setVisiblePathSet(EMPTY_PATH_SET);
 
       setState((prev) => ({
         ...prev,
@@ -324,6 +455,8 @@ export function usePhotoStore(): PhotoStoreAPI {
         images: [],
         ratings: {},
         focusedImageId: null,
+        selection: EMPTY_SELECTION.selection,
+        selectionAnchor: EMPTY_SELECTION.anchor,
         qualityScores: {},
         qualitySubscores: {},
         filterRatingRange: FULL_RATING_RANGE,
@@ -367,6 +500,7 @@ export function usePhotoStore(): PhotoStoreAPI {
 
         if (!mountedRef.current) return;
 
+        const first = images.length > 0 ? images[0]!.path : null;
         setState((prev) => ({
           ...prev,
           images,
@@ -375,7 +509,11 @@ export function usePhotoStore(): PhotoStoreAPI {
           qualitySubscores,
           rotations,
           isLoading: false,
-          focusedImageId: images.length > 0 ? images[0]!.path : null,
+          focusedImageId: first,
+          // The cursor landing on the first image selects it, same as it does
+          // when an arrow key moves there.
+          selection: first === null ? EMPTY_SELECTION.selection : new Set([first]),
+          selectionAnchor: first,
         }));
 
         // Save session
@@ -417,6 +555,16 @@ export function usePhotoStore(): PhotoStoreAPI {
     [persistRating],
   );
 
+  const rateSelection = useCallback(
+    (rating: number) => {
+      // One setRating per image rather than a batch IPC call: each one owns its
+      // own debounce and its own rollback, and a batch would have to reinvent
+      // both to report which file refused the write.
+      for (const path of selectionTargetsRef.current) setRating(path, rating);
+    },
+    [setRating],
+  );
+
   const setSortDirection = useCallback((direction: SortDirection) => {
     setState((prev) => ({ ...prev, sortDirection: direction }));
   }, []);
@@ -444,7 +592,46 @@ export function usePhotoStore(): PhotoStoreAPI {
   }, []);
 
   const setFocusedImage = useCallback((path: string | null) => {
-    setState((prev) => ({ ...prev, focusedImageId: path }));
+    setState((prev) => ({
+      ...prev,
+      focusedImageId: path,
+      // Moving the cursor collapses the batch onto it. Anything else would let a
+      // selection the user has navigated away from swallow the next 0-5 key.
+      selection: path === null ? EMPTY_SELECTION.selection : new Set([path]),
+      selectionAnchor: path,
+    }));
+  }, []);
+
+  const selectImage = useCallback((path: string, modifier: SelectionClickModifier) => {
+    setState((prev) => {
+      const next = resolveSelectionClick(
+        { selection: prev.selection, anchor: prev.selectionAnchor },
+        path,
+        modifier,
+        visibleOrderRef.current,
+      );
+      return {
+        ...prev,
+        // The cursor follows the pointer for every modifier: the click is also
+        // how the user says "show me this one".
+        focusedImageId: path,
+        selection: next.selection,
+        selectionAnchor: next.anchor,
+      };
+    });
+  }, []);
+
+  const syncVisibleOrder = useCallback((visiblePaths: readonly string[]) => {
+    visibleOrderRef.current = visiblePaths;
+    setVisiblePathSet(visiblePaths.length === 0 ? EMPTY_PATH_SET : new Set(visiblePaths));
+    setState((prev) => {
+      const current: SelectionState = { selection: prev.selection, anchor: prev.selectionAnchor };
+      const next = reconcileSelection(current, visiblePaths);
+      // Called from an effect on every render where the order changed, so the
+      // no-change case has to be a genuine no-op or it loops.
+      if (next.selection === prev.selection && next.anchor === prev.selectionAnchor) return prev;
+      return { ...prev, selection: next.selection, selectionAnchor: next.anchor };
+    });
   }, []);
 
   const clearError = useCallback(() => {
@@ -538,7 +725,21 @@ export function usePhotoStore(): PhotoStoreAPI {
         const nextImages = prev.images.filter((img) => !succeededDeletePaths.has(img.path));
         const nextRatings = { ...prev.ratings };
         for (const path of succeededDeletePaths) delete nextRatings[path];
-        return { ...prev, images: nextImages, ratings: nextRatings };
+        // Execute can delete the cursor along with everything else it sweeps
+        // up — often hundreds of images at once, which is exactly where landing
+        // by old index goes wrong. Same helper as deleteImages.
+        const nextFocused = focusAfterRemoval(
+          prev.images,
+          prev.focusedImageId,
+          succeededDeletePaths,
+        );
+        return {
+          ...prev,
+          images: nextImages,
+          ratings: nextRatings,
+          focusedImageId: nextFocused,
+          ...selectionAfterRemoval(prev, succeededDeletePaths, nextFocused),
+        };
       });
 
       // Cancel any pending debounced save
@@ -600,18 +801,14 @@ export function usePhotoStore(): PhotoStoreAPI {
       for (const path of deletedSet) delete nextRatings[path];
 
       // Advance focus if the focused image was one of the deleted
-      let nextFocused = prev.focusedImageId;
-      if (prev.focusedImageId && deletedSet.has(prev.focusedImageId)) {
-        const oldIndex = prev.images.findIndex((img) => img.path === prev.focusedImageId);
-        const nextImg = nextImages[oldIndex] ?? nextImages[oldIndex - 1] ?? null;
-        nextFocused = nextImg?.path ?? null;
-      }
+      const nextFocused = focusAfterRemoval(prev.images, prev.focusedImageId, deletedSet);
 
       return {
         ...prev,
         images: nextImages,
         ratings: nextRatings,
         focusedImageId: nextFocused,
+        ...selectionAfterRemoval(prev, deletedSet, nextFocused),
       };
     });
 
@@ -638,6 +835,11 @@ export function usePhotoStore(): PhotoStoreAPI {
     }
   }, []);
 
+  /**
+   * Nothing here touches the selection, deliberately: clean-up removes stale
+   * *records* from the results files, never photos, so the visible set — and
+   * therefore what may be selected — is exactly as it was.
+   */
   const pruneLoadedResults = useCallback(() => {
     const current = stateRef.current;
     // The renderer's own folder attribution already matches the main process's
@@ -739,6 +941,17 @@ export function usePhotoStore(): PhotoStoreAPI {
     [filteredImages, state.sortDirection],
   );
 
+  const selectionTargets = useMemo(
+    () =>
+      computeSelectionTargets(
+        { selection: state.selection, anchor: state.selectionAnchor },
+        state.focusedImageId,
+        visiblePathSet,
+      ),
+    [state.selection, state.selectionAnchor, state.focusedImageId, visiblePathSet],
+  );
+  selectionTargetsRef.current = selectionTargets;
+
   /**
    * Folder sections, each holding its own timestamp groups.
    *
@@ -794,9 +1007,11 @@ export function usePhotoStore(): PhotoStoreAPI {
     state,
     folders,
     filteredImages,
+    selectionTargets,
     thumbnailWorker,
     openFolder,
     setRating,
+    rateSelection,
     setSortDirection,
     setFilterExtensions,
     setFilterRatingRange,
@@ -804,6 +1019,8 @@ export function usePhotoStore(): PhotoStoreAPI {
     setThumbnailSize,
     setGroupingThresholdMs,
     setFocusedImage,
+    selectImage,
+    syncVisibleOrder,
     clearError,
     executeActions,
     deleteImages,

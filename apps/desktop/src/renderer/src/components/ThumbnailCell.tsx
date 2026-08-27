@@ -1,6 +1,8 @@
 import { useRef, useEffect } from 'react';
 import type { ImageFileInfo } from '@photo-culler/types';
 import type { FocusOrigin } from '../lib/focus-scroll';
+import { clickModifier } from '../lib/selection';
+import type { SelectionClickModifier } from '../lib/selection';
 import { fitRotated, THUMB_MAX_EDGE } from '../lib/thumbnail-geometry';
 import { StarRating } from './StarRating';
 import type { StarRatingSize } from './StarRating';
@@ -15,11 +17,20 @@ interface ThumbnailCellProps {
   rotation?: number;
   isFocused: boolean;
   /**
+   * Whether this cell is part of the batch that rating and deletion act on.
+   * Absent in the two strips, which show one image at a time and select nothing.
+   */
+  isSelected?: boolean;
+  /**
    * Focus this cell. The origin travels with it because the containing view
    * scrolls the focused cell into place, and must not do that when the pointer
    * is what moved the focus — see FocusOrigin.
+   *
+   * The modifier says what the click means for the selection. Callers with no
+   * selection to speak of — the loupe strip, the filmstrip — simply take one
+   * argument and ignore it.
    */
-  onFocus: (origin: FocusOrigin) => void;
+  onFocus: (origin: FocusOrigin, modifier: SelectionClickModifier) => void;
   /** Absent where the cell only shows the rating — the two strips, see starsForCell. */
   onRate?: (rating: number) => void;
   getThumbnail: (id: string) => ThumbnailStatus;
@@ -48,6 +59,7 @@ export function ThumbnailCell({
   qualityScore,
   rotation = 0,
   isFocused,
+  isSelected = false,
   onFocus,
   onRate,
   getThumbnail,
@@ -119,12 +131,15 @@ export function ThumbnailCell({
 
   return (
     <div
-      className="relative cursor-pointer flex-shrink-0"
+      // select-none because Shift-click is a range selection here: left to
+      // itself the browser would also drag a text selection across the badges.
+      className="relative cursor-pointer flex-shrink-0 select-none"
       style={{ width: cellSize, height: cellSize }}
-      onClick={() => onFocus('click')}
+      onClick={(e) => onFocus('click', clickModifier(e))}
       data-image-path={image.path}
       data-testid="thumbnail-cell"
       role="gridcell"
+      aria-selected={isSelected}
       tabIndex={isFocused ? 0 : -1}
     >
       {/* Filename badge */}
@@ -189,6 +204,16 @@ export function ThumbnailCell({
           <div
             className="absolute bottom-1 left-1/2 -translate-x-1/2 z-10 bg-black/60 rounded px-1"
             data-testid="cell-stars"
+            // A star names ONE image, so it is a plain click on that image
+            // whatever modifier is held — it focuses and selects just this cell,
+            // then rates it. Left to bubble into the cell's own handler, a
+            // Shift-click on a star would rate this photo while range-selecting
+            // a hundred others, and a Ctrl-click would rate the very image it
+            // had just removed from the selection.
+            onClick={(e) => {
+              e.stopPropagation();
+              onFocus('click', 'plain');
+            }}
           >
             <StarRating
               rating={rating}
@@ -199,6 +224,18 @@ export function ThumbnailCell({
           </div>
         )}
       </div>
+      {/*
+        Selection marker. A filled frame INSIDE the box, where the focus ring is
+        an outline outside it — the two say different things and have to look
+        it, because a cell is often both. Last in the DOM so it paints over the
+        thumbnail, and inert so it never eats the click.
+      */}
+      {isSelected && (
+        <div
+          className="absolute inset-1 pointer-events-none border-2 border-white/85 bg-white/10"
+          data-testid="cell-selected"
+        />
+      )}
     </div>
   );
 }

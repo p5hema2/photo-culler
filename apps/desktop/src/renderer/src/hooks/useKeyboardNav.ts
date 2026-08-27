@@ -16,14 +16,30 @@ interface KeyboardNavOptions {
   focusedImageId: string | null;
   onFocusChange: (path: string | null) => void;
   /**
-   * Set the focused image's star rating, 0-5, where 0 clears it.
+   * Set one image's star rating, 0-5, where 0 clears it. Called once per image
+   * in `selectedPaths`.
    * Takes the image's ABSOLUTE PATH — renderer state is keyed by path.
    */
   onRate: (imagePath: string, rating: number) => void;
+  /**
+   * The batch the 0-5 keys and Alt+Arrow act on, in place of the focused image
+   * alone. Must already be reconciled against what is visible — the hook does
+   * not own the selection, it only spends it.
+   *
+   * Optional, and empty means "just the cursor", so a caller with no selection
+   * concept still gets the single-image behaviour.
+   */
+  selectedPaths?: readonly string[];
   containerRef: React.RefObject<HTMLElement | null>;
-  /** Ask to delete the focused image. The caller confirms first. */
+  /**
+   * Ask to delete what is currently selected. The caller decides what that is
+   * and confirms first.
+   */
   onDeleteFocused: () => void;
-  /** Takes the image's ABSOLUTE PATH — renderer state is keyed by path. */
+  /**
+   * Rotate one image. Called once per image in `selectedPaths`.
+   * Takes the image's ABSOLUTE PATH — renderer state is keyed by path.
+   */
   onRotate: (imagePath: string, direction: 'cw' | 'ccw') => void;
   sortedFlatImages: ImageFileInfo[];
   thumbnailSize: 'small' | 'medium' | 'large';
@@ -89,6 +105,7 @@ export function useKeyboardNav({
   focusedImageId,
   onFocusChange,
   onRate,
+  selectedPaths,
   containerRef,
   onDeleteFocused,
   onRotate,
@@ -100,12 +117,14 @@ export function useKeyboardNav({
   const groupsRef = useRef(groups);
   const focusRef = useRef(focusedImageId);
   const flatImagesRef = useRef(sortedFlatImages);
+  const selectedPathsRef = useRef<readonly string[]>(selectedPaths ?? []);
   const thumbnailSizeRef = useRef(thumbnailSize);
   const viewLayoutRef = useRef(viewLayout);
   const modalOpenRef = useRef(modalOpen);
   groupsRef.current = groups;
   focusRef.current = focusedImageId;
   flatImagesRef.current = sortedFlatImages;
+  selectedPathsRef.current = selectedPaths ?? [];
   thumbnailSizeRef.current = thumbnailSize;
   viewLayoutRef.current = viewLayout;
   modalOpenRef.current = modalOpen;
@@ -142,6 +161,22 @@ export function useKeyboardNav({
         return;
       }
 
+      /**
+       * What a batch key acts on: the selection, or the cursor alone when there
+       * is nothing selected — and then only if the cursor is on screen.
+       *
+       * `cursorVisible` is the caller's own answer to that, because the two
+       * layouts locate the cursor differently. Without it a rating or a rotation
+       * could land on an image a filter has hidden: the selection is reconciled
+       * against the visible list the moment it changes, but focus recovers only
+       * on the next arrow key. See lib/selection.ts.
+       */
+      const batchTargets = (cursorVisible: boolean): readonly string[] => {
+        const selected = selectedPathsRef.current;
+        if (selected.length > 0) return selected;
+        return cursorVisible ? [focused] : [];
+      };
+
       // Loupe & filmstrip: all arrows navigate linearly through flat image list
       if (layout === 'loupe' || layout === 'filmstrip') {
         const flatIndex = flatImages.findIndex((img) => img.path === focused);
@@ -149,8 +184,8 @@ export function useKeyboardNav({
         // Alt+Arrow: rotate
         if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
           e.preventDefault();
-          const image = flatImages[flatIndex];
-          if (image) onRotate(image.path, e.key === 'ArrowRight' ? 'cw' : 'ccw');
+          const direction = e.key === 'ArrowRight' ? 'cw' : 'ccw';
+          for (const path of batchTargets(flatIndex !== -1)) onRotate(path, direction);
           return;
         }
 
@@ -174,18 +209,32 @@ export function useKeyboardNav({
         }
       }
 
-      // Alt+Arrow Left/Right: rotate focused image
+      // Alt+Arrow Left/Right: rotate the whole selection
       if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault();
-        const pos = findImagePosition(currentGroups, focused);
-        if (pos) {
-          const image = currentGroups[pos.groupIndex]!.images[pos.imageIndex]!;
-          onRotate(image.path, e.key === 'ArrowRight' ? 'cw' : 'ccw');
-        }
+        const direction = e.key === 'ArrowRight' ? 'cw' : 'ccw';
+        const onScreen = findImagePosition(currentGroups, focused) !== null;
+        for (const path of batchTargets(onScreen)) onRotate(path, direction);
         return;
       }
 
       const pos = findImagePosition(currentGroups, focused);
+
+      // Rating keys act on the whole selection, and so are handled before the
+      // off-screen-cursor recovery below: a selection is reconciled against
+      // what is visible, so it stays rateable even in the moment where the
+      // cursor is not — a filter change can leave the two out of step.
+      const rating = RATING_KEYS.get(e.key);
+      if (rating !== undefined) {
+        const targets = batchTargets(pos !== null);
+        // Nothing to rate: no selection, and a cursor that is not on screen.
+        // Leave the key to whatever else wants it rather than swallowing it.
+        if (targets.length === 0) return;
+        e.preventDefault();
+        for (const path of targets) onRate(path, rating);
+        return;
+      }
+
       if (!pos) {
         // The focused image is not on screen: its folder was collapsed, a
         // filter excluded it, or it was just deleted. Bailing out here used to
@@ -203,14 +252,6 @@ export function useKeyboardNav({
 
       const { groupIndex, imageIndex } = pos;
       const currentGroup = currentGroups[groupIndex]!;
-
-      const rating = RATING_KEYS.get(e.key);
-      if (rating !== undefined) {
-        e.preventDefault();
-        const image = currentGroup.images[imageIndex];
-        if (image) onRate(image.path, rating);
-        return;
-      }
 
       switch (e.key) {
         case 'ArrowRight': {

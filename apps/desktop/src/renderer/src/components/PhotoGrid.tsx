@@ -4,6 +4,7 @@ import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { FolderSection } from '@photo-culler/image-utils/folders';
 import { GroupRow, HEADER_HEIGHT } from './GroupRow';
 import { centeredScrollOffset, centerElementVertically, setScrollTop } from '../lib/focus-scroll';
+import type { SelectionClickModifier } from '../lib/selection';
 import { usePointerFocus } from '../hooks/usePointerFocus';
 
 // Owned by GroupRow, which has to render exactly this; re-exported because the
@@ -110,9 +111,20 @@ interface PhotoGridProps {
   rotations: Record<string, number>;
   thumbnailSize: 'small' | 'medium' | 'large';
   focusedImageId: string | null;
+  /** The batch rating and deletion act on — see lib/selection.ts. */
+  selection: ReadonlySet<string>;
   collapsedFolders: ReadonlySet<string>;
   onToggleFolder: (folderPath: string) => void;
-  onImageFocus: (path: string) => void;
+  /**
+   * A cell was clicked. Moves the cursor onto it and applies the modifier to
+   * the selection; the store decides what each modifier means.
+   */
+  onImageSelect: (path: string, modifier: SelectionClickModifier) => void;
+  /**
+   * A cell was right-clicked, at these viewport coordinates. The selection has
+   * already been settled by then — see handleContextMenu.
+   */
+  onOpenContextMenu: (position: { x: number; y: number }) => void;
   onRate: (imagePath: string, rating: number) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
@@ -126,9 +138,11 @@ export function PhotoGrid({
   rotations,
   thumbnailSize,
   focusedImageId,
+  selection,
   collapsedFolders,
   onToggleFolder,
-  onImageFocus,
+  onImageSelect,
+  onOpenContextMenu,
   onRate,
   getThumbnail,
   requestThumbnail,
@@ -138,7 +152,54 @@ export function PhotoGrid({
   const [containerWidth, setContainerWidth] = useState(800);
   /** A centring offset the scroll range was too short to accept — see below. */
   const pendingScrollRef = useRef<number | null>(null);
-  const { handleImageFocus, consumePointerFocus } = usePointerFocus(onImageFocus);
+  /**
+   * The modifier of the click currently being dispatched.
+   *
+   * usePointerFocus takes a plain `(path) => void`, because marking the focus as
+   * pointer-driven is all it is for — and that mark is what stops the grid
+   * scrolling a cell that is already under the cursor. Handing the modifier over
+   * beside the path keeps one dispatch for all three kinds of click; the ref is
+   * read synchronously, inside the call below.
+   */
+  const clickModifierRef = useRef<SelectionClickModifier>('plain');
+  const onImageSelectRef = useRef(onImageSelect);
+  onImageSelectRef.current = onImageSelect;
+
+  const { handleImageFocus, consumePointerFocus } = usePointerFocus(
+    useCallback((path: string) => onImageSelectRef.current(path, clickModifierRef.current), []),
+  );
+
+  const handleCellClick = useCallback(
+    (path: string, modifier: SelectionClickModifier) => {
+      clickModifierRef.current = modifier;
+      handleImageFocus(path, 'click');
+    },
+    [handleImageFocus],
+  );
+
+  /**
+   * Right click, resolved by delegation on the scroll container.
+   *
+   * `data-image-path` is already how this component finds a cell — the centring
+   * effect looks one up that way — and one listener here beats threading a prop
+   * per cell down through GroupRow to reach the same element.
+   */
+  const handleContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+      const target = event.target;
+      const cell = target instanceof Element ? target.closest('[data-image-path]') : null;
+      const path = cell?.getAttribute('data-image-path');
+      if (!path) return;
+      event.preventDefault();
+      // Select through the click path, not by calling onImageSelect directly:
+      // that marks the focus change pointer-driven, and without the mark the
+      // centring effect would scroll the cell to the middle — moving the content
+      // out from under the coordinates the menu is about to open at.
+      handleCellClick(path, 'context');
+      onOpenContextMenu({ x: event.clientX, y: event.clientY });
+    },
+    [handleCellClick, onOpenContextMenu],
+  );
 
   const cellSize = THUMBNAIL_SIZE_MAP[thumbnailSize] ?? 200;
   const perRow = imagesPerRow(containerWidth, cellSize);
@@ -309,6 +370,7 @@ export function PhotoGrid({
       role="grid"
       tabIndex={0}
       onMouseEnter={() => parentRef.current?.focus()}
+      onContextMenu={handleContextMenu}
     >
       <div
         style={{
@@ -364,7 +426,8 @@ export function PhotoGrid({
                   qualityScores={qualityScores}
                   rotations={rotations}
                   focusedImageId={focusedImageId}
-                  onImageFocus={handleImageFocus}
+                  selection={selection}
+                  onImageClick={handleCellClick}
                   onRate={onRate}
                   getThumbnail={getThumbnail}
                   requestThumbnail={requestThumbnail}
