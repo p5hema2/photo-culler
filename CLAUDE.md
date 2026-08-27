@@ -119,6 +119,12 @@ which falls back to `lastModified` where a file has no `DateTimeOriginal`, and e
 detail-metadata cache, which is keyed on mtime. Suppressing a freshness signal is only safe because a
 rating write changes no pixels — do not carry `-P` over to any path that does.
 
+`-P` restores the timestamp at the resolution exiftool recorded it, and that differs by platform:
+exact on Windows, truncated to the whole second on macOS. **The guarantee is therefore "never moves
+forward", not "bit-identical"** — truncation moves the mtime backwards, which only makes the freshness
+check pass more easily. A test asserting bit-equality passes on Windows and fails on macOS; that
+already cost one red CI run on v1.6.0, where the shipped code was correct and the assertion was not.
+
 **The rating tags must stay split across exiftool's `tags` and `writeArgs`.** Measured, not
 stylistic. A plain `Rating` in `tags` reaches XMP but never IFD0, so Windows Explorer would not see
 it. Passing every assignment through `writeArgs` with an EMPTY `tags` object does write both groups —

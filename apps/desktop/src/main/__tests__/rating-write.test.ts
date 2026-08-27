@@ -58,16 +58,25 @@ describe('writeRating', () => {
     expect(await readRating(file)).toBe(4);
   }, 60_000);
 
-  it('leaves the mtime untouched, so the cached thumbnail stays valid', async () => {
-    // LOAD_THUMB_CACHE discards any thumbnail older than its source. Without -P
-    // every keypress would bump the mtime and rating 2000 photos would destroy
-    // 2000 cache entries — see the trap in CLAUDE.md.
+  it('never moves the mtime forward, so the cached thumbnail stays valid', async () => {
+    // LOAD_THUMB_CACHE discards any thumbnail whose mtime is BELOW its source's.
+    // Without -P every keypress would bump the source and rating 2000 photos
+    // would destroy 2000 cache entries — see the trap in CLAUDE.md.
+    //
+    // Not-forward rather than bit-identical, because -P restores FileModifyDate
+    // at the resolution exiftool recorded it: exact on Windows, truncated to the
+    // second on macOS (…384127 came back as …384000). Truncation moves the
+    // timestamp BACKWARDS, which only makes the freshness check pass more
+    // easily. The upper bound on the drift is what would catch -P silently
+    // ceasing to work, since that resets the mtime to now.
     const file = await makeImage('mtime.jpg');
     const before = (await stat(file)).mtimeMs;
 
     await writeRating(file, 3);
+    const after = (await stat(file)).mtimeMs;
 
-    expect((await stat(file)).mtimeMs).toBe(before);
+    expect(after).toBeLessThanOrEqual(before);
+    expect(before - after).toBeLessThan(1000);
   }, 60_000);
 
   it('reaches both the XMP and the EXIF group', async () => {
