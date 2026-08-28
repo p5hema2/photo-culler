@@ -15,6 +15,7 @@ export type {
   FileOpResult,
   SessionConfig,
   ImageResult,
+  PruneResult,
   QualitySubscores,
   ResultsFile,
   MenuCommand,

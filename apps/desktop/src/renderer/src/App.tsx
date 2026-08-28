@@ -15,7 +15,7 @@ import { InfoPanel } from './components/InfoPanel';
 import { LoupeView } from './components/LoupeView';
 import { FilmstripView } from './components/FilmstripView';
 import { ShortcutsTutorial } from './components/ShortcutsTutorial';
-import { ContextMenu, sharedRating } from './components/ContextMenu';
+import { ContextMenu, revealTarget, sharedRating } from './components/ContextMenu';
 import type { ContextMenuAction } from './components/ContextMenu';
 
 function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX.Element {
@@ -215,6 +215,20 @@ function App(): React.JSX.Element {
   }, []);
 
   /**
+   * The image "Reveal in Explorer/Finder" acts on: the cursor, and only while it
+   * is on screen.
+   *
+   * Not `selectionTargets`, which every other menu item spends — the platform
+   * call selects one path, and forty of them would be forty Explorer windows.
+   * The visibility check is the same rule the batch follows: focus recovers
+   * lazily, so it can name a photo a filter has hidden, and no menu item may.
+   */
+  const revealPath = useMemo(
+    () => revealTarget(state.focusedImageId, visibleOrder),
+    [state.focusedImageId, visibleOrder],
+  );
+
+  /**
    * Run a context-menu item against the selection.
    *
    * Delete goes through the same confirmation as the Delete key rather than
@@ -231,12 +245,22 @@ function App(): React.JSX.Element {
         case 'rotate':
           for (const path of store.selectionTargets) store.rotateImage(path, action.direction);
           break;
+        case 'reveal':
+          if (revealPath !== null) {
+            // Nothing changes on disk, and the failure the user would notice —
+            // no window opening — is the same either way, so this reports to the
+            // console rather than to the error banner the store owns.
+            void window.api.revealInFolder(revealPath).then((result) => {
+              if (!result.ok) console.error(`[reveal] ${revealPath}: ${result.error}`);
+            });
+          }
+          break;
         case 'delete':
           handleDeleteSelection();
           break;
       }
     },
-    [store, handleDeleteSelection],
+    [store, handleDeleteSelection, revealPath],
   );
 
   /**
@@ -294,13 +318,13 @@ function App(): React.JSX.Element {
     }
   }, [store]);
 
-  const handleRescan = useCallback(async () => {
+  const handleRescan = useCallback(() => {
     if (!state.folderPath) return;
-    // Drop any queued write first, or it would rewrite the file we delete
-    store.cancelPendingSave();
-    await window.api.clearResults(state.folderPath);
+    // Cleared before the await, not after: the effect that re-triggers scoring
+    // watches folderPath, which a rescan does not change, so this is the only
+    // thing that lets an image the walk has just found be scored.
     scoringTriggeredRef.current = null;
-    store.openFolder(state.folderPath);
+    void store.rescanFolder();
   }, [state.folderPath, store]);
 
   // Listen for Cmd+O from menu (only available in Electron via contextBridge)
@@ -437,24 +461,9 @@ function App(): React.JSX.Element {
         case 'toggle-af-point':
           overlayActionsRef.current.toggleAfPoint();
           break;
-        case 'clean-up-folder': {
-          const folder = stateRef.current.folderPath;
-          if (!folder) break;
-          void (async () => {
-            try {
-              // Flush first: a queued write would otherwise land after the
-              // clean-up and restore the very records it just removed.
-              storeRef.current.cancelPendingSave();
-              const result = await window.api.cleanUpFolder(folder);
-              if (!result.cancelled && result.entriesRemoved > 0) {
-                storeRef.current.pruneLoadedResults();
-              }
-            } catch {
-              // The dialog in the main process already reported anything useful.
-            }
-          })();
-          break;
-        }
+        // No 'clean-up-folder' case, and no member for it in MENU_COMMANDS
+        // either: Rescan prunes orphaned records and thumbnails itself now, and
+        // says what it removed in the toolbar rather than in a dialog.
       }
     });
     return () => {
@@ -636,6 +645,7 @@ function App(): React.JSX.Element {
           onGroupingThresholdChange={store.setGroupingThresholdMs}
           scoringProgress={scoringProgress}
           thumbnailProgress={state.thumbnailProgress}
+          status={state.status}
           viewLayout={viewLayout}
           onSetViewLayout={setViewLayout}
           onExecute={handleOpenExecute}
@@ -711,6 +721,7 @@ function App(): React.JSX.Element {
           y={contextMenuAt.y}
           count={store.selectionTargets.length}
           rating={sharedRating(store.selectionTargets, state.ratings)}
+          canReveal={revealPath !== null}
           onAction={handleContextAction}
           onClose={handleCloseContextMenu}
         />

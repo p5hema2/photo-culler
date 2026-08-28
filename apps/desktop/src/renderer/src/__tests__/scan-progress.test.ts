@@ -58,7 +58,6 @@ beforeEach(() => {
     scanFolder,
     loadResults,
     saveResults: vi.fn(async () => undefined),
-    clearResults: vi.fn(async () => undefined),
     getSession: vi.fn(async () => ({})),
     setSession: vi.fn(async () => undefined),
     loadThumbCache: vi.fn(async () => null),

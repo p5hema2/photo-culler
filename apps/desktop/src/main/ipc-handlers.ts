@@ -1,4 +1,4 @@
-import { app, ipcMain, dialog } from 'electron';
+import { app, ipcMain, dialog, shell } from 'electron';
 import {
   writeFile,
   readFile,
@@ -15,6 +15,7 @@ import path from 'node:path';
 import { IPC_CHANNELS } from '@photo-culler/types';
 import type {
   FileOpResult,
+  PruneResult,
   RotateDirection,
   RotateResult,
   ScanProgress,
@@ -449,6 +450,17 @@ async function writeResultsFile(folderPath: string, data: string): Promise<void>
 }
 
 /**
+ * Forget a write queued for one results file, by absolute file path.
+ *
+ * Deleting the map entry would not do it: a write already in flight holds the
+ * queue object directly and would go on to drain whatever `pending` still held.
+ */
+function dropQueuedWrite(resultsFilePath: string): void {
+  const queue = writeQueues.get(resultsFilePath);
+  if (queue) queue.pending = null;
+}
+
+/**
  * Leading bytes read while looking for an embedded preview.
  *
  * The MPF index lives in an APP2 segment near the front of a camera JPEG —
@@ -608,32 +620,6 @@ export function registerIpcHandlers(): void {
     return readResultsFile(folderPath);
   });
 
-  ipcMain.handle(IPC_CHANNELS.CLEAR_RESULTS, async (_event, folderPath: string) => {
-    // Rescan means "forget everything below here", so every folder in the tree
-    // loses its file — not only the one the user picked.
-    const directories = await imageDirectories(folderPath);
-    for (const dir of directories.slice(1)) {
-      for (const name of [RESULTS_FILENAME, LEGACY_RESULTS_FILENAME]) {
-        await unlinkQuiet(path.join(dir, name));
-      }
-    }
-
-    // Drop a queued write before unlinking, otherwise the queue drains after
-    // the delete and writes the data straight back. Deleting the map entry
-    // would not help — an in-flight write holds the queue object directly.
-    const queue = writeQueues.get(path.join(folderPath, RESULTS_FILENAME));
-    if (queue) queue.pending = null;
-
-    // Remove both names so a rescan cannot be undone by a lingering legacy file
-    for (const name of [RESULTS_FILENAME, LEGACY_RESULTS_FILENAME]) {
-      try {
-        await unlink(path.join(folderPath, name));
-      } catch (err) {
-        if (!isEnoent(err)) throw err;
-      }
-    }
-  });
-
   ipcMain.handle(IPC_CHANNELS.READ_DETAILED_METADATA, async (_event, filePath: string) => {
     return readDetailedMetadata(filePath);
   });
@@ -666,60 +652,35 @@ export function registerIpcHandlers(): void {
     return total;
   });
 
-  ipcMain.handle(IPC_CHANNELS.CLEAN_UP_FOLDER, async (_event, folderPath: string) => {
-    const plan = await planCleanUp(folderPath);
-    const thumbCount = plan.thumbs.length;
-    const legacyCount = plan.legacyCacheEntries.length;
-    const entryCount = plan.results.reduce((sum, r) => sum + r.names.length, 0);
+  /**
+   * Remove what is orphaned below `folderPath` — nothing more.
+   *
+   * The step of Rescan that replaced both `Clean Up Folder…` and the wholesale
+   * results-file deletion Rescan used to do. No dialog: every entry it touches
+   * describes an image that is no longer on disk, so there is nothing to weigh
+   * up, and a folder of 21 851 photos should not have its quality scores thrown
+   * away for the sake of picking up a handful of new files.
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.PRUNE_FOLDER,
+    async (_event, folderPath: string): Promise<PruneResult> => {
+      const plan = await planCleanUp(folderPath);
 
-    if (thumbCount === 0 && legacyCount === 0 && entryCount === 0) {
-      await dialog.showMessageBox({
-        type: 'info',
-        title: 'Clean Up',
-        message: 'Nothing to clean up',
-        detail:
-          `Scanned ${plan.directoriesScanned} folder(s). Every cached thumbnail and ` +
-          'saved record still has its image.',
-        buttons: ['OK'],
-      });
-      return { thumbsRemoved: 0, legacyRemoved: 0, entriesRemoved: 0, cancelled: false };
-    }
+      // Pruning used to be its own menu command; it is on F5 now, which is what
+      // makes this load-bearing. A debounced write queued for ANY folder in the
+      // tree drains after `applyCleanUp` and writes back the records it just
+      // removed — and the old code looked up exactly one queue key, the root's,
+      // so every subfolder's orphans came straight back.
+      //
+      // Only the files the plan actually names, though: a queued write for a
+      // folder with no orphans is somebody's fresh quality score, and dropping
+      // it to be thorough would lose real work.
+      for (const { file } of plan.results) dropQueuedWrite(file);
 
-    // Removing saved records discards quality scores for those images. Show the
-    // count and let the user decide before touching disk.
-    const detail = [
-      `Scanned ${plan.directoriesScanned} folder(s).`,
-      '',
-      `${thumbCount} cached thumbnail(s) whose image is gone`,
-      // A single legacy entry can be a whole `v2/` directory holding thousands
-      // of thumbnails, so it gets its own line instead of inflating the count
-      // above by one.
-      ...(legacyCount > 0
-        ? [`${legacyCount} cache item(s) left by an older thumbnail format`]
-        : []),
-      `${entryCount} saved record(s) whose image is gone`,
-      '',
-      'Records hold quality scores. Images themselves are never touched, and star ' +
-        'ratings and orientation live in the image files rather than in a record.',
-    ].join('\n');
-
-    const { response } = await dialog.showMessageBox({
-      type: 'warning',
-      title: 'Clean Up',
-      message: 'Remove orphaned thumbnails and records?',
-      detail,
-      buttons: ['Cancel', 'Remove'],
-      defaultId: 0,
-      cancelId: 0,
-    });
-
-    if (response !== 1) {
-      return { thumbsRemoved: 0, legacyRemoved: 0, entriesRemoved: 0, cancelled: true };
-    }
-
-    const result = await applyCleanUp(plan);
-    return { ...result, cancelled: false };
-  });
+      const removed = await applyCleanUp(plan);
+      return { ...removed, directoriesScanned: plan.directoriesScanned };
+    },
+  );
 
   ipcMain.handle(IPC_CHANNELS.GET_APP_VERSION, async () => {
     return app.getVersion();
@@ -758,6 +719,35 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.WRITE_RATING,
     async (_event, filePath: string, rating: number): Promise<RatingWriteResult> => {
       return withFileLock(filePath, () => writeRating(filePath, rating));
+    },
+  );
+
+  /**
+   * Show one image in the OS file manager.
+   *
+   * Not under `withFileLock`: nothing here opens the file, and the file manager
+   * outlives the call — holding the lock for it would queue the next thumbnail
+   * read behind an Explorer window the user may leave open all day.
+   *
+   * `shell.showItemInFolder` returns nothing and is a silent no-op for a path
+   * that does not exist, so the `stat` is the only way this can answer "the file
+   * is gone" rather than looking exactly like a success. The absolute-path check
+   * is the same guard the rating write has: a path from the renderer is input,
+   * and this one is handed to the shell.
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.REVEAL_IN_FOLDER,
+    async (_event, filePath: string): Promise<{ ok: boolean; error?: string }> => {
+      if (!path.isAbsolute(filePath)) {
+        return { ok: false, error: 'Unsupported file path' };
+      }
+      try {
+        await stat(filePath);
+      } catch {
+        return { ok: false, error: 'File no longer exists' };
+      }
+      shell.showItemInFolder(filePath);
+      return { ok: true };
     },
   );
 

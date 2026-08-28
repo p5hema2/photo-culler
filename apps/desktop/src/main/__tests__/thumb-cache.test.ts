@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'node:path';
 
 const {
   mockUnlink,
@@ -434,5 +435,131 @@ describe('applyCleanUp', () => {
 
     const written = JSON.parse(String(mockWriteFile.mock.calls[0]![1]));
     expect(Object.keys(written.images)).toEqual(['added-since.jpg']);
+  });
+});
+
+/**
+ * The PRUNE_FOLDER handler — the step of Rescan that replaced both
+ * `Clean Up Folder…` and the results-file deletion Rescan used to do.
+ *
+ * `planCleanUp` and `applyCleanUp` above are unchanged; what these cover is the
+ * composition, and above all the write queue. Pruning used to be a menu command
+ * nobody ran; it is on F5 now, and a queued write draining after it puts every
+ * record it removed straight back.
+ */
+describe('the prune step of Rescan', () => {
+  /** Serve readdir both ways and readFile from a small in-memory tree. */
+  function mountTree(
+    tree: Record<string, string[]>,
+    dirs: ReadonlySet<string>,
+    files: Record<string, string>,
+  ) {
+    mockReaddir.mockImplementation(readdirFrom(tree, dirs));
+    mockReadFile.mockImplementation(async (filePath: string) => {
+      const content = files[norm(filePath)];
+      if (content === undefined) throw new Error('ENOENT');
+      return content;
+    });
+  }
+
+  function records(names: string[]): string {
+    return JSON.stringify({
+      version: 1,
+      folderPath: '/photos',
+      updatedAt: 'x',
+      images: Object.fromEntries(names.map((n) => [n, { qualityScore: 70 }])),
+    });
+  }
+
+  /**
+   * Make writeFile hang on its first call so a save is genuinely IN FLIGHT, and
+   * record every payload written. The queue object is reachable only through the
+   * module's map, so an in-flight write is the one state in which `pending`
+   * matters at all.
+   */
+  function captureWrites(): { written: string[]; release: () => void } {
+    const written: string[] = [];
+    let release = (): void => {};
+    mockWriteFile.mockImplementation((_target: unknown, data: unknown) => {
+      written.push(String(data));
+      if (written.length > 1) return Promise.resolve(undefined);
+      return new Promise<void>((resolve) => {
+        release = () => resolve();
+      });
+    });
+    return { written, release: () => release() };
+  }
+
+  it('reports what it removed, with no dialog to cancel it', async () => {
+    mountTree({ '/photos': ['a.jpg', '.photo-culler-results.json'] }, new Set(), {
+      '/photos/.photo-culler-results.json': records(['a.jpg', 'gone.jpg']),
+    });
+    mockWriteFile.mockResolvedValue(undefined);
+
+    const result = (await handlerFor('fs:prune-folder')({}, '/photos' as never)) as {
+      entriesRemoved: number;
+      directoriesScanned: number;
+    };
+
+    expect(result.entriesRemoved).toBe(1);
+    expect(result.directoriesScanned).toBe(1);
+    // Nothing was asked. The old handler's confirmation lived on showMessageBox,
+    // which this suite's electron mock does not even provide.
+    expect(result).not.toHaveProperty('cancelled');
+  });
+
+  it('drops a queued write for a SUBFOLDER, not only for the root', async () => {
+    // The regression this handler was written around: CLEAR_RESULTS looked up
+    // exactly one queue key, the root's, so a write queued for a subfolder
+    // drained after the prune and resurrected every record it had just removed.
+    const sub = path.join('/photos', 'sub-a');
+    mountTree(
+      {
+        '/photos': ['sub-a'],
+        '/photos/sub-a': ['s1.jpg', '.photo-culler-results.json'],
+      },
+      new Set(['/photos/sub-a']),
+      { '/photos/sub-a/.photo-culler-results.json': records(['s1.jpg', 'gone.jpg']) },
+    );
+    const { written, release } = captureWrites();
+
+    const save = handlerFor('fs:save-results');
+    const inFlight = save({}, sub as never, 'IN-FLIGHT' as never);
+    // Queued behind it, and projected over the records as they were BEFORE the
+    // prune — orphan included.
+    void save({}, sub as never, 'QUEUED' as never);
+
+    await handlerFor('fs:prune-folder')({}, '/photos' as never);
+    release();
+    await inFlight;
+
+    expect(written).not.toContain('QUEUED');
+    const pruned = JSON.parse(written[1]!);
+    expect(Object.keys(pruned.images)).toEqual(['s1.jpg']);
+  });
+
+  it('leaves a queued write alone when that folder had nothing orphaned', async () => {
+    // The other half of the rule: dropping every queue in the tree to be
+    // thorough would throw away somebody's fresh quality score.
+    const sub = path.join('/photos', 'sub-b');
+    mountTree(
+      {
+        '/photos': ['sub-b'],
+        '/photos/sub-b': ['s1.jpg', '.photo-culler-results.json'],
+      },
+      new Set(['/photos/sub-b']),
+      { '/photos/sub-b/.photo-culler-results.json': records(['s1.jpg']) },
+    );
+    const { written, release } = captureWrites();
+
+    const save = handlerFor('fs:save-results');
+    const inFlight = save({}, sub as never, 'IN-FLIGHT' as never);
+    void save({}, sub as never, 'QUEUED' as never);
+
+    await handlerFor('fs:prune-folder')({}, '/photos' as never);
+    release();
+    await inFlight;
+
+    expect(written).toEqual(['IN-FLIGHT', 'QUEUED']);
   });
 });

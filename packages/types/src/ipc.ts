@@ -8,7 +8,6 @@ export const IPC_CHANNELS = {
   SCAN_PROGRESS: 'fs:scan-progress',
   SAVE_RESULTS: 'fs:save-results',
   LOAD_RESULTS: 'fs:load-results',
-  CLEAR_RESULTS: 'fs:clear-results',
   GET_SESSION: 'store:get-session',
   SET_SESSION: 'store:set-session',
   DELETE_FILES: 'fs:delete-files',
@@ -18,7 +17,8 @@ export const IPC_CHANNELS = {
   SAVE_THUMB_CACHE: 'fs:save-thumb-cache',
   ROTATE_IMAGE: 'fs:rotate-image',
   WRITE_RATING: 'fs:write-rating',
-  CLEAN_UP_FOLDER: 'fs:clean-up-folder',
+  REVEAL_IN_FOLDER: 'shell:reveal-in-folder',
+  PRUNE_FOLDER: 'fs:prune-folder',
   READ_DETAILED_METADATA: 'meta:read-detailed',
   COUNT_THUMB_CACHE: 'fs:count-thumb-cache',
   GET_APP_VERSION: 'app:get-version',
@@ -39,7 +39,8 @@ export const MENU_COMMANDS = [
   'thumbnail:large',
   'toggle-info-panel',
   'show-shortcuts',
-  'clean-up-folder',
+  // No 'clean-up-folder': Rescan prunes now, so there is nothing left for a
+  // separate command to do — see PruneResult.
   'toggle-focus-peaking',
   'toggle-clipping',
   'toggle-af-point',
@@ -219,6 +220,27 @@ export interface RotateResult {
   error?: string;
 }
 
+/**
+ * What a prune actually removed.
+ *
+ * There is no `cancelled` and no dialog behind this: pruning is a step of Rescan
+ * now rather than a menu command of its own, and every count below is of
+ * something whose image is already gone from disk — so there is nothing for the
+ * user to weigh up. The counts exist to be reported afterwards, in a line that
+ * expires on its own.
+ *
+ * `legacyRemoved` stays apart from `thumbsRemoved` because one legacy entry can
+ * be a whole `v2/` directory holding thousands of thumbnails, and averaging that
+ * into a per-file count would understate it by three orders of magnitude.
+ */
+export interface PruneResult {
+  thumbsRemoved: number;
+  legacyRemoved: number;
+  entriesRemoved: number;
+  /** Directories walked, so a caller can say "nothing stale" and mean it. */
+  directoriesScanned: number;
+}
+
 export interface ResultsFile {
   /** Schema version */
   version: 1;
@@ -249,8 +271,6 @@ export interface ElectronAPI {
   removeScanProgressListener: () => void;
   saveResults: (folderPath: string, data: string) => Promise<void>;
   loadResults: (folderPath: string) => Promise<string | null>;
-  /** Delete the results file for a folder (used by Rescan). */
-  clearResults: (folderPath: string) => Promise<void>;
   getSession: () => Promise<SessionConfig>;
   setSession: (config: Partial<SessionConfig>) => Promise<void>;
   /** Permanently delete files. There is no trash path — deletion is final. */
@@ -298,6 +318,18 @@ export interface ElectronAPI {
    */
   writeRating: (filePath: string, rating: number) => Promise<{ ok: boolean; error?: string }>;
   /**
+   * Open the OS file manager with one image selected.
+   *
+   * ONE path, not a batch: the platform call selects a single item, and forty of
+   * them would be forty Explorer windows.
+   *
+   * A result, even though `shell.showItemInFolder` returns nothing and does
+   * nothing at all for a path that is not there — so from this side a success
+   * and a vanished file are indistinguishable unless main checks first. It does,
+   * and reports what it found.
+   */
+  revealInFolder: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
+  /**
    * Deep metadata for one image, read on demand via exiftool in the main
    * process. Resolves null when exiftool is unavailable or the file yields
    * nothing usable.
@@ -306,19 +338,20 @@ export interface ElectronAPI {
   /**
    * Remove cached thumbnails and saved records whose image no longer exists,
    * anywhere below `folderPath`, plus anything left over from an older
-   * thumbnail format. Asks the user to confirm first, because records carry
-   * quality scores.
+   * thumbnail format.
    *
-   * `legacyRemoved` counts old-format cache items, which are reported apart
-   * from `thumbsRemoved` because one of them can be a directory holding
-   * thousands of thumbnails.
+   * Silent by design. This used to be `Clean Up Folder…`, a menu command with a
+   * confirmation dialog, because it was the only thing that ever deleted a
+   * record and a record could hold the only copy of a quality score. It is now
+   * a step of Rescan, and it deletes nothing whose image still exists — a
+   * confirmation would be asking the user to approve tidying up after files
+   * they themselves removed.
+   *
+   * Never touches an image, and never touches a record whose image is present:
+   * quality scores and ratings survive a prune untouched, which is the whole
+   * difference from the results-file deletion Rescan used to do.
    */
-  cleanUpFolder: (folderPath: string) => Promise<{
-    thumbsRemoved: number;
-    legacyRemoved: number;
-    entriesRemoved: number;
-    cancelled: boolean;
-  }>;
+  pruneFolder: (folderPath: string) => Promise<PruneResult>;
   /** Version of the running app, stamped from the git tag at build time. */
   /**
    * How many images below `folderPath` already have a current-format thumbnail

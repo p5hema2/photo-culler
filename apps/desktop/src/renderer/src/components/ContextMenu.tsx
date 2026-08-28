@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { RATING_VALUES } from '@photo-culler/image-utils/rating';
+import { SHORTCUTS } from '../hooks/useKeyboardNav';
 
 /**
  * The right-click menu.
@@ -13,13 +14,36 @@ import { RATING_VALUES } from '@photo-culler/image-utils/rating';
  * Everything the menu does acts on the selection, which the caller has already
  * settled: PhotoGrid dispatches a `'context'` click before opening us, so a
  * right click outside the selection has replaced it with the clicked image and
- * one inside it has left it alone.
+ * one inside it has left it alone. `reveal` is the one exception — see there.
+ *
+ * The shortcut printed beside an item comes from `SHORTCUTS`, the table
+ * `useKeyboardNav` binds from, rather than from a copy here: a copy reads the
+ * same on the day it is written and lies the first time a binding moves.
  */
 
 export type ContextMenuAction =
   | { kind: 'rate'; rating: number }
   | { kind: 'rotate'; direction: 'cw' | 'ccw' }
+  /**
+   * Show the FOCUSED image in the OS file manager — not the selection, which
+   * every other item spends. The platform call takes one path, and forty
+   * Explorer windows is not what anyone means by "reveal".
+   */
+  | { kind: 'reveal' }
   | { kind: 'delete' };
+
+/**
+ * What the file manager is called where the app is running.
+ *
+ * Taken from the user agent because that is the only platform answer the
+ * renderer already has: the alternative is a round trip to main for a word.
+ * Exported for the test, and defaulted so callers do not repeat `navigator`.
+ */
+export function revealLabel(userAgent: string = navigator.userAgent): string {
+  if (/Mac OS X|Macintosh/.test(userAgent)) return 'Reveal in Finder';
+  if (/Windows/.test(userAgent)) return 'Reveal in Explorer';
+  return 'Reveal in file manager';
+}
 
 export interface Point {
   x: number;
@@ -101,10 +125,31 @@ export function sharedRating(
   return shared ?? 0;
 }
 
+/**
+ * The one image the reveal item acts on: the cursor, and only while the user can
+ * see it.
+ *
+ * Deliberately takes no selection. Every other item spends the batch; this one
+ * cannot, because the platform call selects a single path. The visibility check
+ * is the batch's own rule (`selectionTargets` in lib/selection) applied to the
+ * cursor alone: focus recovers lazily, so it can still name a photo a filter or
+ * a collapsed folder has hidden, and no menu item may name one of those.
+ */
+export function revealTarget(
+  focusedPath: string | null,
+  visibleOrder: readonly string[],
+): string | null {
+  if (focusedPath === null) return null;
+  return visibleOrder.includes(focusedPath) ? focusedPath : null;
+}
+
 interface Entry {
   key: string;
   label: string;
+  /** The current value, shown at the right — the Rating row's stars. */
   hint?: string;
+  /** The keyboard shortcut for this item, from SHORTCUTS. */
+  shortcut?: string;
   danger?: boolean;
   /** Rule above the item — the destructive one is set apart from the rest. */
   separator?: boolean;
@@ -121,6 +166,14 @@ function ratingLabel(value: number): string {
   return `${value} star${value === 1 ? '' : 's'}`;
 }
 
+/**
+ * The key that sets this rating, looked up rather than assumed to be the digit:
+ * `SHORTCUTS` is the binding, and this menu only prints it.
+ */
+function ratingShortcut(value: number): string | undefined {
+  return SHORTCUTS.rating.find((binding) => binding.value === value)?.key;
+}
+
 interface ContextMenuProps {
   /** Viewport coordinates of the click that opened the menu. */
   x: number;
@@ -128,6 +181,12 @@ interface ContextMenuProps {
   /** How many images the menu acts on. */
   count: number;
   rating: number | 'mixed';
+  /**
+   * Whether there is a focused image to reveal. False leaves the item out
+   * entirely rather than showing one that would quietly do nothing — the cursor
+   * can legitimately be off screen while the selection is not.
+   */
+  canReveal: boolean;
   onAction: (action: ContextMenuAction) => void;
   onClose: () => void;
 }
@@ -137,6 +196,7 @@ export function ContextMenu({
   y,
   count,
   rating,
+  canReveal,
   onAction,
   onClose,
 }: ContextMenuProps): React.JSX.Element {
@@ -164,19 +224,24 @@ export function ContextMenu({
     {
       key: 'rotate-cw',
       label: 'Rotate clockwise',
-      hint: 'Alt + →',
+      shortcut: SHORTCUTS.rotate.cw.label,
       action: { kind: 'rotate', direction: 'cw' },
     },
     {
       key: 'rotate-ccw',
       label: 'Rotate counter-clockwise',
-      hint: 'Alt + ←',
+      shortcut: SHORTCUTS.rotate.ccw.label,
       action: { kind: 'rotate', direction: 'ccw' },
     },
+    // No shortcut: revealing has no key binding, and inventing a label for one
+    // that does not exist is worse than leaving the column empty.
+    ...(canReveal
+      ? [{ key: 'reveal', label: revealLabel(), action: { kind: 'reveal' } } satisfies Entry]
+      : []),
     {
       key: 'delete',
       label: `Delete ${count} image${count === 1 ? '' : 's'}`,
-      hint: 'Del',
+      shortcut: SHORTCUTS.delete.label,
       danger: true,
       separator: true,
       action: { kind: 'delete' },
@@ -430,6 +495,14 @@ export function ContextMenu({
                 {entry.hint}
               </span>
             )}
+            {entry.shortcut && (
+              <span
+                className="text-[10px] text-gray-500 font-mono whitespace-nowrap"
+                data-testid={`context-menu-${entry.key}-shortcut`}
+              >
+                {entry.shortcut}
+              </span>
+            )}
             {entry.submenu && <span className="text-gray-500">{'▸'}</span>}
           </button>
         </Fragment>
@@ -463,6 +536,14 @@ export function ContextMenu({
             >
               <span className="w-3 text-amber-400">{rating === value ? '✓' : ''}</span>
               <span className="flex-1">{ratingLabel(value)}</span>
+              {ratingShortcut(value) && (
+                <span
+                  className="text-[10px] text-gray-500 font-mono whitespace-nowrap"
+                  data-testid={`context-menu-rate-${value}-shortcut`}
+                >
+                  {ratingShortcut(value)}
+                </span>
+              )}
             </button>
           ))}
         </div>

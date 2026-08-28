@@ -111,8 +111,8 @@ function buildMenu(): void {
         commandItem('Rescan Folder', 'rescan', 'F5'),
         { type: 'separator' },
         commandItem('Execute…', 'execute', 'CmdOrCtrl+S'),
-        { type: 'separator' },
-        commandItem('Clean Up Folder…', 'clean-up-folder'),
+        // No 'Clean Up Folder…': Rescan prunes orphaned records and thumbnails
+        // itself now, so the only thing this item still did was ask a question.
         { type: 'separator' },
         { role: 'quit' },
       ],

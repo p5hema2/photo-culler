@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+// The bindings themselves, from the hook that implements them. This panel and
+// the context menu were both carrying their own copies of these labels, which is
+// two places for them to drift from the keys actually being listened for.
+import { SHORTCUTS } from '../hooks/useKeyboardNav';
 
 interface ShortcutsTutorialProps {
   isOpen: boolean;
@@ -46,11 +50,19 @@ const SECTIONS: ShortcutSection[] = [
   {
     title: 'Actions',
     shortcuts: [
-      { keys: 'Alt + \u2192', description: 'Rotate the selection clockwise' },
-      { keys: 'Alt + \u2190', description: 'Rotate the selection counter-clockwise' },
-      { keys: 'Backspace / Delete', description: 'Delete the selection (permanent)' },
+      { keys: SHORTCUTS.rotate.cw.label, description: 'Rotate the selection clockwise' },
+      { keys: SHORTCUTS.rotate.ccw.label, description: 'Rotate the selection counter-clockwise' },
+      {
+        // Both keys, unlike the context menu, which has room for one \u2014 hence
+        // `keys` rather than `label`.
+        keys: SHORTCUTS.delete.keys.join(' / '),
+        description: 'Delete the selection (permanent)',
+      },
       { keys: '\u2318/Ctrl + O', description: 'Open folder' },
-      { keys: 'F5', description: 'Rescan folder (discards cached scores)' },
+      {
+        keys: 'F5',
+        description: 'Rescan folder \u2014 new images in, missing ones out, scores kept',
+      },
       { keys: '\u2318/Ctrl + S', description: 'Execute \u2014 delete low-rated images' },
     ],
   },

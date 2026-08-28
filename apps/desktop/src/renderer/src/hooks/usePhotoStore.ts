@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type {
   ImageFileInfo,
+  PruneResult,
   ResultsFile,
   QualitySubscores,
   RotateDirection,
@@ -108,6 +109,15 @@ export interface PhotoState {
    */
   thumbnailProgress: { completed: number; total: number };
   /**
+   * A one-line note for the toolbar — what the last Rescan did — or null.
+   *
+   * It sits beside `scoringProgress` and `thumbnailProgress` and reads like
+   * them, but it is a RESULT rather than a pair of counters, so nothing about it
+   * says when it has stopped being interesting: hence `showStatus`' timer. A
+   * line that stayed would be read as a condition rather than as news.
+   */
+  status: string | null;
+  /**
    * Bumped once per rotation that has landed on disk.
    *
    * A rotation is not renderer state any more — it is the image file's EXIF
@@ -144,8 +154,68 @@ const initialState: PhotoState = {
   qualitySubscores: {},
   scoringProgress: { completed: 0, total: 0 },
   thumbnailProgress: { completed: 0, total: 0 },
+  status: null,
   fileRevision: 0,
 };
+
+/** How long the Rescan summary stays in the toolbar before clearing itself. */
+const STATUS_TTL_MS = 6000;
+
+/** Everything one Rescan changed, for the single line it reports afterwards. */
+export interface RescanCounts {
+  /** Images the walk found that were not in the list before. */
+  added: number;
+  /** Images that were in the list and are no longer on disk. */
+  removed: number;
+  /** Saved records dropped because their image is gone. */
+  recordsRemoved: number;
+  /** Cached thumbnails dropped, past-format cache leftovers included. */
+  thumbsRemoved: number;
+}
+
+function plural(count: number, word: string): string {
+  return count === 1 ? word : `${word}s`;
+}
+
+/**
+ * The Rescan summary, phrased for the toolbar's row of readouts.
+ *
+ * Zero counts are left out rather than printed as zero — the line is news, and
+ * "0 new, 0 gone" is not. When there is no news it still says so once, because
+ * an F5 that reported nothing would be indistinguishable from an F5 that did
+ * nothing.
+ */
+export function formatRescanStatus(counts: RescanCounts): string {
+  const parts: string[] = [];
+  if (counts.added > 0) parts.push(`${counts.added} new`);
+  if (counts.removed > 0) parts.push(`${counts.removed} gone`);
+  if (counts.recordsRemoved > 0) {
+    parts.push(`${counts.recordsRemoved} stale ${plural(counts.recordsRemoved, 'record')} removed`);
+  }
+  if (counts.thumbsRemoved > 0) {
+    parts.push(
+      `${counts.thumbsRemoved} stale ${plural(counts.thumbsRemoved, 'thumbnail')} removed`,
+    );
+  }
+  return parts.length === 0 ? 'Rescan: nothing to update' : `Rescan: ${parts.join(', ')}`;
+}
+
+/**
+ * What a folder load keeps from the session it replaces.
+ *
+ * 'open' is a different tree, or the same one opened afresh: nothing carries
+ * over and the cursor lands on the first image. 'rescan' re-walks the tree the
+ * user is already in, so the cursor, the batch and the rating filter have to
+ * survive it — the point of F5 is to take up new files, not to send somebody
+ * back to image 1 of 21 851.
+ */
+type LoadMode = 'open' | 'rescan';
+
+/** What a re-walk changed about the image list. */
+interface LoadOutcome {
+  added: number;
+  removed: number;
+}
 
 /** What Execute deletes unless the user widens it: one-star images only. */
 export const DEFAULT_DELETE_RANGE: RatingRange = { min: 1, max: 1 };
@@ -296,6 +366,12 @@ export interface PhotoStoreAPI {
   selectionTargets: string[];
   thumbnailWorker: ReturnType<typeof useThumbnailWorker>;
   openFolder: (folderPath: string) => Promise<void>;
+  /**
+   * Re-walk the open folder: take up new images, drop ones that are gone, prune
+   * what is orphaned, and keep everything else. Reports what it did through
+   * `state.status`.
+   */
+  rescanFolder: () => Promise<void>;
   /** Rate one image, 0-5, where 0 clears the rating. Writes to the file. */
   setRating: (imagePath: string, rating: number) => void;
   /** Rate every image in `selectionTargets`, 0-5. One file write per image. */
@@ -340,12 +416,6 @@ export interface PhotoStoreAPI {
    * surfaces in `state.error`, it cannot leave state and the file disagreeing.
    */
   rotateImage: (imagePath: string, direction: RotateDirection) => void;
-  cancelPendingSave: () => void;
-  /**
-   * Drop in-memory records for images that are no longer on disk, mirroring
-   * what the main process just removed from the files.
-   */
-  pruneLoadedResults: () => void;
 }
 
 export function usePhotoStore(): PhotoStoreAPI {
@@ -379,6 +449,29 @@ export function usePhotoStore(): PhotoStoreAPI {
   /** Folders whose on-disk file no longer matches state. */
   const dirtyFoldersRef = useRef<Set<string>>(new Set());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * True from the start of a Rescan until its re-walk has finished.
+   *
+   * Rescan is now the only thing that deletes records, which makes a debounced
+   * write landing inside it dangerous: `writeFolder` projects state over
+   * `resultsRef`, and until the re-walk has reloaded the files from disk that
+   * still holds the entries the prune has just removed — so the write would put
+   * every one of them straight back.
+   *
+   * Held rather than dropped: `releaseHeldSave` schedules the folders again
+   * afterwards, projected over the RELOADED results, which covers the window
+   * between the re-walk finishing and the hold coming off. Earlier than that a
+   * score is lost anyway, because the re-walk rebuilds `qualityScores` from what
+   * is on disk — the same trade `cancelPendingSave` documents, and the reason
+   * the scoring pass simply recomputes it.
+   *
+   * A COUNT rather than a flag: two F5s inside one prune window are enough to
+   * overlap, and the first to give up would otherwise take the hold off while the
+   * second is still mid-prune.
+   */
+  const rescanHoldsRef = useRef(0);
+  /** Clears the toolbar status line. See showStatus. */
+  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const stateRef = useRef(state);
   /**
@@ -514,6 +607,28 @@ export function usePhotoStore(): PhotoStoreAPI {
     for (const folderPath of dirty) writeFolder(folderPath);
   }, [writeFolder]);
 
+  /** Start (or restart) the debounce that writes the dirty folders. */
+  const scheduleSave = useCallback(() => {
+    // A rescan is deleting records right now; see rescanHoldsRef. Checked here,
+    // at schedule time, and that is enough only because `rescanFolder` raises the
+    // hold before its first await and `cancelPendingSave` clears any timer
+    // already running — so no timer can outlive the moment the hold goes up.
+    if (rescanHoldsRef.current > 0) return;
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      // The previous tree's scoring worker keeps delivering after a folder
+      // switch. Writing its queued save now would target the new tree's files
+      // with the old tree's data.
+      if (pendingEpochRef.current !== openEpochRef.current) {
+        dirtyFoldersRef.current.clear();
+        return;
+      }
+      writeDirtyFolders();
+    }, 500);
+  }, [writeDirtyFolders]);
+
   /**
    * Note that a folder changed and schedule a write.
    *
@@ -526,21 +641,39 @@ export function usePhotoStore(): PhotoStoreAPI {
       if (!folderPath) return;
       dirtyFoldersRef.current.add(folderPath);
       pendingEpochRef.current = openEpochRef.current;
-
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => {
-        saveTimerRef.current = null;
-        // The previous tree's scoring worker keeps delivering after a folder
-        // switch. Writing its queued save now would target the new tree's files
-        // with the old tree's data.
-        if (pendingEpochRef.current !== openEpochRef.current) {
-          dirtyFoldersRef.current.clear();
-          return;
-        }
-        writeDirtyFolders();
-      }, 500);
+      scheduleSave();
     },
-    [writeDirtyFolders],
+    [scheduleSave],
+  );
+
+  /**
+   * Let held writes through again after a rescan.
+   *
+   * `keep` is false when the rescan did NOT finish in the tree it started in —
+   * another folder was opened over it, or its walk failed. The marks then name
+   * folders this store no longer holds results for, so writing them would
+   * project an empty map over real files: precisely what the epoch check exists
+   * to prevent, and precisely what re-stamping the epoch below would defeat.
+   */
+  const releaseHeldSave = useCallback(
+    (keep: boolean) => {
+      rescanHoldsRef.current = Math.max(0, rescanHoldsRef.current - 1);
+      // An overlapping rescan is still deleting records; it owns the release.
+      if (rescanHoldsRef.current > 0) return;
+
+      if (!keep) {
+        dirtyFoldersRef.current.clear();
+        return;
+      }
+      if (dirtyFoldersRef.current.size === 0) return;
+      // Re-stamped deliberately: those folders were marked dirty before the
+      // rescan bumped the epoch, and the check it feeds exists to stop one
+      // TREE's data landing in another's file. A rescan that got this far stayed
+      // in its own tree, so its own bump must not be read as a folder switch.
+      pendingEpochRef.current = openEpochRef.current;
+      scheduleSave();
+    },
+    [scheduleSave],
   );
 
   /**
@@ -558,8 +691,13 @@ export function usePhotoStore(): PhotoStoreAPI {
 
   /**
    * Drop queued changes without writing them.
-   * Rescan deletes the results files on purpose — a pending debounced write
-   * would otherwise fire afterwards and restore the data we just discarded.
+   *
+   * Rescan's opening move. What is queued was projected over the results as they
+   * stood BEFORE the prune, orphaned entries and all, so it cannot be allowed to
+   * land after it — and flushing instead would not help, because
+   * `flushPendingSave` is fire-and-forget and would merely race the prune. The
+   * cost is at most one debounce window of quality scores, which the scoring pass
+   * recomputes precisely because they are then absent from the file.
    */
   const cancelPendingSave = useCallback(() => {
     if (saveTimerRef.current) {
@@ -600,21 +738,52 @@ export function usePhotoStore(): PhotoStoreAPI {
     [],
   );
 
-  /** Fire every queued rating write now, without waiting out the debounce. */
-  const flushRatingWrites = useCallback(() => {
+  /**
+   * Fire every queued rating write now, without waiting out the debounce.
+   *
+   * Awaitable, and Rescan is why: the image file is the authority for a rating
+   * and the re-walk reads it, so a rating still sitting out its debounce has to
+   * reach disk first. Otherwise the walk reads the old value, the write lands
+   * after it, and the screen and the file disagree with nothing able to say
+   * which is right. Callers that are merely tidying up (beforeunload) ignore the
+   * promise.
+   */
+  const flushRatingWrites = useCallback(async (): Promise<void> => {
     const pending = [...ratingWritesRef.current];
     ratingWritesRef.current.clear();
-    for (const [imagePath, entry] of pending) {
-      clearTimeout(entry.timer);
-      void persistRating(imagePath, entry.value, entry.revertTo);
-    }
+    await Promise.all(
+      pending.map(([imagePath, entry]) => {
+        clearTimeout(entry.timer);
+        return persistRating(imagePath, entry.value, entry.revertTo);
+      }),
+    );
   }, [persistRating]);
+
+  /**
+   * Show a line in the toolbar, and take it away again.
+   *
+   * The timer is what makes it a status rather than a condition: the readouts it
+   * sits next to are progress pairs that stop being shown when `completed`
+   * reaches `total`, and a summary has no such moment of its own.
+   */
+  const showStatus = useCallback((text: string) => {
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+    setState((prev) => ({ ...prev, status: text }));
+    statusTimerRef.current = setTimeout(() => {
+      statusTimerRef.current = null;
+      if (!mountedRef.current) return;
+      setState((prev) => ({ ...prev, status: null }));
+    }, STATUS_TTL_MS);
+  }, []);
 
   // Flush save on unmount
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
+      }
+      if (statusTimerRef.current) {
+        clearTimeout(statusTimerRef.current);
       }
     };
   }, []);
@@ -623,7 +792,7 @@ export function usePhotoStore(): PhotoStoreAPI {
   useEffect(() => {
     const handleBeforeUnload = (): void => {
       // Best-effort — the IPC calls fire but the page may unload first.
-      flushRatingWrites();
+      void flushRatingWrites();
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
@@ -634,45 +803,83 @@ export function usePhotoStore(): PhotoStoreAPI {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [writeDirtyFolders, flushRatingWrites]);
 
-  const openFolder = useCallback(
-    async (folderPath: string) => {
-      // Get the outgoing folder's last edits to disk, then retire its epoch so
-      // its still-running workers cannot write into the new folder's file.
-      // resultsRef is nulled for the duration of the load: state below is reset
-      // to empty and only repopulated after two awaited IPC round trips, and a
-      // save landing in that window would persist images: {}.
-      flushPendingSave();
+  /**
+   * Load a folder tree into state — the shared body of Open and Rescan.
+   *
+   * The two differ only in what survives, which `mode` decides; everything
+   * expensive about them (the walk, the results files, the thumbnail sweep) is
+   * identical, and the one release in which they were separate implementations is
+   * the one where Rescan drifted into deleting every results file in the tree.
+   *
+   * Resolves to what the walk changed, or null when it bailed — either a second
+   * load overtook this one, or the folder could not be read.
+   */
+  const loadFolder = useCallback(
+    async (folderPath: string, mode: LoadMode): Promise<LoadOutcome | null> => {
+      const rescan = mode === 'rescan';
+
+      // Opening a tree means leaving one: get its last edits to disk, then retire
+      // its epoch so its still-running workers cannot write into the new folder's
+      // file. A rescan stays where it is and has deliberately DROPPED its queued
+      // writes — flushing here would write the records the prune just removed
+      // straight back.
+      if (!rescan) flushPendingSave();
       openEpochRef.current += 1;
       const scanId = openEpochRef.current;
-      resultsRef.current = new Map();
-      // Nothing is on screen until the scan comes back, so the range a
-      // Shift-click could span is empty until App reports the new order — and
-      // so is the set that permits the fallback to the focused image.
-      visibleOrderRef.current = [];
-      setVisiblePathSet(EMPTY_PATH_SET);
-      // Both belong to the tree we are leaving: its ratings are gone from state
-      // and its buffered batches name images we no longer hold.
+      if (!rescan) {
+        // resultsRef is nulled for the duration of an open: state below is reset
+        // to empty and only repopulated after two awaited IPC round trips, and a
+        // save landing in that window would persist images: {}.
+        //
+        // A rescan must NOT do this, and the reason is subtle: its state keeps
+        // the image list, so `folderOf` still resolves and `markDirty` still
+        // fires, and a write inside that window would find an empty map and
+        // project images: {} over a real file. It keeps the loaded results
+        // instead, until the freshly read ones replace them below.
+        resultsRef.current = new Map();
+        // Nothing is on screen until the scan comes back, so the range a
+        // Shift-click could span is empty until App reports the new order — and
+        // so is the set that permits the fallback to the focused image.
+        visibleOrderRef.current = [];
+        setVisiblePathSet(EMPTY_PATH_SET);
+      }
+      // Ratings are back in the files' hands either way: a rescan awaited every
+      // queued write before getting here, and an open is leaving the tree those
+      // writes belonged to. Buffered batches name images of the scan being
+      // replaced.
       userRatedRef.current = new Set();
       metadataBufferRef.current = [];
       scanAppliedRef.current = null;
 
-      setState((prev) => ({
-        ...prev,
-        isLoading: true,
-        error: null,
-        folderPath,
-        images: [],
-        ratings: {},
-        focusedImageId: null,
-        selection: EMPTY_SELECTION.selection,
-        selectionAnchor: EMPTY_SELECTION.anchor,
-        qualityScores: {},
-        qualitySubscores: {},
-        filterRatingRange: FULL_RATING_RANGE,
-        scoringProgress: { completed: 0, total: 0 },
-        thumbnailProgress: { completed: 0, total: 0 },
-        scanProgress: { phase: 'walking', found: 0, completed: 0 },
-      }));
+      setState((prev) => {
+        const next: PhotoState = {
+          ...prev,
+          isLoading: true,
+          error: null,
+          folderPath,
+          scoringProgress: { completed: 0, total: 0 },
+          thumbnailProgress: { completed: 0, total: 0 },
+          scanProgress: { phase: 'walking', found: 0, completed: 0 },
+        };
+        // A rescan keeps the list, the ratings, the scores and the user's place on
+        // the way in. Keeping the images is not cosmetic: they ARE the visible
+        // order, and clearing them would have App report an empty order back,
+        // which reconciles the selection to nothing — the one thing a rescan has
+        // to preserve.
+        if (rescan) return next;
+        return {
+          ...next,
+          images: [],
+          ratings: {},
+          focusedImageId: null,
+          selection: EMPTY_SELECTION.selection,
+          selectionAnchor: EMPTY_SELECTION.anchor,
+          qualityScores: {},
+          qualitySubscores: {},
+          filterRatingRange: FULL_RATING_RANGE,
+          status: null,
+        };
+      });
 
       thumbnailWorker.clearAll();
       generatedThumbsRef.current = new Set();
@@ -695,11 +902,11 @@ export function usePhotoStore(): PhotoStoreAPI {
         ]);
         if (root) allResults.set(folderPath, root);
 
-        // A second openFolder has overtaken this one — the user picked another
-        // folder while this tree was still being walked. Its epoch is the live
-        // one now, so everything below, the drained batches included, would be
-        // the wrong tree's: bail before touching any of it.
-        if (!mountedRef.current || openEpochRef.current !== scanId) return;
+        // A second load has overtaken this one — the user picked another folder
+        // while this tree was still being walked. Its epoch is the live one now,
+        // so everything below, the drained batches included, would be the wrong
+        // tree's: bail before touching any of it.
+        if (!mountedRef.current || openEpochRef.current !== scanId) return null;
 
         // Batches that overtook the reply above; see metadataBufferRef. From
         // the mark below onwards they merge straight into state, and there is
@@ -731,27 +938,66 @@ export function usePhotoStore(): PhotoStoreAPI {
           if (stored.qualitySubscores) qualitySubscores[img.path] = stored.qualitySubscores;
         }
 
-        // Every folder gets an entry, so a shoot that has never been culled
-        // still has somewhere to record into.
+        // Every folder gets an entry, so a shoot that has never been culled still
+        // has somewhere to record into. A fresh map rather than writes into the
+        // existing one: a rescan kept the previous results, and a folder that has
+        // disappeared from the tree must not be left holding a live entry that a
+        // later projection could write back out.
+        const nextResults = new Map<string, ResultsFile>();
         for (const folder of folders) {
-          resultsRef.current.set(folder, allResults.get(folder) ?? emptyResults(folder));
+          nextResults.set(folder, allResults.get(folder) ?? emptyResults(folder));
+        }
+        resultsRef.current = nextResults;
+
+        // What the walk changed, against the list that was on screen. Taken from
+        // stateRef rather than computed inside the updater below, which has to
+        // stay pure — and it is the same list either way, because a rescan's
+        // metadata batches buffer until the mark set just above.
+        const previousPaths = new Set(stateRef.current.images.map((img) => img.path));
+        const currentPaths = new Set(images.map((img) => img.path));
+        const removedPaths = new Set<string>();
+        for (const imagePath of previousPaths) {
+          if (!currentPaths.has(imagePath)) removedPaths.add(imagePath);
+        }
+        let added = 0;
+        for (const imagePath of currentPaths) {
+          if (!previousPaths.has(imagePath)) added += 1;
         }
 
         const first = images.length > 0 ? images[0]!.path : null;
-        setState((prev) => ({
-          ...prev,
-          images,
-          ratings,
-          qualityScores,
-          qualitySubscores,
-          isLoading: false,
-          focusedImageId: first,
-          // The cursor landing on the first image selects it, same as it does
-          // when an arrow key moves there.
-          selection: first === null ? EMPTY_SELECTION.selection : new Set([first]),
-          selectionAnchor: first,
-          thumbnailProgress: { completed: 0, total: images.length },
-        }));
+        setState((prev) => {
+          const next: PhotoState = {
+            ...prev,
+            images,
+            ratings,
+            qualityScores,
+            qualitySubscores,
+            isLoading: false,
+            thumbnailProgress: { completed: 0, total: images.length },
+          };
+          if (!rescan) {
+            return {
+              ...next,
+              focusedImageId: first,
+              // The cursor landing on the first image selects it, same as it does
+              // when an arrow key moves there.
+              selection: first === null ? EMPTY_SELECTION.selection : new Set([first]),
+              selectionAnchor: first,
+            };
+          }
+          // A rescan keeps the user's place: the cursor moves only when its own
+          // image is gone, and then onto the next SURVIVOR — the same rule, and
+          // the same helper, as a deletion. The batch is reconciled here rather
+          // than left to App's syncVisibleOrder, so that no render in between can
+          // hold a selection naming a file that is no longer on disk.
+          const nextFocused =
+            focusAfterRemoval(prev.images, prev.focusedImageId, removedPaths) ?? first;
+          return {
+            ...next,
+            focusedImageId: nextFocused,
+            ...selectionAfterRemoval(prev, removedPaths, nextFocused),
+          };
+        });
 
         // Deliberately NOT awaited. It is one readdir per cache directory, but
         // putting it in front of first paint is the mistake this release just
@@ -794,8 +1040,10 @@ export function usePhotoStore(): PhotoStoreAPI {
 
         // Save session
         window.api.setSession({ lastFolderPath: folderPath });
+
+        return { added, removed: removedPaths.size };
       } catch {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current) return null;
         setState((prev) => ({
           ...prev,
           isLoading: false,
@@ -803,10 +1051,100 @@ export function usePhotoStore(): PhotoStoreAPI {
           scanProgress: IDLE_SCAN,
           error: `Cannot access ${folderPath} -- check permissions`,
         }));
+        return null;
       }
     },
     [thumbnailWorker, flushPendingSave],
   );
+
+  const openFolder = useCallback(
+    async (folderPath: string) => {
+      await loadFolder(folderPath, 'open');
+    },
+    [loadFolder],
+  );
+
+  /**
+   * Re-walk the open folder: take up new images, drop the ones that are gone, and
+   * remove what is orphaned — without throwing away anything the app cannot
+   * recompute for free.
+   *
+   * Up to 1.6.4 this deleted every results file below the root ("forget
+   * everything below here"), which on a 21 851-image library discarded every
+   * quality score and cost ~128 GB of re-reading to rebuild. It now removes
+   * exactly what the disk says is orphaned — records and thumbnails whose image
+   * is gone, plus leftovers from a past cache format — and keeps the rest.
+   * Quality scores and ratings survive.
+   *
+   * No confirmation, because nothing it removes describes a file that still
+   * exists. The capability given up in exchange: nothing in the UI can force a
+   * quality-score recompute any more. Deleting `.photo-culler-results.json` by
+   * hand is the escape hatch, and it is deliberately not a menu item.
+   */
+  const rescanFolder = useCallback(async () => {
+    const folderPath = stateRef.current.folderPath;
+    if (!folderPath) return;
+    // Nothing here bumps the epoch — only `loadFolder` does — so this stays the
+    // epoch of the tree the user pressed F5 in for as long as the prune runs.
+    const startEpoch = openEpochRef.current;
+
+    // Said before the first await, because the prune walks the whole tree and can
+    // take seconds on a large library: without this, F5 would appear to do
+    // nothing at all until the walk that follows it starts reporting.
+    setState((prev) => ({
+      ...prev,
+      isLoading: true,
+      error: null,
+      status: null,
+      scanProgress: { phase: 'walking', found: 0, completed: 0 },
+    }));
+
+    // Held BEFORE the first await, not after the flush: `flushRatingWrites`
+    // awaits real IPC, and a scoring result arriving inside that window would
+    // schedule its debounce while the hold was still off — a timer that then
+    // fires mid-prune. Held rather than merely cancelled because the prune and
+    // the re-walk both take real time on a large tree and the scoring worker goes
+    // on delivering throughout. See rescanHoldsRef.
+    rescanHoldsRef.current += 1;
+    let prune: PruneResult | null = null;
+    let finished = false;
+    try {
+      cancelPendingSave();
+      await flushRatingWrites();
+
+      try {
+        prune = await window.api.pruneFolder(folderPath);
+      } catch {
+        // Housekeeping. A prune that failed must not stop the re-walk, which is
+        // the half of Rescan the user actually asked for.
+      }
+
+      // A load has happened while the prune ran: the user opened another folder,
+      // or pressed F5 again. That tree is on screen now, and re-walking this one
+      // would replace it with the wrong photos — the prune itself was still
+      // worth doing, so it is not undone, only not followed up.
+      if (!mountedRef.current || openEpochRef.current !== startEpoch) return;
+
+      const outcome = await loadFolder(folderPath, 'rescan');
+      if (!mountedRef.current || outcome === null) return;
+      finished = true;
+
+      showStatus(
+        formatRescanStatus({
+          added: outcome.added,
+          removed: outcome.removed,
+          recordsRemoved: prune?.entriesRemoved ?? 0,
+          // Legacy cache entries are folded in here rather than given a clause of
+          // their own. One of them can be a whole `v2/` directory holding
+          // thousands of thumbnails, so on the first rescan after an upgrade this
+          // undercounts — a more honest line would be a less readable one.
+          thumbsRemoved: (prune?.thumbsRemoved ?? 0) + (prune?.legacyRemoved ?? 0),
+        }),
+      );
+    } finally {
+      releaseHeldSave(finished);
+    }
+  }, [cancelPendingSave, flushRatingWrites, loadFolder, releaseHeldSave, showStatus]);
 
   /** Look up which folder an image belongs to, for dirty-marking. */
   const folderOf = useCallback((imagePath: string): string | undefined => {
@@ -1059,31 +1397,11 @@ export function usePhotoStore(): PhotoStoreAPI {
     }
   }, []);
 
-  /**
-   * Nothing here touches the selection, deliberately: clean-up removes stale
-   * *records* from the results files, never photos, so the visible set — and
-   * therefore what may be selected — is exactly as it was.
-   */
-  const pruneLoadedResults = useCallback(() => {
-    const current = stateRef.current;
-    // The renderer's own folder attribution already matches the main process's
-    // rule, so a folder's images are exactly the entries its file may keep.
-    const namesByFolder = new Map<string, Set<string>>();
-    for (const img of current.images) {
-      const set = namesByFolder.get(img.folder);
-      if (set) set.add(img.name);
-      else namesByFolder.set(img.folder, new Set([img.name]));
-    }
-
-    for (const [folderPath, results] of resultsRef.current) {
-      const keep = namesByFolder.get(folderPath) ?? new Set<string>();
-      const pruned: typeof results.images = {};
-      for (const [name, entry] of Object.entries(results.images)) {
-        if (keep.has(name)) pruned[name] = entry;
-      }
-      resultsRef.current.set(folderPath, { ...results, images: pruned });
-    }
-  }, []);
+  // `pruneLoadedResults` used to live here: it mirrored the main process's
+  // clean-up into `resultsRef`, so a later projection could not write the pruned
+  // records back. Rescan prunes BEFORE its re-walk now, and the re-walk reloads
+  // every results file from disk, so the in-memory copies come back already
+  // pruned and there is nothing left to mirror.
 
   const setQualityScore = useCallback(
     (imagePath: string, score: number, subscores?: QualitySubscores) => {
@@ -1267,6 +1585,7 @@ export function usePhotoStore(): PhotoStoreAPI {
     selectionTargets,
     thumbnailWorker,
     openFolder,
+    rescanFolder,
     setRating,
     rateSelection,
     setSortDirection,
@@ -1284,8 +1603,6 @@ export function usePhotoStore(): PhotoStoreAPI {
     setQualityScore,
     setScoringProgress,
     rotateImage,
-    cancelPendingSave,
-    pruneLoadedResults,
   };
 }
 

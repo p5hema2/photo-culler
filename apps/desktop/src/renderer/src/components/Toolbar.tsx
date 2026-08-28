@@ -24,6 +24,14 @@ interface ToolbarProps {
    * thumbnails are made per visible cell, so it climbs as the user scrolls.
    */
   thumbnailProgress: { completed: number; total: number };
+  /**
+   * A finished operation's one-line summary — what the last Rescan did — or null.
+   *
+   * Shown in the same row as the progress readouts and styled like them, but it
+   * has no counters of its own to say when it is spent: the store's timer takes
+   * it away. See PhotoState.status.
+   */
+  status: string | null;
   folderPath: string | null;
   onSelectFolder: () => void;
   onRescan: () => void;
@@ -126,6 +134,7 @@ export function Toolbar({
   selectionCount,
   scoringProgress,
   thumbnailProgress,
+  status,
   folderPath,
   onSelectFolder,
   onRescan,
@@ -238,11 +247,20 @@ export function Toolbar({
       {folderPath && (
         <button
           onClick={onRescan}
-          className="px-2 py-1 text-gray-400 hover:text-white hover:bg-gray-700 rounded text-xs transition-colors"
+          className="px-2 py-1 text-gray-400 hover:text-white hover:bg-gray-700 rounded text-xs transition-colors flex items-center gap-1.5"
           data-testid="rescan-btn"
-          title="Rescan current folder — clears cached scores and re-processes all images"
+          title={
+            'Rescan current folder — take up new images, drop ones that are gone, ' +
+            'and remove records and thumbnails whose image no longer exists. ' +
+            'Quality scores and ratings are kept.'
+          }
         >
-          &#x21BB; Rescan
+          <span>&#x21BB; Rescan</span>
+          {/* The accelerator is a MENU accelerator (File › Rescan Folder), which
+              is why it is printed as a literal here rather than read from
+              SHORTCUTS: that table holds the keys the renderer itself binds, and
+              F5 is not one of them. main/index.ts stays its single source. */}
+          <span className="text-[10px] text-gray-500 font-mono">F5</span>
         </button>
       )}
 
@@ -447,6 +465,15 @@ export function Toolbar({
       {showThumbnailProgress && (
         <span className="text-[10px] text-gray-500" data-testid="thumbnail-progress">
           Thumbs {thumbnailProgress.completed}/{thumbnailProgress.total}
+        </span>
+      )}
+
+      {/* What the last Rescan did. A shade brighter than the progress readouts
+          beside it, because it is news rather than a running total — and it goes
+          away on its own, so it cannot accumulate into noise. */}
+      {status !== null && (
+        <span className="text-[10px] text-gray-300" data-testid="toolbar-status">
+          {status}
         </span>
       )}
 

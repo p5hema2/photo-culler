@@ -4,11 +4,14 @@ import { createElement } from 'react';
 import {
   ContextMenu,
   flyoutPlacement,
+  revealLabel,
+  revealTarget,
   sharedRating,
   VIEWPORT_MARGIN,
 } from '../components/ContextMenu';
 import type { ContextMenuAction, Placement } from '../components/ContextMenu';
-import { resolveSelectionClick } from '../lib/selection';
+import { resolveSelectionClick, selectionTargets } from '../lib/selection';
+import { SHORTCUTS } from '../hooks/useKeyboardNav';
 
 const VIEWPORT = { width: 1000, height: 800 };
 const MENU = { width: 224, height: 160 };
@@ -134,10 +137,12 @@ describe('the menu itself', () => {
     cleanup();
   });
 
-  function renderMenu(count = 3, rating: number | 'mixed' = 2) {
+  function renderMenu(count = 3, rating: number | 'mixed' = 2, canReveal = true) {
     onAction = vi.fn<(action: ContextMenuAction) => void>();
     onClose = vi.fn<() => void>();
-    return render(createElement(ContextMenu, { x: 40, y: 60, count, rating, onAction, onClose }));
+    return render(
+      createElement(ContextMenu, { x: 40, y: 60, count, rating, canReveal, onAction, onClose }),
+    );
   }
 
   it('names the count on the destructive item and in the header', () => {
@@ -186,12 +191,55 @@ describe('the menu itself', () => {
 
   it('walks the items with the arrow keys and acts on Enter', () => {
     renderMenu();
-    // From Rating past both Rotate items to Delete.
-    fireEvent.keyDown(document, { key: 'ArrowDown' });
-    fireEvent.keyDown(document, { key: 'ArrowDown' });
-    fireEvent.keyDown(document, { key: 'ArrowDown' });
+    // From Rating past both Rotate items and Reveal to Delete, which is last.
+    for (let i = 0; i < 4; i++) fireEvent.keyDown(document, { key: 'ArrowDown' });
     fireEvent.keyDown(document, { key: 'Enter' });
     expect(onAction).toHaveBeenCalledWith({ kind: 'delete' });
+  });
+
+  it('prints the shortcut of every item that has one', () => {
+    // Read out of SHORTCUTS rather than compared against literals: the point of
+    // the table is that the menu cannot say something the hook does not bind.
+    const { getByTestId } = renderMenu();
+    expect(getByTestId('context-menu-rotate-cw-shortcut').textContent).toBe(
+      SHORTCUTS.rotate.cw.label,
+    );
+    expect(getByTestId('context-menu-rotate-ccw-shortcut').textContent).toBe(
+      SHORTCUTS.rotate.ccw.label,
+    );
+    expect(getByTestId('context-menu-delete-shortcut').textContent).toBe(SHORTCUTS.delete.label);
+  });
+
+  it('prints the digit beside each rating in the submenu', () => {
+    const { getByTestId } = renderMenu();
+    fireEvent.click(getByTestId('context-menu-rating'));
+    for (const { value, key } of SHORTCUTS.rating) {
+      expect(getByTestId(`context-menu-rate-${value}-shortcut`).textContent).toBe(key);
+    }
+  });
+
+  it('leaves the shortcut column empty where there is no binding', () => {
+    // Reveal has no key, and a label invented for it would be a lie.
+    const { queryByTestId, getByTestId } = renderMenu();
+    expect(getByTestId('context-menu-reveal')).toBeTruthy();
+    expect(queryByTestId('context-menu-reveal-shortcut')).toBeNull();
+  });
+
+  it('reports reveal, and offers it only when there is a cursor to reveal', () => {
+    const withCursor = renderMenu(3, 2, true);
+    fireEvent.click(withCursor.getByTestId('context-menu-reveal'));
+    expect(onAction).toHaveBeenCalledWith({ kind: 'reveal' });
+    cleanup();
+    // An off-screen cursor: the item goes rather than doing nothing when clicked.
+    const withoutCursor = renderMenu(3, 2, false);
+    expect(withoutCursor.queryByTestId('context-menu-reveal')).toBeNull();
+    expect(withoutCursor.getByTestId('context-menu-delete')).toBeTruthy();
+  });
+
+  it('names the file manager the platform actually has', () => {
+    expect(revealLabel('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')).toContain('Finder');
+    expect(revealLabel('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')).toContain('Explorer');
+    expect(revealLabel('Mozilla/5.0 (X11; Linux x86_64)')).toBe('Reveal in file manager');
   });
 
   it('opens the submenu on the current value with ArrowRight', () => {
@@ -256,5 +304,28 @@ describe('right click and the selection', () => {
       order,
     );
     expect([...next.selection]).toEqual(['/a/3.jpg']);
+  });
+});
+
+/**
+ * Reveal is the one item that does NOT spend the batch: the platform call takes
+ * a single path, so it acts on the cursor — and only while the cursor is on
+ * screen, which is the same rule the batch follows.
+ */
+describe('what reveal acts on', () => {
+  const visible = ['/a/1.jpg', '/a/2.jpg', '/a/3.jpg'];
+  const batch = { selection: new Set(['/a/1.jpg', '/a/2.jpg', '/a/3.jpg']), anchor: '/a/1.jpg' };
+
+  it('names the focused image, not the selection', () => {
+    expect(selectionTargets(batch, '/a/2.jpg', new Set(visible))).toHaveLength(3);
+    expect(revealTarget('/a/2.jpg', visible)).toBe('/a/2.jpg');
+  });
+
+  it('names nothing while the cursor is off screen', () => {
+    // Focus recovers lazily, so it can still point at an image a filter or a
+    // collapsed folder has hidden. Revealing it would open a folder the user is
+    // not looking at.
+    expect(revealTarget('/a/9.jpg', visible)).toBeNull();
+    expect(revealTarget(null, visible)).toBeNull();
   });
 });

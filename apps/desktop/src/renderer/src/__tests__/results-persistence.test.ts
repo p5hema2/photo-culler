@@ -56,9 +56,6 @@ beforeEach(() => {
     saveResults: vi.fn(async (folder: string, data: string) => {
       disk[folder] = data;
     }),
-    clearResults: vi.fn(async (folder: string) => {
-      disk[folder] = null;
-    }),
     getSession: vi.fn(async () => ({})),
     setSession: vi.fn(async () => undefined),
     loadThumbCache: vi.fn(async () => null),

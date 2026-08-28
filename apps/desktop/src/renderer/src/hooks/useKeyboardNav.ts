@@ -82,8 +82,42 @@ const GRID_NAV_KEYS = new Set([
   ' ',
 ]);
 
-/** '0'-'5': the digit is the rating, and '0' clears it. */
-const RATING_KEYS = new Map(RATING_VALUES.map((value) => [String(value), value]));
+/**
+ * The keys this hook binds, and how they are printed.
+ *
+ * One table, because the context menu prints the same shortcuts beside its
+ * items and a second hard-coded copy of them drifts silently the first time a
+ * binding moves. The hook matches keys through the maps derived below, so a
+ * change here moves the binding and every label naming it together.
+ *
+ * Not in `lib/`, unlike the constants a worker shares, because this is the
+ * module that *implements* the bindings — a copy anywhere else would be the
+ * duplication the table exists to remove.
+ */
+export const SHORTCUTS = {
+  /**
+   * '0'-'5': the digit is the rating, and '0' clears it. The key doubles as the
+   * label — what you press is what a menu prints.
+   */
+  rating: RATING_VALUES.map((value) => ({ value, key: String(value) })),
+  rotate: {
+    cw: { key: 'ArrowRight', label: 'Alt + →' },
+    ccw: { key: 'ArrowLeft', label: 'Alt + ←' },
+  },
+  /**
+   * Backspace deletes too, but only one key can be printed and `Del` is the one
+   * a menu names.
+   */
+  delete: { keys: ['Delete', 'Backspace'], label: 'Del' },
+} as const;
+
+const RATING_KEYS = new Map(SHORTCUTS.rating.map(({ key, value }) => [key, value]));
+/** Which way an Alt+Arrow turns the photo, or undefined for any other key. */
+const ROTATE_DIRECTIONS = new Map<string, 'cw' | 'ccw'>([
+  [SHORTCUTS.rotate.cw.key, 'cw'],
+  [SHORTCUTS.rotate.ccw.key, 'ccw'],
+]);
+const DELETE_KEYS = new Set<string>(SHORTCUTS.delete.keys);
 
 function findImagePosition(
   groups: PhotoGroup[],
@@ -150,6 +184,8 @@ export function useKeyboardNav({
       const focused = focusRef.current;
       const flatImages = flatImagesRef.current;
       const layout = viewLayoutRef.current;
+      /** Set only for the Alt+Arrow pair — the grid and the loupe both use it. */
+      const rotateDirection = e.altKey ? ROTATE_DIRECTIONS.get(e.key) : undefined;
 
       // If nothing focused, focus the first image on any nav key
       if (!focused) {
@@ -182,10 +218,9 @@ export function useKeyboardNav({
         const flatIndex = flatImages.findIndex((img) => img.path === focused);
 
         // Alt+Arrow: rotate
-        if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        if (rotateDirection) {
           e.preventDefault();
-          const direction = e.key === 'ArrowRight' ? 'cw' : 'ccw';
-          for (const path of batchTargets(flatIndex !== -1)) onRotate(path, direction);
+          for (const path of batchTargets(flatIndex !== -1)) onRotate(path, rotateDirection);
           return;
         }
 
@@ -210,11 +245,10 @@ export function useKeyboardNav({
       }
 
       // Alt+Arrow Left/Right: rotate the whole selection
-      if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      if (rotateDirection) {
         e.preventDefault();
-        const direction = e.key === 'ArrowRight' ? 'cw' : 'ccw';
         const onScreen = findImagePosition(currentGroups, focused) !== null;
-        for (const path of batchTargets(onScreen)) onRotate(path, direction);
+        for (const path of batchTargets(onScreen)) onRotate(path, rotateDirection);
         return;
       }
 
@@ -252,6 +286,16 @@ export function useKeyboardNav({
 
       const { groupIndex, imageIndex } = pos;
       const currentGroup = currentGroups[groupIndex]!;
+
+      // Ahead of the switch rather than a case in it, because the two keys come
+      // from SHORTCUTS and a case label wants a literal.
+      if (DELETE_KEYS.has(e.key)) {
+        const tag = (document.activeElement as HTMLElement)?.tagName?.toLowerCase();
+        if (tag === 'input' || tag === 'textarea') return;
+        e.preventDefault();
+        onDeleteFocused();
+        return;
+      }
 
       switch (e.key) {
         case 'ArrowRight': {
@@ -358,15 +402,6 @@ export function useKeyboardNav({
           // Space no longer does anything, but it must still be swallowed:
           // unhandled, it pages the scroll container. See GRID_NAV_KEYS.
           e.preventDefault();
-          break;
-        }
-
-        case 'Backspace':
-        case 'Delete': {
-          const tag = (document.activeElement as HTMLElement)?.tagName?.toLowerCase();
-          if (tag === 'input' || tag === 'textarea') return;
-          e.preventDefault();
-          onDeleteFocused();
           break;
         }
       }

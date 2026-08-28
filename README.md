@@ -20,7 +20,8 @@ Built with Electron, React, TypeScript, and Tailwind CSS.
 - **Keyboard-first workflow** — arrow keys to navigate, 0-5 to rate
 - **Multi-select** — click, Shift+click for a range, Ctrl/Cmd+click to pick and choose; rating, rotation and
   delete then act on the whole selection
-- **Right-click menu** — rating, rotate and delete for the selection, without reaching for a shortcut
+- **Right-click menu** — rating, rotate and delete for the selection, with the keyboard shortcut shown
+  beside each item that has one, plus “Reveal in Explorer/Finder” for the image under the cursor
 - **Image rotation** — Alt+Arrow to rotate, written to the photo immediately as an EXIF
   orientation change: one byte, no re-encode, and rotating back restores the file exactly
 - **EXIF display** — camera body, lens, exposure settings, histogram
@@ -91,7 +92,7 @@ certificate is trusted on sight.
 | Ctrl/Cmd+I | Toggle the info panel |
 | P / C / A | Toggle focus peaking / exposure clipping / AF point |
 | Ctrl/Cmd+O | Open a folder |
-| F5 | Rescan the folder |
+| F5 | Rescan the folder — new images in, missing ones out, scores and ratings kept |
 | Ctrl/Cmd+S | Execute — delete the low-rated images |
 | ? | Show / hide the shortcuts panel |
 
@@ -102,13 +103,15 @@ certificate is trusted on sight.
 | Click | Select one image, and move the cursor to it |
 | Shift+click | Select everything between the last click and this one |
 | Ctrl/Cmd+click | Add one image to the selection, or take it out |
-| Right click | Context menu — rating, rotate, delete — for the selection |
+| Right click | Context menu — rating, rotate, reveal, delete — for the selection |
 | Click a star | Rate that one image; clicking the lit star clears its rating |
 | Scroll / drag | Zoom and pan in the info panel |
 
 Right-clicking an image that is not in the selection selects just that image first, so the menu never
 acts on something you cannot see. A star belongs to the photo it sits on: clicking it rates that photo
-alone, whatever else is selected.
+alone, whatever else is selected. **Reveal in Explorer/Finder** is the one menu item that does not act
+on the whole selection: the OS call opens one folder with one file picked out, so it acts on the image
+under the cursor.
 
 The toolbar shows a count while more than one image is selected, and every selected cell carries a
 white inner frame — distinct from the cursor's outline, because an image is usually both. Press `?` in
@@ -217,10 +220,14 @@ photo-culler/
   yet, `4-5` only the best. Execute always works on what the filter leaves visible.
 - **Quality scores** appear on each thumbnail (0-100%). The info panel shows the breakdown: sharpness (40%), exposure (25%), contrast (20%), noise (15%). They are advisory — nothing filters or sorts by them.
 - **Sorting** is by filename, ascending or descending. If your files are named after capture time, that is capture order.
-- **Rescan** re-processes the folder from scratch if you add/remove files externally.
+- **Rescan** (`F5`) re-walks the folder after you have added or removed files elsewhere: new images
+  come in, missing ones drop out, and cached thumbnails and score records whose image is gone are
+  removed along with anything an older thumbnail format left behind. It keeps every quality score and
+  every rating, asks nothing, and reports what it did in the toolbar for a few seconds. It never
+  deletes a results file — ratings would survive that, because they live in the photos, but quality
+  scores exist nowhere else and a large library costs hours of reading to rebuild them.
 - **Grouping threshold** (View menu) controls how close timestamps must be to form a burst group. Default is 5 seconds.
 - **Focus peaking**, **clipping** and **AF point** overlays (in the info panel) help evaluate technical quality without pixel-peeping.
-- **Clean Up Folder** (File menu) prunes cached thumbnails and score records whose images are gone. It never touches images, and never touches ratings.
 
 ## License
 

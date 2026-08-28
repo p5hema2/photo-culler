@@ -20,7 +20,6 @@ const api: ElectronAPI = {
   saveResults: (folderPath, data) =>
     ipcRenderer.invoke(IPC_CHANNELS.SAVE_RESULTS, folderPath, data),
   loadResults: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.LOAD_RESULTS, folderPath),
-  clearResults: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.CLEAR_RESULTS, folderPath),
   getSession: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SESSION),
   setSession: (config) => ipcRenderer.invoke(IPC_CHANNELS.SET_SESSION, config),
   deleteFiles: (filePaths) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_FILES, filePaths),
@@ -34,9 +33,10 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.ROTATE_IMAGE, filePath, direction),
   writeRating: (filePath, rating) =>
     ipcRenderer.invoke(IPC_CHANNELS.WRITE_RATING, filePath, rating),
+  revealInFolder: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.REVEAL_IN_FOLDER, filePath),
   readDetailedMetadata: (filePath) =>
     ipcRenderer.invoke(IPC_CHANNELS.READ_DETAILED_METADATA, filePath),
-  cleanUpFolder: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.CLEAN_UP_FOLDER, folderPath),
+  pruneFolder: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.PRUNE_FOLDER, folderPath),
   countThumbCache: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.COUNT_THUMB_CACHE, folderPath),
   getAppVersion: () => ipcRenderer.invoke(IPC_CHANNELS.GET_APP_VERSION),
 };

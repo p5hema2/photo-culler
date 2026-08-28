@@ -101,6 +101,54 @@ the folder.
 both spread the existing entry so a new `ImageResult` field cannot be lost by omission, and
 `results-rebuild.test.ts` guards them. Do not reintroduce inline writes.
 
+**Rescan must NEVER delete a results file.** Up to 1.6.4 it did: `rescan` called `clearResults`,
+whose comment read "forget everything below here", and it unlinked the file in *every* directory
+below the root. On the user's 21 851-image library that discarded every quality score in one
+keypress and cost roughly 128 GB of re-reading to rebuild them. Note the asymmetry that makes this
+worse than it sounds: **ratings survive anything**, because they live in the photos themselves, so
+the only thing a results file holds is the one thing that exists nowhere else. There is no undo and
+no second copy.
+
+What F5 does now, with no confirmation dialog, is `rescanFolder` in `usePhotoStore.ts`: re-walk the
+tree, take up new images, drop ones that are gone, prune what is *orphaned* — records and cached
+thumbnails whose image is no longer on disk, plus anything a past cache format left behind — and
+keep everything else. `PRUNE_FOLDER` ('fs:prune-folder') is that step, and `planCleanUp` /
+`applyCleanUp` are still its tested implementation. It removes nothing that describes a file the
+user has not already removed, which is why no dialog is needed and why the old
+`Clean Up Folder…` menu item and `'clean-up-folder'` command are gone rather than kept alongside.
+
+The capability given up in exchange, knowingly: **nothing in the UI can force a quality-score
+recompute any more.** Deleting `.photo-culler-results.json` by hand is the escape hatch. Do not add
+a menu item for it — that item is exactly the 128 GB mistake with a friendlier label. `CLEAR_RESULTS`
+had one caller, so the channel, its `ElectronAPI` member, the preload wiring and the handler are all
+gone.
+
+**Pruning now sits in the F5 path, and that is what makes the write queue load-bearing.** It used to
+be a menu command nobody ran; it is on the key people press between shoots. A debounced results
+write that lands after a prune re-writes the records it just removed, and both halves have to stop
+that:
+
+- **Main:** `dropQueuedWrite` is called for **every** results file `plan.results` names, not just
+  the root's. `CLEAR_RESULTS` looked up exactly one queue key, so a queued write for a *subfolder*
+  drained after the prune and resurrected that folder's orphans. Only the files with orphans,
+  though — dropping every queue in the tree would throw away somebody's fresh quality score.
+- **Renderer:** `rescanHoldsRef` holds *all* results writes for the duration of a rescan, because
+  `writeFolder` projects state over `resultsRef`, which until the re-walk reloads still holds the
+  very records being removed. It is a count, so two F5s inside one prune window cannot un-hold each
+  other, and it is raised **before the first await** — `flushRatingWrites` awaits real IPC, and a
+  scoring result arriving in that window would otherwise schedule a debounce while the hold was
+  still off and fire it mid-prune. `scheduleSave` checks the hold at schedule time only, which is
+  sufficient *because* of that ordering plus `cancelPendingSave` clearing any timer already running.
+  `releaseHeldSave(keep)` lets the held marks through afterwards, projected over the reloaded
+  results, and re-stamps the epoch only when the rescan finished in its own tree.
+
+Two consequences worth knowing. A rescan awaits pending **rating** writes before walking, because the
+image file is the authority for a rating and the walk reads it back — otherwise the walk reads the old
+value and the write lands after it. And a rescan does discard in-memory quality scores that had not
+reached disk (one debounce window, plus anything scored while the prune ran): the re-walk rebuilds
+`qualityScores` from the files, and the scoring pass recomputes precisely those because they are then
+absent. `rescan.test.ts` guards all of it.
+
 **The keep classification and `picks/` are gone, data and all.** Up to 1.5.x images were classified
 keep/review/delete, Execute moved the keeps into a `picks/` subfolder, the scanner folded those
 images back into the parent section, and the clean-up planner therefore had to accept that a parent's
@@ -312,6 +360,18 @@ reach the grid behind it — and App closes it on a folder change, a layout chan
 visible order, because Open Folder and Rescan arrive from the native menu without the outside mousedown
 it dismisses itself on.
 
+The shortcut printed beside each item comes from `SHORTCUTS`, exported by `useKeyboardNav` — the same
+table the hook derives its key maps from, so a binding and every label naming it move together. There
+were three copies of those labels before 1.7.0 (the hook, this menu, `ShortcutsTutorial`); there is
+one now. `F5` on the Rescan *button* is the deliberate exception: it is a menu accelerator, so
+`main/index.ts` stays its single source and `SHORTCUTS` holds only keys the renderer itself binds.
+
+`'reveal'` is also the one menu item that does not spend the selection. `shell.showItemInFolder` takes
+a single path, and forty of them would be forty Explorer windows, so it acts on the cursor — via
+`revealTarget`, which applies the batch's own visibility rule to the cursor alone, because focus
+recovers lazily and can still name a photo a filter has hidden. When it names nothing the item is left
+out rather than shown doing nothing.
+
 **The renderer must never import the `image-utils` barrel.** It aliases
 `@photo-culler/image-utils/sorting`, `/grouping`, `/focus`, `/folders` and `/rating` deep, on
 purpose, and has **no** whole-package fallback alias: the barrel re-exports `scanner.ts`, which
@@ -501,8 +561,10 @@ panel, nothing filters or sorts by them — but they are still persisted, so the
 
 **Results-file writes are queued and epoch-guarded.** `ipc-handlers.ts` serializes writes per file;
 `usePhotoStore.ts` tags pending saves with an `openEpochRef` so a save queued for a folder you've
-left can't land in the new folder's file. Rescan and clear paths must drop queued writes first
-(`cancelPendingSave`, then `clearResults`) or the queue drains straight back over the deleted file.
+left can't land in the new folder's file. Anything that REMOVES records must drop the queued writes
+first, or the queue drains straight back over what was just deleted — and since 1.7.0 the only such
+path is Rescan's prune, which has to do it for every affected folder rather than only the root. See
+the Rescan trap above; `dropQueuedWrite` and `rescanHoldsRef` are the two halves.
 
 **The legacy results filename is migrated on read.** Pre-1.2.0 folders hold
 `photo-culler-results.json`; `readResultsFile` renames it to the dotfile form on first load.
