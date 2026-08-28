@@ -632,6 +632,34 @@ export function registerIpcHandlers(): void {
     return readDetailedMetadata(filePath);
   });
 
+  /**
+   * Count the current-format thumbnails already on disk below `folderPath`.
+   *
+   * One readdir per image directory, and only of the cache directory — the
+   * images themselves are never listed here, so this stays cheap even on a
+   * spinning disk with thousands of files. `partitionCacheEntries` decides what
+   * counts, which means the suffix rule is shared with the vacuum and a
+   * leftover from a past format can never inflate the number.
+   *
+   * It is an upper bound on coverage, not a per-image check: a thumbnail whose
+   * source has since been rotated is stale and will be regenerated, and it is
+   * counted here anyway. Close enough for a progress readout, and far cheaper
+   * than stat-ing 3470 pairs of files to be exact.
+   */
+  ipcMain.handle(IPC_CHANNELS.COUNT_THUMB_CACHE, async (_event, folderPath: string) => {
+    let total = 0;
+    for (const imageDir of await imageDirectories(folderPath)) {
+      let entries: CacheDirEntry[];
+      try {
+        entries = await readdir(getThumbCacheDir(imageDir), { withFileTypes: true });
+      } catch {
+        continue; // no cache in this directory yet
+      }
+      total += partitionCacheEntries(entries).thumbs.length;
+    }
+    return total;
+  });
+
   ipcMain.handle(IPC_CHANNELS.CLEAN_UP_FOLDER, async (_event, folderPath: string) => {
     const plan = await planCleanUp(folderPath);
     const thumbCount = plan.thumbs.length;

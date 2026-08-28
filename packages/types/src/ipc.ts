@@ -20,6 +20,7 @@ export const IPC_CHANNELS = {
   WRITE_RATING: 'fs:write-rating',
   CLEAN_UP_FOLDER: 'fs:clean-up-folder',
   READ_DETAILED_METADATA: 'meta:read-detailed',
+  COUNT_THUMB_CACHE: 'fs:count-thumb-cache',
   GET_APP_VERSION: 'app:get-version',
 } as const;
 
@@ -281,5 +282,15 @@ export interface ElectronAPI {
     cancelled: boolean;
   }>;
   /** Version of the running app, stamped from the git tag at build time. */
+  /**
+   * How many images below `folderPath` already have a current-format thumbnail
+   * on disk.
+   *
+   * Thumbnails are generated lazily, per visible cell, so this is the only way
+   * to open a half-culled folder and report "1725 of 3470" instead of starting
+   * the counter at zero. Counted from the cache directories, using the same
+   * suffix rule the vacuum uses, so a past format never inflates it.
+   */
+  countThumbCache: (folderPath: string) => Promise<number>;
   getAppVersion: () => Promise<string>;
 }

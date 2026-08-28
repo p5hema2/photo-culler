@@ -36,6 +36,7 @@ const api: ElectronAPI = {
   readDetailedMetadata: (filePath) =>
     ipcRenderer.invoke(IPC_CHANNELS.READ_DETAILED_METADATA, filePath),
   cleanUpFolder: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.CLEAN_UP_FOLDER, folderPath),
+  countThumbCache: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.COUNT_THUMB_CACHE, folderPath),
   getAppVersion: () => ipcRenderer.invoke(IPC_CHANNELS.GET_APP_VERSION),
 };
 

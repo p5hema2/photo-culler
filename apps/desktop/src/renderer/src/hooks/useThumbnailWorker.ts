@@ -154,7 +154,27 @@ function createWorker(): Worker {
   });
 }
 
-export function useThumbnailWorker(): ThumbnailWorkerAPI {
+/**
+ * Options for the thumbnail worker pool.
+ */
+export interface ThumbnailWorkerOptions {
+  /**
+   * Called with the image path each time a thumbnail is generated and queued for
+   * the disk cache. Fires only for a MISS: hits never reach it, because the
+   * progress readout seeds from the on-disk count and would otherwise
+   * double-count them.
+   */
+  onThumbnailGenerated?: (imagePath: string) => void;
+}
+
+export function useThumbnailWorker(options: ThumbnailWorkerOptions = {}): ThumbnailWorkerAPI {
+  // Read through a ref so a caller may pass an inline callback without
+  // rebuilding the worker pool on every render.
+  const onGeneratedRef = useRef(options.onThumbnailGenerated);
+  onGeneratedRef.current = options.onThumbnailGenerated;
+  const onThumbnailGenerated = useCallback((imagePath: string) => {
+    onGeneratedRef.current?.(imagePath);
+  }, []);
   const workersRef = useRef<Worker[]>([]);
   const cacheRef = useRef<Map<string, ImageBitmap | 'error'>>(new Map());
   const pendingRef = useRef<Set<string>>(new Set());
@@ -285,13 +305,18 @@ export function useThumbnailWorker(): ThumbnailWorkerAPI {
           window.api.saveThumbCache(id, thumbBuffer).catch(() => {
             // Ignore cache save errors
           });
+          // Report only a NEWLY generated thumbnail. A cache hit returns above
+          // without reaching this branch, and hits are already inside the
+          // on-disk count the progress readout starts from — counting them
+          // again would run the readout past its own total.
+          onThumbnailGenerated?.(id);
         }
       }
 
       setVersion((v) => v + 1);
       dispatchNext(workerIndex);
     },
-    [dispatchNext, loadThumbnail],
+    [dispatchNext, loadThumbnail, onThumbnailGenerated],
   );
 
   const initWorkers = useCallback(() => {

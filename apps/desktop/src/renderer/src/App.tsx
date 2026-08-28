@@ -635,6 +635,7 @@ function App(): React.JSX.Element {
           onThumbnailSizeChange={store.setThumbnailSize}
           onGroupingThresholdChange={store.setGroupingThresholdMs}
           scoringProgress={scoringProgress}
+          thumbnailProgress={state.thumbnailProgress}
           viewLayout={viewLayout}
           onSetViewLayout={setViewLayout}
           onExecute={handleOpenExecute}

@@ -19,6 +19,11 @@ interface ToolbarProps {
    */
   selectionCount: number;
   scoringProgress: { completed: number; total: number };
+  /**
+   * Thumbnail coverage of the folder. Does not run to completion on its own:
+   * thumbnails are made per visible cell, so it climbs as the user scrolls.
+   */
+  thumbnailProgress: { completed: number; total: number };
   folderPath: string | null;
   onSelectFolder: () => void;
   onRescan: () => void;
@@ -120,6 +125,7 @@ export function Toolbar({
   visibleCount,
   selectionCount,
   scoringProgress,
+  thumbnailProgress,
   folderPath,
   onSelectFolder,
   onRescan,
@@ -202,6 +208,11 @@ export function Toolbar({
 
   const showScoringProgress =
     scoringProgress.total > 0 && scoringProgress.completed < scoringProgress.total;
+  // Same rule as scoring: a counter sitting at its total is noise. Unlike
+  // scoring this one can rest below the total indefinitely, because a folder is
+  // only fully thumbnailed once every image has been on screen once.
+  const showThumbnailProgress =
+    thumbnailProgress.total > 0 && thumbnailProgress.completed < thumbnailProgress.total;
 
   const ratingFilterActive = !isFullRatingRange(filterRatingRange);
 
@@ -430,6 +441,12 @@ export function Toolbar({
       {showScoringProgress && (
         <span className="text-[10px] text-gray-500" data-testid="scoring-progress">
           Scoring {scoringProgress.completed}/{scoringProgress.total}
+        </span>
+      )}
+
+      {showThumbnailProgress && (
+        <span className="text-[10px] text-gray-500" data-testid="thumbnail-progress">
+          Thumbs {thumbnailProgress.completed}/{thumbnailProgress.total}
         </span>
       )}
 

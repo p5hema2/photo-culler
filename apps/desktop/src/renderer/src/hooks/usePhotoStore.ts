@@ -95,6 +95,15 @@ export interface PhotoState {
   qualityScores: Record<string, number>;
   qualitySubscores: Record<string, QualitySubscores>;
   scoringProgress: { completed: number; total: number };
+  /**
+   * Thumbnail coverage of the open folder: how many of its images have one.
+   *
+   * Seeded from the on-disk count, because thumbnails are generated lazily per
+   * visible cell — a counter starting at zero would claim a half-culled folder
+   * had none. It therefore does NOT run to the total on its own: it reaches it
+   * only once every image has been scrolled past at least once.
+   */
+  thumbnailProgress: { completed: number; total: number };
   rotations: Record<string, number>;
 }
 
@@ -117,6 +126,7 @@ const initialState: PhotoState = {
   qualityScores: {},
   qualitySubscores: {},
   scoringProgress: { completed: 0, total: 0 },
+  thumbnailProgress: { completed: 0, total: 0 },
   rotations: {},
 };
 
@@ -321,7 +331,26 @@ export interface PhotoStoreAPI {
 
 export function usePhotoStore(): PhotoStoreAPI {
   const [state, setState] = useState<PhotoState>(initialState);
-  const thumbnailWorker = useThumbnailWorker();
+  /**
+   * Paths whose thumbnail this session generated.
+   *
+   * A set rather than a counter because a rotation invalidates a thumbnail and
+   * the next render regenerates it — counting that as new progress would walk
+   * the readout past its own total.
+   */
+  const generatedThumbsRef = useRef<Set<string>>(new Set());
+
+  const thumbnailWorker = useThumbnailWorker({
+    onThumbnailGenerated: (imagePath) => {
+      if (generatedThumbsRef.current.has(imagePath)) return;
+      generatedThumbsRef.current.add(imagePath);
+      setState((prev) => {
+        const { completed, total } = prev.thumbnailProgress;
+        if (total === 0 || completed >= total) return prev;
+        return { ...prev, thumbnailProgress: { completed: completed + 1, total } };
+      });
+    },
+  });
   /**
    * One results file per directory, keyed by absolute directory path. Opening a
    * parent folder pulls in every shoot below it, and each keeps its own
@@ -622,10 +651,12 @@ export function usePhotoStore(): PhotoStoreAPI {
         qualitySubscores: {},
         filterRatingRange: FULL_RATING_RANGE,
         scoringProgress: { completed: 0, total: 0 },
+        thumbnailProgress: { completed: 0, total: 0 },
         scanProgress: { phase: 'walking', found: 0, completed: 0 },
       }));
 
       thumbnailWorker.clearAll();
+      generatedThumbsRef.current = new Set();
 
       try {
         // The root's results file is the one file we can read before the walk,
@@ -703,7 +734,33 @@ export function usePhotoStore(): PhotoStoreAPI {
           // when an arrow key moves there.
           selection: first === null ? EMPTY_SELECTION.selection : new Set([first]),
           selectionAnchor: first,
+          thumbnailProgress: { completed: 0, total: images.length },
         }));
+
+        // Deliberately NOT awaited. It is one readdir per cache directory, but
+        // putting it in front of first paint is the mistake this release just
+        // finished undoing — a progress readout must never be the reason the
+        // grid waits. The epoch check keeps a slow count from landing in a
+        // folder the user has already left.
+        const countEpoch = openEpochRef.current;
+        void window.api
+          .countThumbCache(folderPath)
+          .then((onDisk) => {
+            if (!mountedRef.current || openEpochRef.current !== countEpoch) return;
+            setState((prev) => ({
+              ...prev,
+              thumbnailProgress: {
+                // Clamped: the count is folder-wide while `total` is the images
+                // actually scanned, and a filter or an unsupported extension can
+                // leave a thumbnail behind whose image is not in the list.
+                completed: Math.min(onDisk, prev.thumbnailProgress.total),
+                total: prev.thumbnailProgress.total,
+              },
+            }));
+          })
+          .catch(() => {
+            // A missing count is a missing readout, nothing more.
+          });
 
         // Save session
         window.api.setSession({ lastFolderPath: folderPath });
