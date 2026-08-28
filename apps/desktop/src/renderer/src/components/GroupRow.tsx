@@ -17,7 +17,6 @@ interface GroupRowProps {
   cellSize: number;
   ratings: Record<string, number>;
   qualityScores: Record<string, number>;
-  rotations: Record<string, number>;
   focusedImageId: string | null;
   /** The batch rating and deletion act on. Membership, not order. */
   selection: ReadonlySet<string>;
@@ -65,7 +64,6 @@ export function GroupRow({
   cellSize,
   ratings,
   qualityScores,
-  rotations,
   focusedImageId,
   selection,
   onImageClick,
@@ -117,7 +115,6 @@ export function GroupRow({
             cellSize={cellSize}
             rating={ratings[image.path]}
             qualityScore={qualityScores[image.path]}
-            rotation={rotations[image.path]}
             isFocused={focusedImageId === image.path}
             isSelected={selection.has(image.path)}
             onFocus={(_origin, modifier) => onImageClick(image.path, modifier)}

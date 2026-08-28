@@ -24,7 +24,6 @@ const B_RESULTS = JSON.stringify({
     'b1.jpg': {
       qualityScore: 88,
       qualitySubscores: { sharpness: 88, exposure: 88, contrast: 88, noise: 88 },
-      rotation: 90,
     },
   },
 });
@@ -102,7 +101,7 @@ describe('results persistence', () => {
     // Regression guard for the epoch check. openFolder resets its path-keyed
     // maps to {} and only repopulates after two awaited IPC round trips. A stale
     // score landing in that window used to persist `images: {}` over the new
-    // folder's real results file, destroying its scores and rotations.
+    // folder's real results file, destroying every record it held.
     const { result } = renderHook(() => usePhotoStore());
 
     await act(async () => {
@@ -137,6 +136,6 @@ describe('results persistence', () => {
     const onDisk = JSON.parse(disk['/B']!);
     expect(Object.keys(onDisk.images)).toContain('b1.jpg');
     expect(onDisk.images['b1.jpg'].qualityScore).toBe(88);
-    expect(onDisk.images['b1.jpg'].rotation).toBe(90);
+    expect(onDisk.images['b1.jpg'].qualitySubscores.sharpness).toBe(88);
   });
 });

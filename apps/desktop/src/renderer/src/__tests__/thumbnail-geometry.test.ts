@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fitWithin, fitRotated, THUMB_MAX_EDGE } from '../lib/thumbnail-geometry';
+import { fitWithin, fitToBox, THUMB_MAX_EDGE } from '../lib/thumbnail-geometry';
 
 describe('fitWithin', () => {
   it('fits a landscape source to the long edge', () => {
@@ -33,47 +33,39 @@ describe('fitWithin', () => {
   });
 });
 
-describe('fitRotated', () => {
-  it('scales a landscape thumbnail into the box unrotated', () => {
-    const r = fitRotated(256, 171, 192, 0);
-    expect(r.canvas).toEqual({ width: 192, height: 128 });
-    expect(r.draw).toEqual({ width: 192, height: 128 });
-    expect(r.radians).toBe(0);
+describe('fitToBox', () => {
+  /**
+   * `fitRotated` until the rotation parameter went away with pending rotations —
+   * a rotation is a change to the file's EXIF Orientation tag now, and the
+   * bitmap reaches the cell already turned. The four angle cases it used to
+   * cover are gone with it; what is left is the box maths, and both properties
+   * that were load-bearing in the old function still are: the longest edge lands
+   * exactly on the box, and the box may be larger than the bitmap.
+   */
+  it('scales a landscape thumbnail into the box', () => {
+    expect(fitToBox(256, 171, 192)).toEqual({ width: 192, height: 128 });
   });
 
-  it('swaps the canvas footprint at 90 degrees but not the draw size', () => {
-    const r = fitRotated(256, 171, 192, 90);
-    expect(r.canvas).toEqual({ width: 128, height: 192 });
-    expect(r.draw).toEqual({ width: 192, height: 128 });
-    expect(r.radians).toBeCloseTo(Math.PI / 2);
-  });
-
-  it('keeps the footprint at 180 degrees and swaps again at 270', () => {
-    expect(fitRotated(256, 171, 192, 180).canvas).toEqual({ width: 192, height: 128 });
-    expect(fitRotated(256, 171, 192, 270).canvas).toEqual({ width: 128, height: 192 });
-  });
-
-  it('normalises negative and out-of-range rotations', () => {
-    expect(fitRotated(256, 171, 192, -90).radians).toBeCloseTo((270 * Math.PI) / 180);
-    expect(fitRotated(256, 171, 192, 450).radians).toBeCloseTo(Math.PI / 2);
+  it('scales a portrait thumbnail into the box, keeping it portrait', () => {
+    expect(fitToBox(171, 256, 192)).toEqual({ width: 128, height: 192 });
   });
 
   it('fills the cell with a square thumbnail rather than letterboxing it', () => {
-    const r = fitRotated(256, 256, 192, 0);
-    expect(r.canvas).toEqual({ width: 192, height: 192 });
-    expect(r.draw).toEqual({ width: 192, height: 192 });
+    expect(fitToBox(256, 256, 192)).toEqual({ width: 192, height: 192 });
   });
 
   it('upscales into a box larger than the thumbnail, which is the HiDPI case', () => {
     // The caller passes PHYSICAL pixels: the 'large' 292px box is 584px at
     // devicePixelRatio 2, above THUMB_MAX_EDGE. Clamping here would letterbox
-    // every cell on a scaled display instead of resampling by ~1.14x.
-    const r = fitRotated(512, 341, 584, 0);
-    expect(r.canvas).toEqual({ width: 584, height: 389 });
-    expect(r.draw).toEqual({ width: 584, height: 389 });
+    // every cell on a scaled display instead of resampling by ~1.14x. This is
+    // the one thing that distinguishes it from fitWithin, so it is asserted
+    // against fitWithin's clamped answer.
+    expect(fitToBox(512, 341, 584)).toEqual({ width: 584, height: 389 });
+    expect(fitWithin(512, 341, 584)).toEqual({ width: 512, height: 341 });
   });
 
   it('guards against zero input', () => {
-    expect(fitRotated(0, 0, 192, 0).canvas).toEqual({ width: 0, height: 0 });
+    expect(fitToBox(0, 0, 192)).toEqual({ width: 0, height: 0 });
+    expect(fitToBox(256, 171, 0)).toEqual({ width: 0, height: 0 });
   });
 });

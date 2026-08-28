@@ -11,7 +11,6 @@ function makeResults(): ResultsFile {
       'a.jpg': {
         qualityScore: 81,
         qualitySubscores: { sharpness: 90, exposure: 70, contrast: 80, noise: 60 },
-        rotation: 90,
       },
       'b.jpg': {
         qualityScore: 12,
@@ -23,15 +22,18 @@ function makeResults(): ResultsFile {
 describe('rebuildResults', () => {
   it('carries every per-image field forward for kept images', () => {
     // Regression for the bug where the delete path listed only four of the six
-    // fields, stripping qualitySubscores and rotation from every remaining
-    // image in the folder on a single Delete keypress.
+    // fields, stripping qualitySubscores and the pending rotation from every
+    // remaining image in the folder on a single Delete keypress. Those six
+    // fields are two now — the keep/review/delete classification went with the
+    // rating rewrite, the pending rotation with this change — and the guard
+    // holds either way, because the spread is what makes it independent of the
+    // field list.
     const results = makeResults();
     const rebuilt = rebuildResults(results, ['a.jpg']);
 
     expect(rebuilt.images['a.jpg']).toEqual({
       qualityScore: 81,
       qualitySubscores: { sharpness: 90, exposure: 70, contrast: 80, noise: 60 },
-      rotation: 90,
     });
   });
 
@@ -73,27 +75,32 @@ describe('projectFolderResults', () => {
   const empty = {
     qualityScores: {},
     qualitySubscores: {},
-    rotations: {},
   };
 
-  it('clears a rotation that state no longer holds', () => {
-    // Regression for a live bug: Execute applied the rotation to disk, deleted
-    // it from state and marked the folder dirty — but the projection read
+  it('never writes a rotation — the image file itself is the authority for that', () => {
+    // This replaces two tests whose bug is now structurally impossible rather
+    // than merely fixed, so the history is worth keeping. It was: Execute
+    // applied a pending rotation to disk, deleted it from state and marked the
+    // folder dirty — but the projection read
     // `state.rotations[path] ?? prior?.rotation`, so the old 90 came straight
-    // back from the file. The next open then re-applied a visual 90 degrees on
-    // top of the already physically rotated image.
+    // back off the file and the next open re-applied a visual quarter turn on
+    // top of the image it had just physically rotated. The pair pinned the fix
+    // from both sides: absence in state had to mean "cleared", presence had to
+    // be written.
+    //
+    // A rotation is now a change to the image's own EXIF Orientation tag,
+    // applied on the keypress. Nothing is pending, `ResultsProjection` has no
+    // `rotations` map to read and `ImageResult` no field to write, so what is
+    // left to guard is that the field does not come back: reintroducing it would
+    // show up here as `rotation: undefined`, which counts as present.
+    //
+    // A `rotation` left in an existing 1.6.x file does survive, through the
+    // spread of `prior` — that spread is deliberate (it is what stops a future
+    // field being dropped by omission) and an ignored key is not worth a
+    // migration.
     const projected = projectFolderResults(makeResults(), '/photos', [A], empty);
 
-    expect(projected.images['a.jpg']!.rotation).toBeUndefined();
-  });
-
-  it('keeps a rotation that state does hold', () => {
-    const projected = projectFolderResults(makeResults(), '/photos', [A], {
-      ...empty,
-      rotations: { '/photos/a.jpg': 180 },
-    });
-
-    expect(projected.images['a.jpg']!.rotation).toBe(180);
+    expect(projected.images['a.jpg']).not.toHaveProperty('rotation');
   });
 
   it('leaves the other fields of the projected image alone', () => {

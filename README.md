@@ -21,15 +21,15 @@ Built with Electron, React, TypeScript, and Tailwind CSS.
 - **Multi-select** — click, Shift+click for a range, Ctrl/Cmd+click to pick and choose; rating, rotation and
   delete then act on the whole selection
 - **Right-click menu** — rating, rotate and delete for the selection, without reaching for a shortcut
-- **Image rotation** — Alt+Arrow to rotate, applied losslessly on execute
+- **Image rotation** — Alt+Arrow to rotate, written to the photo immediately as an EXIF
+  orientation change: one byte, no re-encode, and rotating back restores the file exactly
 - **EXIF display** — camera body, lens, exposure settings, histogram
 - **Focus peaking, clipping & AF point overlays** — spot soft focus, blown highlights, and where the
   camera actually focused
 - **Zoom/pan preview** — scroll to zoom, drag to pan in the info panel
-- **Batch execute** — permanently delete a 1-to-_x_ star range among the images you can see, and
-  apply pending rotations
-- **Persistent state** — quality scores and pending rotations saved per folder; ratings live in the
-  images
+- **Batch execute** — permanently delete a 1-to-_x_ star range among the images you can see
+- **Persistent state** — quality scores saved per folder; ratings and orientation live in the images
+  themselves
 
 ## Installing
 
@@ -82,7 +82,7 @@ certificate is trusted on sight.
 | Arrow keys | Move the cursor — and collapse the selection onto it |
 | 1 – 5 | Rate the selection |
 | 0 | Clear the rating of the selection |
-| Alt+Arrow Left/Right | Rotate the selection 90 CCW/CW |
+| Alt+Arrow Left/Right | Rotate the selection 90 CCW/CW — written to each file's EXIF orientation there and then |
 | Backspace / Delete | Permanently delete the selection (asks first, and names the count) |
 | Home / End | Jump to first / last image |
 | V | Cycle layout: grid / loupe / filmstrip |
@@ -174,7 +174,7 @@ photo-culler/
     desktop/          # Electron app (main + preload + renderer)
   packages/
     types/            # Shared TypeScript types (IPC, image metadata)
-    image-utils/      # Image scanning, metadata, rating, sorting, grouping utilities
+    image-utils/      # Image scanning, metadata, rating, orientation, sorting, grouping utilities
     ui/               # Shared UI components (future)
     tsconfig/         # Shared TypeScript configurations
 ```
@@ -193,19 +193,22 @@ photo-culler/
 5. **Or rate in batches** — Shift+click a run of near-identical frames, or Ctrl/Cmd+click a handful
    across the shoot, then press one number. One file write per image, all optimistic: a star that
    fails to save rolls back and says so.
-6. **Rotate if needed** — Alt+Left/Right, or right-click > Rotate — both act on the selection
+6. **Rotate if needed** — Alt+Left/Right, or right-click > Rotate — both act on the selection, and
+   each turn lands in the file at once. It changes the EXIF orientation tag and nothing else, so
+   turning a photo back leaves it byte-for-byte as it was. JPEG only: PNG, WebP and TIFF say so
+   rather than pretend
 7. **Execute** — Ctrl/Cmd+S, or the "Execute" button:
    - The slider picks the top of the delete range; the bottom is always 1 star, so unrated images are
      never deleted
    - Those images are **permanently deleted** — there is no trash step and no undo
    - Only images currently visible are considered, so a filter also scopes the delete
-   - Optionally applies pending rotations to files on disk
+   - Deleting is all Execute does: rotations are already on disk by the time you get here
 
 ### Tips
 
 - **Ratings live in the photos, not in the app.** Nothing is lost if you move the files, and stars set
-  in Lightroom or Explorer show up here. The per-folder `.photo-culler-results.json` only caches
-  quality scores and rotations you have not applied yet.
+  in Lightroom or Explorer show up here. So does rotation — an EXIF orientation change, applied on
+  the keypress. The per-folder `.photo-culler-results.json` only caches quality scores.
 - **The selection is only ever what you can see.** Anything that hides an image — a filter, the search
   box, collapsing a folder — drops it from the selection on the spot, so a number key or a Delete can
   never reach a photo that is off screen. The cursor is separate: it stays where it was and drives the

@@ -547,16 +547,17 @@ function App(): React.JSX.Element {
     return state.qualitySubscores[focusedImage.path];
   }, [focusedImage, state.qualitySubscores]);
 
-  const focusedRotation = useMemo(() => {
-    if (!focusedImage) return 0;
-    return state.rotations[focusedImage.path] ?? 0;
-  }, [focusedImage, state.rotations]);
-
   // Only read deep metadata when something on screen will use it — without the
   // gate every arrow key would cost an exiftool read.
   const needsDetailedMeta =
     (viewLayout === 'default' && infoPanelOpen) || overlaySettings.showAfPoint;
-  const detailedMeta = useDetailedMetadata(focusedImage?.path ?? null, needsDetailedMeta);
+  // fileRevision, because the AF box is mapped with the file's EXIF orientation
+  // and a rotation changes that without changing the path this is cached under.
+  const detailedMeta = useDetailedMetadata(
+    focusedImage?.path ?? null,
+    needsDetailedMeta,
+    state.fileRevision,
+  );
 
   const renderContent = (): React.JSX.Element => {
     if (state.isLoading) {
@@ -577,7 +578,7 @@ function App(): React.JSX.Element {
           ratings={state.ratings}
           qualityScores={state.qualityScores}
           qualitySubscores={state.qualitySubscores}
-          rotations={state.rotations}
+          fileRevision={state.fileRevision}
           onImageFocus={store.setFocusedImage}
           onRate={store.setRating}
           getThumbnail={thumbnailWorker.getThumbnail}
@@ -595,7 +596,6 @@ function App(): React.JSX.Element {
         onToggleFolder={handleToggleFolder}
         ratings={state.ratings}
         qualityScores={state.qualityScores}
-        rotations={state.rotations}
         thumbnailSize={state.thumbnailSize}
         focusedImageId={state.focusedImageId}
         selection={state.selection}
@@ -679,7 +679,7 @@ function App(): React.JSX.Element {
               onRate={store.setRating}
               qualityScore={focusedQualityScore}
               qualitySubscores={focusedQualitySubscores}
-              rotation={focusedRotation}
+              fileRevision={state.fileRevision}
               isOpen={infoPanelOpen}
               onToggle={handleToggleInfoPanel}
               overlaySettings={overlaySettings}
@@ -692,7 +692,6 @@ function App(): React.JSX.Element {
 
       <ExecutePanel
         visibleRatings={visibleRatings}
-        rotatedCount={Object.values(state.rotations).filter((r) => r !== 0).length}
         isOpen={showExecutePanel}
         onClose={handleCloseExecute}
         onExecute={store.executeActions}

@@ -10,7 +10,6 @@ interface ExecutePanelProps {
    * every count the panel quotes.
    */
   visibleRatings: Record<string, number>;
-  rotatedCount: number;
   isOpen: boolean;
   onClose: () => void;
   onExecute: (options: ExecuteOptions) => Promise<ExecuteResult>;
@@ -23,7 +22,6 @@ function formatDeleteRange(max: number): string {
 
 export function ExecutePanel({
   visibleRatings,
-  rotatedCount,
   isOpen,
   onClose,
   onExecute,
@@ -33,7 +31,6 @@ export function ExecutePanel({
    * never be deleted, and that is the safety property of the whole feature.
    */
   const [deleteMax, setDeleteMax] = useState(DEFAULT_DELETE_RANGE.max);
-  const [applyRotations, setApplyRotations] = useState(true);
   const [isExecuting, setIsExecuting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [result, setResult] = useState<ExecuteResult | null>(null);
@@ -47,8 +44,6 @@ export function ExecutePanel({
     [visibleRatings, deleteRange],
   );
 
-  const rotationCount = applyRotations ? rotatedCount : 0;
-
   const handleExecuteClick = useCallback(() => {
     setShowConfirm(true);
   }, []);
@@ -57,18 +52,17 @@ export function ExecutePanel({
     setShowConfirm(false);
     setIsExecuting(true);
     try {
-      const res = await onExecute({ deleteRange, applyRotations });
+      const res = await onExecute({ deleteRange });
       setResult(res);
     } catch {
       setResult({
         deletedCount: 0,
-        rotatedCount: 0,
         failedPaths: [{ path: '', error: 'Unexpected error' }],
       });
     } finally {
       setIsExecuting(false);
     }
-  }, [onExecute, deleteRange, applyRotations]);
+  }, [onExecute, deleteRange]);
 
   const handleDone = useCallback(() => {
     setResult(null);
@@ -93,18 +87,13 @@ export function ExecutePanel({
         {/* Result view */}
         {result ? (
           <div>
-            <h2 className="text-lg font-semibold mb-4">Execution Complete</h2>
+            <h2 className="text-lg font-semibold mb-4">Deletion Complete</h2>
 
             <div className="space-y-2 mb-6 text-sm">
               {result.deletedCount > 0 && (
                 <p className="text-green-400">
                   {result.deletedCount} image{result.deletedCount !== 1 ? 's' : ''} permanently
                   deleted
-                </p>
-              )}
-              {result.rotatedCount > 0 && (
-                <p className="text-green-400">
-                  {result.rotatedCount} image{result.rotatedCount !== 1 ? 's' : ''} rotated
                 </p>
               )}
               {result.failedPaths.length > 0 && (
@@ -122,11 +111,9 @@ export function ExecutePanel({
                   </ul>
                 </div>
               )}
-              {result.deletedCount === 0 &&
-                result.rotatedCount === 0 &&
-                result.failedPaths.length === 0 && (
-                  <p className="text-gray-400">No actions were performed.</p>
-                )}
+              {result.deletedCount === 0 && result.failedPaths.length === 0 && (
+                <p className="text-gray-400">No images were deleted.</p>
+              )}
             </div>
 
             <div className="flex justify-end">
@@ -142,7 +129,7 @@ export function ExecutePanel({
         ) : showConfirm ? (
           /* Confirmation view */
           <div>
-            <h2 className="text-lg font-semibold mb-4 text-yellow-400">Confirm Execution</h2>
+            <h2 className="text-lg font-semibold mb-4 text-yellow-400">Confirm Deletion</h2>
 
             <div className="space-y-2 mb-6 text-sm">
               {deleteCount > 0 && (
@@ -154,14 +141,6 @@ export function ExecutePanel({
                   <span className="text-gray-400">
                     The files do not go to the trash and cannot be recovered.
                   </span>
-                </p>
-              )}
-              {rotationCount > 0 && (
-                <p>
-                  Apply rotation to{' '}
-                  <span className="text-blue-400 font-medium">{rotationCount}</span> image
-                  {rotationCount !== 1 ? 's' : ''} on disk
-                  <span className="text-gray-500"> (modifies files in-place)</span>
                 </p>
               )}
             </div>
@@ -188,9 +167,10 @@ export function ExecutePanel({
         ) : (
           /* Options view */
           <div>
-            <h2 className="text-lg font-semibold mb-1">Execute Actions</h2>
+            <h2 className="text-lg font-semibold mb-1">Delete Rated Images</h2>
             <p className="text-xs text-gray-500 mb-5">
-              Deletion is permanent — files are removed, not moved to the trash.
+              Deleting is all Execute does — a rotation is written to the file the moment you press
+              the key. Deletion is permanent: files are removed, not moved to the trash.
             </p>
 
             {/* Delete range — the bottom is fixed at one star on purpose */}
@@ -226,30 +206,6 @@ export function ExecutePanel({
               </p>
             </div>
 
-            {/* Apply rotations checkbox */}
-            <div className="mb-6">
-              <label
-                className={`flex items-center gap-2 text-sm ${rotatedCount > 0 ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
-                data-testid="apply-rotations-checkbox"
-              >
-                <input
-                  type="checkbox"
-                  checked={applyRotations && rotatedCount > 0}
-                  disabled={rotatedCount === 0}
-                  onChange={(e) => setApplyRotations(e.target.checked)}
-                  className="accent-blue-500"
-                />
-                <span>Apply rotations to files</span>
-                {rotatedCount > 0 ? (
-                  <span className="text-gray-500 text-xs">
-                    ({rotatedCount} image{rotatedCount !== 1 ? 's' : ''})
-                  </span>
-                ) : (
-                  <span className="text-gray-500 text-xs">(none rotated)</span>
-                )}
-              </label>
-            </div>
-
             {/* Action buttons */}
             <div className="flex justify-end gap-3">
               <button
@@ -261,9 +217,9 @@ export function ExecutePanel({
               </button>
               <button
                 onClick={handleExecuteClick}
-                disabled={deleteCount === 0 && rotationCount === 0}
+                disabled={deleteCount === 0}
                 className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                  deleteCount === 0 && rotationCount === 0
+                  deleteCount === 0
                     ? 'bg-gray-600 cursor-not-allowed text-gray-400'
                     : 'bg-red-600 hover:bg-red-700'
                 }`}

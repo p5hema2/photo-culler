@@ -17,13 +17,12 @@ vi.mock('node:fs/promises', () => {
   return { ...fs, default: fs };
 });
 
-// ipc-handlers pulls in electron, sharp and the store at module scope
+// ipc-handlers pulls in electron and the store at module scope
 vi.mock('electron', () => ({
   app: { getVersion: () => '1.2.0' },
   ipcMain: { handle: vi.fn() },
   dialog: { showOpenDialog: vi.fn() },
 }));
-vi.mock('sharp', () => ({ default: vi.fn() }));
 vi.mock('../store', () => ({ getSession: vi.fn(), updateSession: vi.fn() }));
 vi.mock('@photo-culler/image-utils', () => ({ scanFolder: vi.fn() }));
 
@@ -83,7 +82,7 @@ describe('readResultsFile', () => {
 
   it('still returns legacy data when the rename fails', async () => {
     // Migration is best-effort: a locked or read-only folder must never cost
-    // the user their existing scores and rotations.
+    // the user their existing quality scores.
     mockReadFile.mockImplementation(async (filePath: string) => {
       if (filePath.endsWith(CURRENT)) throw enoent();
       return '{"version":1,"legacy":true}';

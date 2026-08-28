@@ -460,7 +460,7 @@ export function Toolbar({
             : 'bg-gray-600 cursor-not-allowed text-gray-400'
         }`}
         data-testid="execute-btn"
-        title="Permanently delete low-rated images and apply rotations"
+        title="Permanently delete low-rated images"
       >
         Execute
       </button>

@@ -49,6 +49,17 @@ export interface UseFullImageOptions {
    * disk, paying for it is what makes the next keypress wait.
    */
   debounceMs?: number;
+  /**
+   * Bumped by the caller when the BYTES behind a path may have changed under it.
+   *
+   * A rotation is the case that needs it: it rewrites the file's EXIF
+   * Orientation tag in place, so the path is identical and nothing here would
+   * otherwise notice — the URL on screen and every prefetched neighbour were
+   * decoded from the old bytes, and the browser has already applied the old
+   * orientation to them. A change to this value releases the lot and re-reads
+   * the focused image.
+   */
+  reloadToken?: number;
 }
 
 /**
@@ -64,7 +75,7 @@ export interface UseFullImageOptions {
  * original — 6 MB a keypress.
  */
 export function useFullImage(path: string | null, options: UseFullImageOptions = {}): FullImage {
-  const { neighbours = [], debounceMs = 0 } = options;
+  const { neighbours = [], debounceMs = 0, reloadToken = 0 } = options;
 
   const [state, setState] = useState<FullImage>({ url: null, urlPath: null, isLoading: false });
 
@@ -87,6 +98,8 @@ export function useFullImage(path: string | null, options: UseFullImageOptions =
    * storing it.
    */
   const epochRef = useRef(0);
+  /** The `reloadToken` the URLs we hold were read under. */
+  const reloadRef = useRef(reloadToken);
 
   /**
    * Read every render so the prefetch effect can use the current list without
@@ -126,6 +139,17 @@ export function useFullImage(path: string | null, options: UseFullImageOptions =
 
   // Load the focused original.
   useEffect(() => {
+    if (reloadRef.current !== reloadToken) {
+      reloadRef.current = reloadToken;
+      // Every URL we hold was decoded from bytes that have since changed. State
+      // is deliberately NOT cleared with them: revoking an object URL does not
+      // un-paint the <img> already showing it, so the caller keeps the picture
+      // it has until the re-read lands, rather than blanking for the ~100 ms a
+      // 6.2 MB original takes. shownRef is null afterwards, so the two early
+      // returns below fall through to that read.
+      releaseAll();
+    }
+
     if (!path) {
       loadingRef.current = false;
       releaseAll();
@@ -184,7 +208,7 @@ export function useFullImage(path: string | null, options: UseFullImageOptions =
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [path, debounceMs, show, releaseAll]);
+  }, [path, debounceMs, reloadToken, show, releaseAll]);
 
   // Prune to the keep set, then read the neighbours. Gated on the visible read
   // having landed: a prefetch that overtakes it would put the image the user is

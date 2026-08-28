@@ -40,7 +40,6 @@ vi.mock('electron', () => ({
   ipcMain: { handle: mockHandle },
   dialog: { showOpenDialog: vi.fn() },
 }));
-vi.mock('sharp', () => ({ default: vi.fn() }));
 vi.mock('../store', () => ({ getSession: vi.fn(), updateSession: vi.fn() }));
 vi.mock('@photo-culler/image-utils', () => ({ scanFolder: vi.fn(async () => []) }));
 

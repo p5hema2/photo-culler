@@ -16,7 +16,7 @@ export const IPC_CHANNELS = {
   READ_THUMB_SOURCE: 'fs:read-thumb-source',
   LOAD_THUMB_CACHE: 'fs:load-thumb-cache',
   SAVE_THUMB_CACHE: 'fs:save-thumb-cache',
-  ROTATE_FILES: 'fs:rotate-files',
+  ROTATE_IMAGE: 'fs:rotate-image',
   WRITE_RATING: 'fs:write-rating',
   CLEAN_UP_FOLDER: 'fs:clean-up-folder',
   READ_DETAILED_METADATA: 'meta:read-detailed',
@@ -170,12 +170,21 @@ export interface QualitySubscores {
 }
 
 /**
- * What the results file remembers about one image.
+ * What the results file remembers about one image: quality scores, and nothing
+ * else.
  *
  * Deliberately NOT the rating: the image file itself is the authority for that
  * (xmp:Rating and the EXIF tag), read at scan time and written on every change.
  * A second copy here would be a cache that can disagree with the file, and the
  * file is what other tools see.
+ *
+ * Deliberately NOT a rotation either, and for the same reason. It
+ * used to hold a pending quarter-turn count that Execute applied by re-encoding
+ * the file with sharp — measured on one 6102 kB camera JPEG: 6 226 940 bytes
+ * rewritten, the file down to 1470 kB at sharp's default JPEG quality, and the
+ * embedded MPF preview destroyed, which drops that photo off the fast thumbnail
+ * path for good. Rotation is now a change to the file's EXIF Orientation tag,
+ * applied immediately: 31 ms, one byte. The tag is the only place it lives.
  *
  * Every field is optional, so an image the app has merely seen needs no entry.
  */
@@ -184,8 +193,30 @@ export interface ImageResult {
   qualityScore?: number;
   /** Individual metric scores (0-100 each) */
   qualitySubscores?: QualitySubscores;
-  /** Visual rotation in degrees (0, 90, 180, 270) */
-  rotation?: number;
+}
+
+/**
+ * Which way a rotation turns the photo, as the user sees it.
+ *
+ * Structurally the same union as `RotateDirection` in
+ * `@photo-culler/image-utils/orientation`, declared again here because that
+ * module is deliberately import-free and this package cannot depend on
+ * image-utils anyway — image-utils depends on it. Two members, so the
+ * duplication is cheap, and structural typing keeps the two ends compatible
+ * without a cast.
+ */
+export type RotateDirection = 'cw' | 'ccw';
+
+/**
+ * Outcome of a rotation. Reported rather than swallowed, like a rating write:
+ * the tag on disk is the only place the rotation lives, so a failed write with
+ * a turned photo on screen is a lie the app cannot recover from.
+ */
+export interface RotateResult {
+  ok: boolean;
+  /** The EXIF orientation now on disk, 1-8. Present only when `ok`. */
+  orientation?: number;
+  error?: string;
 }
 
 export interface ResultsFile {
@@ -247,9 +278,16 @@ export interface ElectronAPI {
    * process (THUMB_SUFFIX) — the bytes travel opaquely.
    */
   saveThumbCache: (filePath: string, thumbBuffer: ArrayBuffer) => Promise<void>;
-  rotateFiles: (
-    files: Array<{ path: string; degrees: number }>,
-  ) => Promise<{ succeeded: string[]; failed: Array<{ path: string; error: string }> }>;
+  /**
+   * Turn one image a quarter turn, immediately, by rewriting its EXIF
+   * Orientation tag.
+   *
+   * One image rather than the batch this replaced, because a tag change is
+   * cheap enough to be interactive — so there is no pending state for Execute
+   * to apply, and undo is just a turn the other way. The main process reads the
+   * current tag itself; the renderer has nothing to keep in step.
+   */
+  rotateImage: (filePath: string, direction: RotateDirection) => Promise<RotateResult>;
   /**
    * Write a star rating (0-5, 0 = unrated) into the image file's XMP and EXIF.
    *
@@ -269,7 +307,7 @@ export interface ElectronAPI {
    * Remove cached thumbnails and saved records whose image no longer exists,
    * anywhere below `folderPath`, plus anything left over from an older
    * thumbnail format. Asks the user to confirm first, because records carry
-   * scores and rotations.
+   * quality scores.
    *
    * `legacyRemoved` counts old-format cache items, which are reported apart
    * from `thumbsRemoved` because one of them can be a directory holding

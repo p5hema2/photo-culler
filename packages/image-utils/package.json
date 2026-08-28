@@ -12,7 +12,8 @@
     "./folders": "./src/folders.ts",
     "./scanner": "./src/scanner.ts",
     "./metadata": "./src/metadata.ts",
-    "./rating": "./src/rating.ts"
+    "./rating": "./src/rating.ts",
+    "./orientation": "./src/orientation.ts"
   },
   "scripts": {
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",

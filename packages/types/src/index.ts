@@ -18,6 +18,8 @@ export type {
   QualitySubscores,
   ResultsFile,
   MenuCommand,
+  RotateDirection,
+  RotateResult,
   ScanProgress,
   ThumbSource,
   ThumbSourceFallback,

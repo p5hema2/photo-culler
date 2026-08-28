@@ -3,6 +3,8 @@ import type {
   ImageFileInfo,
   ResultsFile,
   QualitySubscores,
+  RotateDirection,
+  RotateResult,
   ScanProgress,
 } from '@photo-culler/types';
 import { sortImages } from '@photo-culler/image-utils/sorting';
@@ -105,7 +107,21 @@ export interface PhotoState {
    * only once every image has been scrolled past at least once.
    */
   thumbnailProgress: { completed: number; total: number };
-  rotations: Record<string, number>;
+  /**
+   * Bumped once per rotation that has landed on disk.
+   *
+   * A rotation is not renderer state any more — it is the image file's EXIF
+   * Orientation tag — but the views holding DECODED copies of those bytes cannot
+   * see that the file moved: `useFullImage` caches an object URL per path, and
+   * the path is what a rotation does not change. This is the signal that says
+   * "re-read what you are showing"; the thumbnail cache is told directly, by
+   * `invalidate`.
+   *
+   * One counter for the whole session rather than a version per path: a rotation
+   * is roughly one keypress in 3000, so dropping the two or three originals the
+   * loupe has read ahead is cheaper than the bookkeeping to be precise about it.
+   */
+  fileRevision: number;
 }
 
 const initialState: PhotoState = {
@@ -128,7 +144,7 @@ const initialState: PhotoState = {
   qualitySubscores: {},
   scoringProgress: { completed: 0, total: 0 },
   thumbnailProgress: { completed: 0, total: 0 },
-  rotations: {},
+  fileRevision: 0,
 };
 
 /** What Execute deletes unless the user widens it: one-star images only. */
@@ -143,12 +159,10 @@ export interface ExecuteOptions {
    * the panel is configured.
    */
   deleteRange: RatingRange;
-  applyRotations: boolean;
 }
 
 export interface ExecuteResult {
   deletedCount: number;
-  rotatedCount: number;
   failedPaths: Array<{ path: string; error: string }>;
 }
 
@@ -321,7 +335,11 @@ export interface PhotoStoreAPI {
   deleteImages: (paths: string[]) => Promise<void>;
   setQualityScore: (imagePath: string, score: number, subscores?: QualitySubscores) => void;
   setScoringProgress: (progress: { completed: number; total: number }) => void;
-  rotateImage: (imagePath: string, direction: 'cw' | 'ccw') => void;
+  /**
+   * Turn one image a quarter turn on disk, now. Fire-and-forget: a failure
+   * surfaces in `state.error`, it cannot leave state and the file disagreeing.
+   */
+  rotateImage: (imagePath: string, direction: RotateDirection) => void;
   cancelPendingSave: () => void;
   /**
    * Drop in-memory records for images that are no longer on disk, mirroring
@@ -696,7 +714,6 @@ export function usePhotoStore(): PhotoStoreAPI {
         const ratings: Record<string, number> = {};
         const qualityScores: Record<string, number> = {};
         const qualitySubscores: Record<string, QualitySubscores> = {};
-        const rotations: Record<string, number> = {};
 
         for (const img of images) {
           // From the file, never from the results file — the scan already read
@@ -712,7 +729,6 @@ export function usePhotoStore(): PhotoStoreAPI {
           if (!stored) continue;
           if (stored.qualityScore != null) qualityScores[img.path] = stored.qualityScore;
           if (stored.qualitySubscores) qualitySubscores[img.path] = stored.qualitySubscores;
-          if (stored.rotation) rotations[img.path] = stored.rotation;
         }
 
         // Every folder gets an entry, so a shoot that has never been culled
@@ -728,7 +744,6 @@ export function usePhotoStore(): PhotoStoreAPI {
           ratings,
           qualityScores,
           qualitySubscores,
-          rotations,
           isLoading: false,
           focusedImageId: first,
           // The cursor landing on the first image selects it, same as it does
@@ -906,143 +921,84 @@ export function usePhotoStore(): PhotoStoreAPI {
     setState((prev) => ({ ...prev, error: null }));
   }, []);
 
-  const executeActions = useCallback(
-    async (options: ExecuteOptions): Promise<ExecuteResult> => {
-      const current = stateRef.current;
-      if (!current.folderPath) {
-        return { deletedCount: 0, rotatedCount: 0, failedPaths: [] };
-      }
+  const executeActions = useCallback(async (options: ExecuteOptions): Promise<ExecuteResult> => {
+    const current = stateRef.current;
+    if (!current.folderPath) {
+      return { deletedCount: 0, failedPaths: [] };
+    }
 
-      const executeResult: ExecuteResult = {
-        deletedCount: 0,
-        rotatedCount: 0,
-        failedPaths: [],
+    const executeResult: ExecuteResult = {
+      deletedCount: 0,
+      failedPaths: [],
+    };
+
+    // Only operate on currently visible (filtered) images
+    const visibleImages = filteredImagesRef.current;
+
+    // The window always starts at one star, whatever the panel passed: an
+    // unrated image must not be deletable, and that is the only thing keeping
+    // "select all, execute" from wiping a shoot nobody has rated yet.
+    const deleteRange: RatingRange = {
+      min: Math.max(1, options.deleteRange.min),
+      max: options.deleteRange.max,
+    };
+    const deletePaths = visibleImages
+      .filter((img) => isInRatingRange(current.ratings[img.path], deleteRange))
+      .map((img) => img.path);
+
+    if (deletePaths.length > 0) {
+      const deleteResult = await window.api.deleteFiles(deletePaths);
+      executeResult.deletedCount = deleteResult.succeeded.length;
+      executeResult.failedPaths.push(...deleteResult.failed);
+    }
+
+    // Collect paths that were successfully processed (not in failedPaths)
+    const failedPathSet = new Set(executeResult.failedPaths.map((f) => f.path));
+    const succeededDeletePaths = new Set(deletePaths.filter((p) => !failedPathSet.has(p)));
+
+    // Remove succeeded images from state
+    setState((prev) => {
+      const nextImages = prev.images.filter((img) => !succeededDeletePaths.has(img.path));
+      const nextRatings = { ...prev.ratings };
+      for (const path of succeededDeletePaths) delete nextRatings[path];
+      // Execute can delete the cursor along with everything else it sweeps
+      // up — often hundreds of images at once, which is exactly where landing
+      // by old index goes wrong. Same helper as deleteImages.
+      const nextFocused = focusAfterRemoval(prev.images, prev.focusedImageId, succeededDeletePaths);
+      return {
+        ...prev,
+        images: nextImages,
+        ratings: nextRatings,
+        focusedImageId: nextFocused,
+        ...selectionAfterRemoval(prev, succeededDeletePaths, nextFocused),
       };
+    });
 
-      // Only operate on currently visible (filtered) images
-      const visibleImages = filteredImagesRef.current;
+    // Cancel any pending debounced save
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
 
-      // Apply rotations to files on disk if requested
-      if (options.applyRotations) {
-        const rotatedFiles = visibleImages
-          .filter((img) => (current.rotations[img.path] ?? 0) !== 0)
-          .map((img) => ({
-            path: img.path,
-            folder: img.folder,
-            degrees: current.rotations[img.path]!,
-          }));
+    // Rewrite each affected folder's file immediately (not debounced).
+    const remaining = stateRef.current.images.filter((img) => !succeededDeletePaths.has(img.path));
+    const touched = new Set<string>();
+    for (const path of succeededDeletePaths) {
+      const folder = current.images.find((img) => img.path === path)?.folder;
+      if (folder) touched.add(folder);
+    }
 
-        if (rotatedFiles.length > 0) {
-          const rotateResult = await window.api.rotateFiles(
-            rotatedFiles.map((f) => ({ path: f.path, degrees: f.degrees })),
-          );
-          executeResult.failedPaths.push(...rotateResult.failed);
-          executeResult.rotatedCount = rotateResult.succeeded.length;
+    for (const folderPath of touched) {
+      const existing = resultsRef.current.get(folderPath);
+      if (!existing) continue;
+      const keepNames = remaining.filter((img) => img.folder === folderPath).map((img) => img.name);
+      const rebuilt = rebuildResults(existing, keepNames);
+      resultsRef.current.set(folderPath, rebuilt);
+      await saveResults(folderPath, rebuilt);
+    }
 
-          // Clear rotation state for successfully rotated images
-          const rotatedSet = new Set<string>(rotateResult.succeeded);
-          setState((prev) => {
-            const newRotations = { ...prev.rotations };
-            for (const file of rotatedFiles) {
-              if (rotatedSet.has(file.path)) {
-                delete newRotations[file.path];
-              }
-            }
-            return { ...prev, rotations: newRotations };
-          });
-
-          // The projection reads rotations from state, which we just cleared, so
-          // marking the affected folders dirty is enough to drop them on disk.
-          for (const file of rotatedFiles) {
-            if (rotatedSet.has(file.path)) markDirty(file.folder);
-          }
-
-          // The file on disk changed, so its cached thumbnail is now wrong.
-          // Deliberately after the rotation state is cleared: invalidating first
-          // would let the cell redraw the freshly rotated file with the old
-          // rotation still applied, double-rotating it.
-          for (const filePath of rotatedSet) {
-            thumbnailWorkerRef.current.invalidate(filePath);
-          }
-        }
-      }
-
-      // The window always starts at one star, whatever the panel passed: an
-      // unrated image must not be deletable, and that is the only thing keeping
-      // "select all, execute" from wiping a shoot nobody has rated yet.
-      const deleteRange: RatingRange = {
-        min: Math.max(1, options.deleteRange.min),
-        max: options.deleteRange.max,
-      };
-      const deletePaths = visibleImages
-        .filter((img) => isInRatingRange(current.ratings[img.path], deleteRange))
-        .map((img) => img.path);
-
-      if (deletePaths.length > 0) {
-        const deleteResult = await window.api.deleteFiles(deletePaths);
-        executeResult.deletedCount = deleteResult.succeeded.length;
-        executeResult.failedPaths.push(...deleteResult.failed);
-      }
-
-      // Collect paths that were successfully processed (not in failedPaths)
-      const failedPathSet = new Set(executeResult.failedPaths.map((f) => f.path));
-      const succeededDeletePaths = new Set(deletePaths.filter((p) => !failedPathSet.has(p)));
-
-      // Remove succeeded images from state
-      setState((prev) => {
-        const nextImages = prev.images.filter((img) => !succeededDeletePaths.has(img.path));
-        const nextRatings = { ...prev.ratings };
-        for (const path of succeededDeletePaths) delete nextRatings[path];
-        // Execute can delete the cursor along with everything else it sweeps
-        // up — often hundreds of images at once, which is exactly where landing
-        // by old index goes wrong. Same helper as deleteImages.
-        const nextFocused = focusAfterRemoval(
-          prev.images,
-          prev.focusedImageId,
-          succeededDeletePaths,
-        );
-        return {
-          ...prev,
-          images: nextImages,
-          ratings: nextRatings,
-          focusedImageId: nextFocused,
-          ...selectionAfterRemoval(prev, succeededDeletePaths, nextFocused),
-        };
-      });
-
-      // Cancel any pending debounced save
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-
-      // Rewrite each affected folder's file immediately (not debounced).
-      const remaining = stateRef.current.images.filter(
-        (img) => !succeededDeletePaths.has(img.path),
-      );
-      const touched = new Set<string>();
-      for (const path of succeededDeletePaths) {
-        const folder = current.images.find((img) => img.path === path)?.folder;
-        if (folder) touched.add(folder);
-      }
-
-      for (const folderPath of touched) {
-        const existing = resultsRef.current.get(folderPath);
-        if (!existing) continue;
-        const keepNames = remaining
-          .filter((img) => img.folder === folderPath)
-          .map((img) => img.name);
-        const rebuilt = rebuildResults(existing, keepNames);
-        resultsRef.current.set(folderPath, rebuilt);
-        await saveResults(folderPath, rebuilt);
-      }
-
-      return executeResult;
-      // markDirty is referentially stable (writeFolder has no deps), so naming it
-      // here does not change this callback's identity.
-    },
-    [markDirty],
-  );
+    return executeResult;
+  }, []);
 
   const deleteImages = useCallback(async (paths: string[]) => {
     if (paths.length === 0) return;
@@ -1155,18 +1111,51 @@ export function usePhotoStore(): PhotoStoreAPI {
     });
   }, []);
 
-  const rotateImage = useCallback(
-    (imagePath: string, direction: 'cw' | 'ccw') => {
-      setState((prev) => {
-        const current = prev.rotations[imagePath] ?? 0;
-        const delta = direction === 'cw' ? 90 : -90;
-        const next = (((current + delta) % 360) + 360) % 360;
-        return { ...prev, rotations: { ...prev.rotations, [imagePath]: next } };
-      });
-      markDirty(folderOf(imagePath));
-    },
-    [folderOf, markDirty],
-  );
+  /**
+   * Turn one image a quarter turn, on disk, on the keypress.
+   *
+   * There is no optimistic update and nothing to roll back, because there is no
+   * renderer-side rotation left to hold: the main process changes the file's EXIF
+   * Orientation tag, and `createImageBitmap(…, { imageOrientation: 'from-image' })`
+   * means the new orientation appears as soon as the pixels are decoded again.
+   * Which is the one thing left to do here — main has already moved the source's
+   * mtime and deleted the on-disk cache entry, but the decoded bitmap in this
+   * process is a third copy, and it is the one on screen.
+   *
+   * Reported like a rating write, and for the same reason: the tag is the only
+   * place the rotation lives, so a failure that said nothing (a PNG, which has
+   * no orientation path this app can honour, or a file another process is
+   * holding) would leave the user believing they had turned the photo.
+   */
+  const rotateImage = useCallback((imagePath: string, direction: RotateDirection) => {
+    void (async () => {
+      let result: RotateResult;
+      try {
+        result = await window.api.rotateImage(imagePath, direction);
+      } catch (err) {
+        result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      if (!mountedRef.current) return;
+
+      if (result.ok) {
+        // Three copies of the old pixels exist, and each has its own owner: the
+        // file (main has rewritten it), the thumbnail cache (main deleted the
+        // disk entry; this drops the decoded one) and whatever full-resolution
+        // original the loupe or the info panel is holding, which is what
+        // fileRevision tells them to re-read.
+        thumbnailWorkerRef.current.invalidate(imagePath);
+        setState((prev) => ({ ...prev, fileRevision: prev.fileRevision + 1 }));
+        return;
+      }
+
+      const name = imagePath.split(/[\\/]/).pop() ?? imagePath;
+      setState((prev) => ({
+        ...prev,
+        error: `Could not rotate ${name} -- ${result.error ?? 'unknown error'}`,
+      }));
+    })();
+  }, []);
+
   // Derived state
   const filteredImages = useMemo(() => {
     let result = state.images;

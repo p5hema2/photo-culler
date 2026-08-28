@@ -4,10 +4,8 @@ import { StarRating } from './StarRating';
 import { Histogram } from './Histogram';
 import { useZoomPan } from '../hooks/useZoomPan';
 import { useFullImage } from '../hooks/useFullImage';
-import { fitRotated } from '../lib/thumbnail-geometry';
 import { FocusPeakingOverlay } from './FocusPeakingOverlay';
 import { ExposureClippingOverlay } from './ExposureClippingOverlay';
-import { RotatedImageStage } from './RotatedImageStage';
 import { AfPointOverlay } from './AfPointOverlay';
 import { OverlayControls } from './OverlayControls';
 import { CollapsibleSection } from './CollapsibleSection';
@@ -24,7 +22,8 @@ interface InfoPanelProps {
   onRate: (imagePath: string, rating: number) => void;
   qualityScore?: number;
   qualitySubscores?: QualitySubscores;
-  rotation?: number;
+  /** See PhotoState.fileRevision — bumped when a rotation rewrites a file. */
+  fileRevision: number;
   isOpen: boolean;
   onToggle: () => void;
   overlaySettings: OverlaySettings;
@@ -145,7 +144,7 @@ export function InfoPanel({
   onRate,
   qualityScore,
   qualitySubscores,
-  rotation = 0,
+  fileRevision,
   isOpen,
   onToggle,
   overlaySettings,
@@ -180,7 +179,12 @@ export function InfoPanel({
     url: previewUrl,
     urlPath: previewUrlPath,
     isLoading: loadingPreview,
-  } = useFullImage(isOpen ? (image?.path ?? null) : null, { debounceMs: 180 });
+  } = useFullImage(isOpen ? (image?.path ?? null) : null, {
+    debounceMs: 180,
+    // A rotation rewrites the file's EXIF Orientation tag under an unchanged
+    // path, so the original already read carries the old one.
+    reloadToken: fileRevision,
+  });
 
   /**
    * What is on screen is not the focused image yet. Three phases count as "not
@@ -215,28 +219,21 @@ export function InfoPanel({
    * anyone would judge focus by. The histogram never sees it: `previewImgElement`
    * is only ever set from the <img> holding a full-resolution original.
    *
-   * The rotation is baked into the pixels rather than applied in CSS, so
-   * `object-contain` scales the result the way it will scale the original.
+   * Drawn 1:1 and sized by `object-contain`, exactly as the original that
+   * replaces it is: the bitmap arrives EXIF-oriented from the thumbnail worker,
+   * and so does the <img>, so the two agree about which way is up without this
+   * having to transform anything.
    */
   useEffect(() => {
     const canvas = placeholderCanvasRef.current;
     if (!canvas || !placeholderBitmap) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const longestEdge = Math.max(placeholderBitmap.width, placeholderBitmap.height);
-    const {
-      canvas: size,
-      draw,
-      radians,
-    } = fitRotated(placeholderBitmap.width, placeholderBitmap.height, longestEdge, rotation);
-    canvas.width = size.width;
-    canvas.height = size.height;
-    ctx.clearRect(0, 0, size.width, size.height);
-    ctx.translate(size.width / 2, size.height / 2);
-    if (radians !== 0) ctx.rotate(radians);
-    ctx.drawImage(placeholderBitmap, -draw.width / 2, -draw.height / 2, draw.width, draw.height);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-  }, [placeholderBitmap, rotation]);
+    canvas.width = placeholderBitmap.width;
+    canvas.height = placeholderBitmap.height;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(placeholderBitmap, 0, 0);
+  }, [placeholderBitmap]);
 
   // Compute quick stats
   const megapixels =
@@ -291,61 +288,55 @@ export function InfoPanel({
                       display: 'inline-block',
                     }}
                   >
-                    <RotatedImageStage
-                      width={imageDimensions.width}
-                      height={imageDimensions.height}
-                      rotation={rotation ?? 0}
-                    >
-                      <img
-                        // Keyed on the URL so every original mounts its own
-                        // element: the histogram is keyed on element identity,
-                        // and reusing one would leave it showing the previous
-                        // image's data.
-                        key={previewUrl}
-                        ref={(el) => {
-                          previewImgRef.current = el;
-                        }}
-                        src={previewUrl}
-                        alt={image.name}
-                        className="max-w-none select-none"
-                        crossOrigin="anonymous"
-                        draggable={false}
-                        data-testid="info-panel-preview"
-                        onLoad={() => {
-                          const el = previewImgRef.current;
-                          if (el) {
-                            setImageDimensions({
-                              width: el.naturalWidth,
-                              height: el.naturalHeight,
-                            });
-                          }
-                          setPreviewImgElement(previewImgRef.current);
-                        }}
+                    <img
+                      // Keyed on the URL so every original mounts its own
+                      // element: the histogram is keyed on element identity,
+                      // and reusing one would leave it showing the previous
+                      // image's data.
+                      key={previewUrl}
+                      ref={(el) => {
+                        previewImgRef.current = el;
+                      }}
+                      src={previewUrl}
+                      alt={image.name}
+                      className="max-w-none select-none"
+                      crossOrigin="anonymous"
+                      draggable={false}
+                      data-testid="info-panel-preview"
+                      onLoad={() => {
+                        const el = previewImgRef.current;
+                        if (el) {
+                          setImageDimensions({
+                            width: el.naturalWidth,
+                            height: el.naturalHeight,
+                          });
+                        }
+                        setPreviewImgElement(previewImgRef.current);
+                      }}
+                    />
+                    {showFocusPeaking && (
+                      <FocusPeakingOverlay
+                        imageUrl={previewUrl}
+                        imageDimensions={imageDimensions}
+                        visible={showFocusPeaking}
+                        threshold={focusPeakingThreshold}
                       />
-                      {showFocusPeaking && (
-                        <FocusPeakingOverlay
-                          imageUrl={previewUrl}
-                          imageDimensions={imageDimensions}
-                          visible={showFocusPeaking}
-                          threshold={focusPeakingThreshold}
-                        />
-                      )}
-                      {showClipping && (
-                        <ExposureClippingOverlay
-                          imageUrl={previewUrl}
-                          imageDimensions={imageDimensions}
-                          visible={showClipping}
-                        />
-                      )}
-                      {showAfPoint && (
-                        <AfPointOverlay
-                          focus={focus}
-                          imageDimensions={imageDimensions}
-                          zoom={zoomPan.zoom}
-                          visible={showAfPoint}
-                        />
-                      )}
-                    </RotatedImageStage>
+                    )}
+                    {showClipping && (
+                      <ExposureClippingOverlay
+                        imageUrl={previewUrl}
+                        imageDimensions={imageDimensions}
+                        visible={showClipping}
+                      />
+                    )}
+                    {showAfPoint && (
+                      <AfPointOverlay
+                        focus={focus}
+                        imageDimensions={imageDimensions}
+                        zoom={zoomPan.zoom}
+                        visible={showAfPoint}
+                      />
+                    )}
                   </div>
                 )}
                 {/* Placeholder over whatever original is still on screen. */}

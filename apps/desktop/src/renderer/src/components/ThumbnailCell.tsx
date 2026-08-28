@@ -3,7 +3,7 @@ import type { ImageFileInfo } from '@photo-culler/types';
 import type { FocusOrigin } from '../lib/focus-scroll';
 import { clickModifier } from '../lib/selection';
 import type { SelectionClickModifier } from '../lib/selection';
-import { fitRotated, THUMB_MAX_EDGE } from '../lib/thumbnail-geometry';
+import { fitToBox, THUMB_MAX_EDGE } from '../lib/thumbnail-geometry';
 import { StarRating } from './StarRating';
 import type { StarRatingSize } from './StarRating';
 
@@ -14,7 +14,6 @@ interface ThumbnailCellProps {
   cellSize: number;
   rating: number | undefined;
   qualityScore?: number;
-  rotation?: number;
   isFocused: boolean;
   /**
    * Whether this cell is part of the batch that rating and deletion act on.
@@ -57,7 +56,6 @@ export function ThumbnailCell({
   cellSize,
   rating,
   qualityScore,
-  rotation = 0,
   isFocused,
   isSelected = false,
   onFocus,
@@ -93,14 +91,12 @@ export function ThumbnailCell({
 
     // Account for the image box's 4px inset on each side = 8px total
     const box = cellSize - 8;
-    const {
-      canvas: size,
-      draw,
-      radians,
-    } = fitRotated(thumbnail.width, thumbnail.height, box * dpr, rotation);
+    const size = fitToBox(thumbnail.width, thumbnail.height, box * dpr);
 
-    // The canvas takes the rotated footprint, so a portrait thumbnail rendered
-    // at 90 degrees gets a landscape canvas rather than overflowing a square one.
+    // The canvas takes the bitmap's own footprint, so a portrait thumbnail gets
+    // a portrait canvas rather than overflowing a square one. The bitmap already
+    // arrives EXIF-oriented — see the worker's createImageBitmap call — so there
+    // is nothing left for the cell to turn.
     //
     // The backing store is sized in PHYSICAL pixels and scaled back down via
     // CSS. Without that division the element would lay out at `box * dpr` CSS
@@ -115,14 +111,8 @@ export function ThumbnailCell({
     ctx.clearRect(0, 0, size.width, size.height);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-
-    // Uniform for all four angles: draw centred in the canvas, in the bitmap's
-    // own axes, and let the rotation carry it into place.
-    ctx.translate(size.width / 2, size.height / 2);
-    if (radians !== 0) ctx.rotate(radians);
-    ctx.drawImage(thumbnail, -draw.width / 2, -draw.height / 2, draw.width, draw.height);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-  }, [thumbnail, cellSize, rotation, dpr]);
+    ctx.drawImage(thumbnail, 0, 0, size.width, size.height);
+  }, [thumbnail, cellSize, dpr]);
 
   const stars = starsForCell(cellSize);
   // Five empty stars on every unrated cell would be noise where they cannot be

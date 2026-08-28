@@ -30,7 +30,8 @@ const api: ElectronAPI = {
   loadThumbCache: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.LOAD_THUMB_CACHE, filePath),
   saveThumbCache: (filePath, thumbBuffer) =>
     ipcRenderer.invoke(IPC_CHANNELS.SAVE_THUMB_CACHE, filePath, thumbBuffer),
-  rotateFiles: (files) => ipcRenderer.invoke(IPC_CHANNELS.ROTATE_FILES, files),
+  rotateImage: (filePath, direction) =>
+    ipcRenderer.invoke(IPC_CHANNELS.ROTATE_IMAGE, filePath, direction),
   writeRating: (filePath, rating) =>
     ipcRenderer.invoke(IPC_CHANNELS.WRITE_RATING, filePath, rating),
   readDetailedMetadata: (filePath) =>

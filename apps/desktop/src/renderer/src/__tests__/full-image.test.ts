@@ -188,6 +188,46 @@ describe('useFullImage', () => {
     expect(doubleRevoked).toEqual([]);
   });
 
+  it('re-reads the same path when reloadToken changes, which is what a rotation does', async () => {
+    // A rotation rewrites the file's EXIF Orientation tag in place: the path is
+    // identical, so without this the URL on screen — decoded from the old bytes,
+    // with the old orientation already applied — would stay up until focus
+    // wandered far enough to evict it.
+    const { result, rerender } = renderHook(
+      (props: { token: number }) =>
+        useFullImage('/shoot/1.jpg', { neighbours: ['/shoot/2.jpg'], reloadToken: props.token }),
+      { initialProps: { token: 0 } },
+    );
+
+    await flush();
+    expect(readPaths()).toEqual(['/shoot/1.jpg', '/shoot/2.jpg']);
+    const before = result.current.url;
+
+    rerender({ token: 1 });
+    await flush();
+
+    expect(readPaths()).toEqual(['/shoot/1.jpg', '/shoot/2.jpg', '/shoot/1.jpg', '/shoot/2.jpg']);
+    expect(result.current.url).not.toBe(before);
+    expect(result.current.urlPath).toBe('/shoot/1.jpg');
+    // The released URLs are dropped exactly once, and only the fresh pair is
+    // still live — the point of the exclusive-ownership rule in the hook.
+    expect(live.size).toBe(2);
+    expect(doubleRevoked).toEqual([]);
+  });
+
+  it('does not re-read anything while reloadToken stands still', async () => {
+    const { rerender } = renderHook(
+      (props: { token: number }) => useFullImage('/shoot/1.jpg', { reloadToken: props.token }),
+      { initialProps: { token: 7 } },
+    );
+
+    await flush();
+    rerender({ token: 7 });
+    await flush();
+
+    expect(readFile).toHaveBeenCalledTimes(1);
+  });
+
   it('revokes the old folder URLs once focus lands in a new one', async () => {
     const { rerender } = renderHook(
       (props: { path: string; neighbours: string[] }) =>

@@ -4,7 +4,8 @@
 
 **Photo Culler** — a local-first Electron desktop app for triaging photo shoots. Open a folder,
 review images, rate them 0-5 stars, then batch-execute: permanently delete everything inside a
-`1..x` star range and apply the pending rotations to disk.
+`1..x` star range. Deleting is all Execute does — a rotation lands on disk the moment the key is
+pressed.
 
 0 stars and "unrated" are the same thing, and Execute's range always starts at 1 — that is the one
 structural safety property in the app, because it means an image nobody has looked at cannot be
@@ -14,10 +15,10 @@ Opening a folder scans it **recursively**, so a parent holding several shoots ca
 session; the grid shows one collapsible section per folder.
 
 No server, no accounts, no network calls. All state lives beside the user's photos:
-`.photo-culler-results.json` (quality scores and pending rotations) and a `.photo-culler-thumbs/`
+`.photo-culler-results.json` (quality scores and nothing else) and a `.photo-culler-thumbs/`
 cache dir — **one of each per directory**, beside the photos they describe. Treat both as user data;
-losing them costs real culling work. Ratings are the exception: they live in the image files
-themselves, which is a trap of its own below.
+losing them costs real culling work. Ratings and rotation are the exceptions: both live in the image
+files themselves, and each is a trap of its own below.
 
 Stack: Electron 41 + React 19 + TypeScript + Tailwind 4, in a pnpm/Turborepo monorepo.
 
@@ -43,10 +44,10 @@ Toolchain: pnpm 10.32.1 (`packageManager` field), Node >= 20.19.0 locally, Node 
 ## Architecture
 
 ```
-main/          Node side: fs ops, native dialogs, permanent delete (unlink), sharp
-               rotation, exifr metadata at scan time, exiftool rating writes and
-               deep metadata reads, electron-store session, app:// protocol
-               handler, the native menu
+main/          Node side: fs ops, native dialogs, permanent delete (unlink), exifr
+               metadata at scan time, exiftool rating writes, orientation-tag
+               rotation and deep metadata reads, electron-store session, app://
+               protocol handler, the native menu
   |            typed IPC — contract lives in packages/types/src/ipc.ts
 preload/       contextBridge -> window.api + window.menuEvents
                (contextIsolation on, sandbox on, nodeIntegration off — keep it that way)
@@ -55,8 +56,8 @@ renderer/      React. usePhotoStore.ts is the state brain (~1000 lines).
 ```
 
 Shared packages: `@photo-culler/types` (IPC contract + domain types), `@photo-culler/image-utils`
-(scanner, metadata, rating, grouping, sorting), `@photo-culler/tsconfig` (shared TS configs),
-`@photo-culler/ui` (empty placeholder).
+(scanner, metadata, rating, orientation, grouping, sorting), `@photo-culler/tsconfig` (shared TS
+configs), `@photo-culler/ui` (empty placeholder).
 
 ## Traps
 
@@ -72,13 +73,20 @@ runtime, not build time.
 
 `tsc` deliberately does **not** use those aliases — it resolves through the packages' own manifests
 instead, so a new deep import needs one entry in `packages/image-utils`'s `exports` map rather than
-two more copies of the alias table. Net effect: a new deep import touches the two vite/vitest
-configs plus `exports`. If it works at runtime but `pnpm typecheck` cannot find it, the `exports`
-entry is what is missing.
+two more copies of the alias table. If it works at runtime but `pnpm typecheck` cannot find it, the
+`exports` entry is what is missing.
+
+"Every relevant one" is the operative word: check which places actually resolve the import rather
+than adding four entries reflexively. `@photo-culler/image-utils/orientation`, imported by the main
+process only, needed the `exports` entry and **nothing else** — the `main` block and
+`vitest.config.ts` each carry a whole-package `'@photo-culler/image-utils'` alias, and Vite
+aliases are prefix matches, so a deep path falls through the specific entries to that one. The
+`renderer` block is the exception that needs each deep path spelled out, because it has no such
+catch-all, on purpose — see the barrel trap below.
 
 **Renderer state is keyed by absolute PATH; results files are keyed by basename.** Both matter.
 With subfolders in play `IMG_001.JPG` is not unique, so every in-memory map (`ratings`,
-`qualityScores`, `qualitySubscores`, `rotations`) keys by full path. The files on disk keep their
+`qualityScores`, `qualitySubscores`) keys by full path. The files on disk keep their
 original basename keying, which is only unambiguous because there is one file per directory — and
 which is why every results file written before recursive scanning still loads unchanged.
 `projectFolderResults` in `lib/results.ts` is the single place that translates between the two.
@@ -87,7 +95,8 @@ which is why every results file written before recursive scanning still loads un
 **Mutations do not write the results file; they mark a folder dirty.** `markDirty(folder)` queues a
 debounced flush that projects state onto that folder's file. Setters used to mirror each field into
 the results object by hand, which is how the delete path came to drop two of six fields — a single
-Delete stripped `qualitySubscores` and `rotation` from every remaining image in the folder.
+Delete stripped `qualitySubscores` and the then-pending `rotation` from every remaining image in
+the folder.
 `rebuildResults` and `projectFolderResults` in `lib/results.ts` are now the only two projections,
 both spread the existing entry so a new `ImageResult` field cannot be lost by omission, and
 `results-rebuild.test.ts` guards them. Do not reintroduce inline writes.
@@ -117,13 +126,103 @@ mtime, and `LOAD_THUMB_CACHE` discards any thumbnail older than its source: rati
 destroy 2000 cache entries and force 2000 full-size decodes. It would also corrupt burst grouping,
 which falls back to `lastModified` where a file has no `DateTimeOriginal`, and evict the
 detail-metadata cache, which is keyed on mtime. Suppressing a freshness signal is only safe because a
-rating write changes no pixels — do not carry `-P` over to any path that does.
+rating write changes no pixels — do not carry `-P` over to any path that does. `rotateImage` in the
+same file is that path, and the next trap is about it.
 
 `-P` restores the timestamp at the resolution exiftool recorded it, and that differs by platform:
 exact on Windows, truncated to the whole second on macOS. **The guarantee is therefore "never moves
 forward", not "bit-identical"** — truncation moves the mtime backwards, which only makes the freshness
 check pass more easily. A test asserting bit-equality passes on Windows and fails on macOS; that
 already cost one red CI run on v1.6.0, where the shipped code was correct and the assertion was not.
+
+**Rotation is an EXIF Orientation tag change, and `-P` must NOT be passed for it.** Same tool, same
+file, one flag, opposite requirement — the one place in this codebase where copying the neighbouring
+call is the bug. `writeRating` needs `-P` because a rating changes no displayed pixels, so the
+mtime must not move; `rotateImage` must NOT pass it because a rotation changes which way up the
+photo is, and the moving mtime is exactly the signal `LOAD_THUMB_CACHE` reads to decide the cached
+thumbnail is stale. Here invalidation is the goal rather than the cost. The handler deletes the cache
+file as well (`removeThumbCache`, whose other caller is the delete path) — one unlink, which closes
+the same-millisecond tie and stops a thumbnail nobody can serve sitting on disk until the next
+vacuum. `rotate.test.ts` asserts the mtime moves FORWARD, the mirror image of the rating write's
+assertion.
+
+Why the tag rather than the pixels, measured on one 6102 kB camera JPEG:
+
+| | `sharp(...).rotate(90).withMetadata()` — up to 1.6.x | changing the Orientation tag |
+|---|---|---|
+| duration | 225 ms | **31 ms** |
+| file size after | 6102 kB -> **1470 kB** | 6102 kB -> 6102 kB |
+| bytes changed | 6 226 940 | **1** |
+| embedded MPF preview | **destroyed** | intact |
+
+So the old path re-encoded at sharp's default JPEG quality, threw away ~76% of the photo, and
+stripped the preview — which permanently drops that file off the fast thumbnail path. It was latent
+data loss rather than a reported bug only because the user rotates about one image in 3000. Three
+consequences of the change worth knowing:
+
+- **The results file no longer holds a rotation**, and `ExecuteOptions.applyRotations`,
+  `rotatedCount` and the `ROTATE_FILES` batch channel are gone with it. `ImageResult` is
+  `qualityScore` + `qualitySubscores`, full stop. There is no pending state, so undo is just a
+  turn the other way and is lossless by construction. A legacy `rotation` sitting in a 1.6.x
+  results file is carried forward untouched by `projectFolderResults`' spread of `prior` and
+  otherwise ignored — an unexecuted rotation from that era is silently forgotten, which is cheaper
+  than a migration for a field one keypress in 3000 ever wrote.
+- **JPEG only, and the allow-list is about the DISPLAY end, not the write end.** ExifTool writes an
+  orientation tag into a PNG (eXIf chunk), a WebP (EXIF chunk) and a TIFF (its own IFD0) exactly as
+  losslessly. But the renderer applies orientation at decode time —
+  `createImageBitmap(…, { imageOrientation: 'from-image' })` in the thumbnail worker, the browser's
+  own `image-orientation` default for the `<img>` — and that is only verified for JPEG here
+  (Chromium cannot decode TIFF at all). A tag change the display path ignores is a rotation that
+  silently does nothing, so `ROTATABLE_EXTENSIONS` refuses the rest with an error the user can
+  read. Adding a format means verifying the decode side first. Re-encoding them with sharp is the
+  data loss this replaced.
+- **The current value is read in the main process, not passed in by the renderer**, so the read and
+  the write sit inside one `withFileLock` pass. The renderer's copy comes from the scan and is
+  stale the moment anything else has touched the file, and computing the next value from a stale one
+  would undo that change. The table itself is `packages/image-utils/src/orientation.ts`: two
+  four-cycles, `1->6->3->8` and `2->7->4->5`, because a quarter turn can neither add nor remove a
+  reflection — falling back to the un-mirrored cycle would silently un-mirror a file another tool
+  flipped.
+
+One benign cost, worth recording so the next person profiling the thumbnail sweep is not surprised:
+after a rotation that file loses the embedded-preview fast path **permanently**. ExifTool writes
+IFD0 only, the MPF preview keeps its own orientation, and `checkMpfPreview` rejects a preview whose
+orientation differs from its parent's (`'orientation-mismatch'`) — deliberately, or the grid would
+show it sideways. Display stays correct; the thumbnail just costs a 6.2 MB read instead of ~500 kB
+from then on.
+
+**A rotation changes a file's BYTES under an UNCHANGED PATH — which is the one thing every path-keyed
+cache in the renderer cannot see.** There are three, and each is told separately:
+
+| cache | keyed by | told by |
+|---|---|---|
+| decoded thumbnails (`useThumbnailWorker`) | path | `invalidate(path)` |
+| the full-resolution object URL (`useFullImage`) | path | `reloadToken` |
+| deep exiftool metadata (`useDetailedMetadata`) | path, module-level, survives unmount | `reloadToken` |
+
+`invalidate` also bumps a per-id epoch, so a worker response already in flight for the pre-rotation
+bytes cannot land on top of the fresh one.
+
+The main process's own deep-metadata cache is not in that table because it is keyed on path **plus
+mtime and size**, so a rotation makes the old entry unreachable by construction; `rotateImage` calls
+`dropCachedMetadata` on top of that to evict it rather than let it occupy the LRU. It is the
+renderer side, where the key is the path alone, that has to be told. Note also that
+`dropCachedMetadata` matches on `CACHE_KEY_SEP`, the same constant the key builder uses — it used
+to match a literal space against a key built with a NUL, so the invalidation after a *rating* write
+matched nothing, and with `-P` holding the mtime steady the stale entry was served for the rest of
+the session. Two ends of one format have to share a constant.
+
+`PhotoState.fileRevision` is the one counter feeding the latter two: +1 per rotation that lands on
+disk, session-global rather than per path, because at one rotation in 3000 keypresses re-reading a
+handful of entries is cheaper than the bookkeeping to be precise. It is a cache-busting token, **not
+rotation state** — nothing derives what is on screen from it.
+
+Miss one of the three and the symptom is silent and specific. `useFullImage` was the first: without
+it, rotating in the loupe changed nothing on screen, because the blob had already been decoded with
+the old orientation. `useDetailedMetadata` was the second and nastier one, because the photo *does*
+turn: `focusInfo.exifOrientation` is read out of that cache and is what `orientFocusInfo` maps
+the AF box with, so a stale entry leaves the box 90 degrees out — on the one overlay whose whole job
+is being in the right place. `detailed-metadata.test.ts` guards it.
 
 **The rating tags must stay split across exiftool's `tags` and `writeArgs`.** Measured, not
 stylistic. A plain `Rating` in `tags` reaches XMP but never IFD0, so Windows Explorer would not see
@@ -153,8 +252,9 @@ viewer and its neighbour preload. The lock is keyed by path, so reads of *differ
 fully parallel and the thumbnail burst is unaffected; only the set that can actually collide queues.
 A new handler that opens an original belongs inside it.
 
-**Deletion is permanent and nothing in the app has undo.** `DELETE_FILES` unlinks; there is no
-OS-trash path any more, no restore, and no history. Both entry points confirm first — the
+**Deletion is permanent and there is no undo stack.** `DELETE_FILES` unlinks; there is no OS-trash
+path any more, no restore, and no history. (A rotation is reversible, but only because turning the
+photo back is the same one-byte write — not because anything records what happened.) Both entry points confirm first — the
 Delete/Backspace dialog naming the count, and the Execute panel naming the star range plus the
 visible count it is scoped to. `useKeyboardNav` takes a `modalOpen` flag for the same reason: it
 listens on the *document*, so without the gate a Delete aimed at a dialog also reaches the photo
@@ -214,10 +314,13 @@ it dismisses itself on.
 
 **The renderer must never import the `image-utils` barrel.** It aliases
 `@photo-culler/image-utils/sorting`, `/grouping`, `/focus`, `/folders` and `/rating` deep, on
-purpose: the barrel re-exports `scanner.ts`, which imports `node:fs/promises` and would break the
-browser bundle. `metadata.ts` is off limits to the renderer for the same reason — it imports `exifr`
-at module scope. Import deep paths in renderer code, and register each new one in **both**
-`electron.vite.config.ts` and `vitest.config.ts`.
+purpose, and has **no** whole-package fallback alias: the barrel re-exports `scanner.ts`, which
+imports `node:fs/promises` and would break the browser bundle. The absence of the fallback is the
+guard — an accidental barrel or deep import fails to resolve instead of quietly bundling `node:fs`.
+That is also why `/orientation` is not in the list: only the main process needs it. `metadata.ts` is
+off limits to the renderer for the same reason — it imports `exifr` at module scope. Import deep
+paths in renderer code, and register each new one in **both** `electron.vite.config.ts` and
+`vitest.config.ts`.
 
 **`pnpm typecheck` is real as of 1.5.3 — trust it, and keep it honest.** It was a no-op until
 then (no package defined the script, so Turbo resolved every task to nothing) and CI plus the
@@ -274,6 +377,15 @@ Three things to know before touching it:
 This is also why `electron-builder.yml` sets `asar: false` and `npmRebuild: false`. Commits
 `cbe4229`, `8cf68b2`, and `f465675` are the original convergence on the sharp arrangement.
 
+**No main-process code imports `sharp` any more.** Rotation was its last runtime caller. What is
+left is build- and test-time: `scripts/make-icons.mjs`, and the main-process tests that use it to
+generate real JPEG/PNG fixtures. It is still a runtime `dependency` of `apps/desktop` and still
+vendored per target, so every installer carries libvips for nothing. Dropping it is a real win and a
+real risk — it means a `package.json` change, a lockfile change, and re-checking
+`vendor-native-deps.mjs` and `verify-pack.mjs`, both of which are written around sharp's platform
+packages — so it has deliberately not been done as part of the rotation change. Treat it as an open
+task, not as dead weight to be swept out in passing.
+
 **Icons are generated, not hand-authored.** `build/icon-source.png` is the master; `pnpm icons`
 (`scripts/make-icons.mjs`) derives `icon.ico`, `icon.icns` and the 512px `icon.png` from it.
 The script writes both containers itself because `iconutil` is macOS-only and this is a Windows dev
@@ -316,8 +428,9 @@ bind Cmd+C/V/X inside the toolbar search field.
 image in the tree — the handful of fields grouping, sorting and the rating need, at ~0.3 ms each with
 `METADATA_CONCURRENCY` reads in flight. `exiftool` runs as a long-lived child process in the same
 process, on demand, for the ONE focused image: that is where the maker-note data lives (AF point,
-face detection), which exifr returns as an undecoded blob, and it is also what writes ratings. Don't
-merge them — the bulk path must stay cheap, and exiftool must stay off the per-image hot path. It
+face detection), which exifr returns as an undecoded blob, and it is also what writes ratings and
+orientation. Don't merge them — the bulk path must stay cheap, and exiftool must stay off the
+per-image hot path. It
 used to be three paths: a renderer `exif.worker.ts` carried the bulk pass until the scanner took it
 over, so a rating could be known before the first thumbnail drew.
 
@@ -366,8 +479,10 @@ exists. Do not reintroduce a version constant; the pre-1.5.2 arrangement needed 
 filename could not tell formats apart.
 
 Freshness is decided in the main process against the source file's *current* mtime, so a rotation
-invalidates the thumbnail automatically. Note what that does **not** cover: mtime says nothing about
-pixel format, which is why an unchanged suffix plus a changed format would serve stale pixels forever.
+invalidates the thumbnail automatically — which is why `rotateImage` must not pass exiftool's `-P`,
+and why the handler also unlinks the cache file outright. Note what mtime does **not** cover: it says
+nothing about pixel format, which is why an unchanged suffix plus a changed format would serve stale
+pixels forever.
 
 The size is chosen for physical pixels, not CSS ones. `ThumbnailCell` sizes its canvas backing store
 at `box * devicePixelRatio` and scales it back via CSS, so the 'large' preset's 292px box wants 584px

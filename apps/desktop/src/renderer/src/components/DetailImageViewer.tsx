@@ -5,7 +5,6 @@ import { useZoomPan } from '../hooks/useZoomPan';
 import { useFullImage } from '../hooks/useFullImage';
 import { FocusPeakingOverlay } from './FocusPeakingOverlay';
 import { ExposureClippingOverlay } from './ExposureClippingOverlay';
-import { RotatedImageStage } from './RotatedImageStage';
 import { AfPointOverlay } from './AfPointOverlay';
 import { OverlayControls } from './OverlayControls';
 import type { OverlaySettings, OverlayActions } from '../hooks/useOverlaySettings';
@@ -30,13 +29,11 @@ export function MetadataOverlay({
   rating,
   qualityScore,
   qualitySubscores,
-  rotation,
 }: {
   image: ImageFileInfo;
   rating: number;
   qualityScore?: number;
   qualitySubscores?: QualitySubscores;
-  rotation: number;
 }) {
   return (
     <div className="absolute bottom-2 left-2 z-30 bg-black/70 backdrop-blur-sm rounded-lg px-4 py-3 text-white text-xs max-w-sm pointer-events-none select-none">
@@ -79,7 +76,6 @@ export function MetadataOverlay({
             {[image.cameraMake, image.cameraModel].filter(Boolean).join(' ')}
           </span>
         )}
-        {rotation !== 0 && <span>↻{rotation}°</span>}
       </div>
     </div>
   );
@@ -94,11 +90,12 @@ interface DetailImageViewerProps {
   focusedImage: ImageFileInfo | null;
   /** Star rating of the focused image, 0-5, where 0 means unrated. */
   focusedRating: number;
-  focusedRotation: number;
   /** Takes the image's ABSOLUTE PATH — renderer state is keyed by path. */
   onRate: (imagePath: string, rating: number) => void;
   qualityScores: Record<string, number>;
   qualitySubscores: Record<string, QualitySubscores>;
+  /** See PhotoState.fileRevision — bumped when a rotation rewrites a file. */
+  fileRevision: number;
   allImages: ImageFileInfo[];
   getThumbnail: (id: string) => ThumbnailStatus;
   overlaySettings: OverlaySettings;
@@ -110,10 +107,10 @@ export function DetailImageViewer({
   focusedImageId,
   focusedImage,
   focusedRating,
-  focusedRotation,
   onRate,
   qualityScores,
   qualitySubscores,
+  fileRevision,
   allImages,
   getThumbnail,
   overlaySettings,
@@ -139,8 +136,13 @@ export function DetailImageViewer({
   }, [allImages, focusedImageId]);
 
   // No debounce here: this view has nothing else to show, and its prefetch
-  // already makes the common case a cache hit.
-  const { url: imageUrl, isLoading } = useFullImage(focusedImageId, { neighbours });
+  // already makes the common case a cache hit. `reloadToken` covers the one way
+  // an original can change without its path changing: a rotation writes the
+  // file's EXIF Orientation tag, and the bytes already read carry the old one.
+  const { url: imageUrl, isLoading } = useFullImage(focusedImageId, {
+    neighbours,
+    reloadToken: fileRevision,
+  });
 
   const { zoom, panX, panY, isDragging, handlers, resetZoom, zoomTo100, fitToWindow } = useZoomPan({
     imageWidth: imageDimensions.width,
@@ -299,42 +301,36 @@ export function DetailImageViewer({
             display: 'inline-block',
           }}
         >
-          <RotatedImageStage
-            width={imageDimensions.width}
-            height={imageDimensions.height}
-            rotation={focusedRotation}
-          >
-            <img
-              src={imageUrl}
-              alt=""
-              onLoad={handleImageLoad}
-              className="max-w-none select-none"
-              draggable={false}
+          <img
+            src={imageUrl}
+            alt=""
+            onLoad={handleImageLoad}
+            className="max-w-none select-none"
+            draggable={false}
+          />
+          {showFocusPeaking && (
+            <FocusPeakingOverlay
+              imageUrl={imageUrl}
+              imageDimensions={imageDimensions}
+              visible={showFocusPeaking}
+              threshold={focusPeakingThreshold}
             />
-            {showFocusPeaking && (
-              <FocusPeakingOverlay
-                imageUrl={imageUrl}
-                imageDimensions={imageDimensions}
-                visible={showFocusPeaking}
-                threshold={focusPeakingThreshold}
-              />
-            )}
-            {showClipping && (
-              <ExposureClippingOverlay
-                imageUrl={imageUrl}
-                imageDimensions={imageDimensions}
-                visible={showClipping}
-              />
-            )}
-            {showAfPoint && (
-              <AfPointOverlay
-                focus={focus}
-                imageDimensions={imageDimensions}
-                zoom={zoom}
-                visible={showAfPoint}
-              />
-            )}
-          </RotatedImageStage>
+          )}
+          {showClipping && (
+            <ExposureClippingOverlay
+              imageUrl={imageUrl}
+              imageDimensions={imageDimensions}
+              visible={showClipping}
+            />
+          )}
+          {showAfPoint && (
+            <AfPointOverlay
+              focus={focus}
+              imageDimensions={imageDimensions}
+              zoom={zoom}
+              visible={showAfPoint}
+            />
+          )}
         </div>
       )}
 
@@ -345,7 +341,6 @@ export function DetailImageViewer({
           rating={focusedRating}
           qualityScore={qualityScores[focusedImage.path]}
           qualitySubscores={qualitySubscores[focusedImage.path]}
-          rotation={focusedRotation}
         />
       )}
     </div>

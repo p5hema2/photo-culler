@@ -12,10 +12,11 @@ import {
   type FileHandle,
 } from 'node:fs/promises';
 import path from 'node:path';
-import sharp from 'sharp';
 import { IPC_CHANNELS } from '@photo-culler/types';
 import type {
   FileOpResult,
+  RotateDirection,
+  RotateResult,
   ScanProgress,
   SessionConfig,
   ThumbSource,
@@ -30,7 +31,7 @@ import {
   checkMpfPreview,
 } from '@photo-culler/image-utils/metadata';
 import { getSession, updateSession } from './store';
-import { readDetailedMetadata, writeRating, type RatingWriteResult } from './exiftool';
+import { readDetailedMetadata, rotateImage, writeRating, type RatingWriteResult } from './exiftool';
 import { withFileLock } from './file-lock';
 
 const RESULTS_FILENAME = '.photo-culler-results.json';
@@ -101,7 +102,7 @@ export async function readResultsFile(folderPath: string): Promise<string | null
     await rename(legacyPath, currentPath);
   } catch {
     // Migration is best-effort — a failed rename must not cost the user
-    // their scores and rotations, so fall through and return the data anyway.
+    // their quality scores, so fall through and return the data anyway.
   }
   return legacyData;
 }
@@ -165,7 +166,12 @@ async function unlinkQuiet(target: string): Promise<void> {
   }
 }
 
-/** Drop the cached thumbnail of an image that no longer exists at this path. */
+/**
+ * Drop the cached thumbnail of one image.
+ *
+ * Two callers, for two reasons: the image is gone (delete), or the image still
+ * exists but no longer looks like its thumbnail (rotate).
+ */
 async function removeThumbCache(filePath: string): Promise<void> {
   await unlinkQuiet(getThumbCachePath(filePath));
 }
@@ -679,8 +685,8 @@ export function registerIpcHandlers(): void {
       return { thumbsRemoved: 0, legacyRemoved: 0, entriesRemoved: 0, cancelled: false };
     }
 
-    // Removing saved records discards quality scores and pending rotations for
-    // those images. Show the count and let the user decide before touching disk.
+    // Removing saved records discards quality scores for those images. Show the
+    // count and let the user decide before touching disk.
     const detail = [
       `Scanned ${plan.directoriesScanned} folder(s).`,
       '',
@@ -693,8 +699,8 @@ export function registerIpcHandlers(): void {
         : []),
       `${entryCount} saved record(s) whose image is gone`,
       '',
-      'Records hold quality scores and pending rotations. Images themselves are never ' +
-        'touched, and star ratings live in the image files rather than in a record.',
+      'Records hold quality scores. Images themselves are never touched, and star ' +
+        'ratings and orientation live in the image files rather than in a record.',
     ].join('\n');
 
     const { response } = await dialog.showMessageBox({
@@ -780,7 +786,7 @@ export function registerIpcHandlers(): void {
     const thumbPath = getThumbCachePath(filePath);
     try {
       // Compare against the source's CURRENT mtime rather than a value the
-      // renderer captured at scan time. ROTATE_FILES rewrites the file after
+      // renderer captured at scan time. ROTATE_IMAGE rewrites the file after
       // the scan, so the old comparison kept validating the pre-rotation
       // thumbnail forever. This also covers edits made outside the app.
       const [thumbStat, sourceStat] = await Promise.all([stat(thumbPath), stat(filePath)]);
@@ -801,32 +807,34 @@ export function registerIpcHandlers(): void {
     },
   );
 
+  /**
+   * Turn one image a quarter turn, now.
+   *
+   * One image rather than the batch this replaced. That batch existed because
+   * applying a rotation meant re-encoding the whole file — 225 ms and 6 226 940
+   * bytes on one 6102 kB camera JPEG, at sharp's default JPEG quality and
+   * without the embedded preview afterwards — so rotations were parked in the
+   * results file and applied by Execute. A tag change is 31 ms and one byte,
+   * which is cheap enough to do on the keypress, so there is no pending state
+   * left to batch and no Execute step to get wrong.
+   */
   ipcMain.handle(
-    IPC_CHANNELS.ROTATE_FILES,
-    async (_event, files: Array<{ path: string; degrees: number }>) => {
-      const succeeded: string[] = [];
-      const failed: Array<{ path: string; error: string }> = [];
-
-      for (const file of files) {
-        if (file.degrees === 0) {
-          succeeded.push(file.path);
-          continue;
-        }
-        try {
-          const buffer = await readFile(file.path);
-          const rotated = await sharp(buffer).rotate(file.degrees).withMetadata().toBuffer();
-          await writeFile(file.path, rotated);
-          succeeded.push(file.path);
-          await removeThumbCache(file.path);
-        } catch (err) {
-          failed.push({
-            path: file.path,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
-      return { succeeded, failed };
+    IPC_CHANNELS.ROTATE_IMAGE,
+    async (_event, filePath: string, direction: RotateDirection): Promise<RotateResult> => {
+      // Under the same per-path lock as READ_FILE and the rating write, for the
+      // same reason: exiftool writes by renaming a temp file over the original,
+      // and Windows refuses that while a thumbnail, scoring or preview read
+      // holds a handle open.
+      return withFileLock(filePath, async () => {
+        const result = await rotateImage(filePath, direction);
+        if (!result.ok) return result;
+        // The cached thumbnail now has the wrong side up. Its source's mtime has
+        // moved, so LOAD_THUMB_CACHE would already reject it — deleting the file
+        // costs one unlink, closes the same-millisecond tie, and stops a
+        // thumbnail nobody can serve sitting on disk until the next vacuum.
+        await removeThumbCache(filePath);
+        return result;
+      });
     },
   );
 }

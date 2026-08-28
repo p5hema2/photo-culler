@@ -36,9 +36,9 @@ function toPixels(
  *
  * Coordinates arrive in the raw sensor frame; `orientFocusInfo` maps them into
  * the EXIF-oriented frame the browser renders (27% of a typical shoot is
- * portrait, where an unmapped box would sit 90 degrees out). User rotation is
- * NOT applied here — RotatedImageStage rotates this canvas together with the
- * image, so doing it again would double-apply it.
+ * portrait, where an unmapped box would sit 90 degrees out). That mapping is the
+ * whole of it: rotating a photo now writes the EXIF Orientation tag, so the
+ * browser turns the <img> and this canvas has the same frame either way.
  */
 export function AfPointOverlay({
   focus,

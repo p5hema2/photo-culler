@@ -17,7 +17,6 @@ function VerticalFilmstrip({
   focusedImageId,
   ratings,
   qualityScores,
-  rotations,
   onImageFocus,
   getThumbnail,
   requestThumbnail,
@@ -26,7 +25,6 @@ function VerticalFilmstrip({
   focusedImageId: string | null;
   ratings: Record<string, number>;
   qualityScores: Record<string, number>;
-  rotations: Record<string, number>;
   onImageFocus: (path: string) => void;
   getThumbnail: (id: string) => ThumbnailStatus;
   requestThumbnail: (id: string, url: string, size: number) => void;
@@ -67,7 +65,6 @@ function VerticalFilmstrip({
                 cellSize={FILMSTRIP_THUMB_SIZE}
                 rating={ratings[image.path]}
                 qualityScore={qualityScores[image.path]}
-                rotation={rotations[image.path]}
                 isFocused={image.path === focusedImageId}
                 onFocus={(origin) => handleImageFocus(image.path, origin)}
                 getThumbnail={getThumbnail}
@@ -91,7 +88,7 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
     ratings,
     qualityScores,
     qualitySubscores,
-    rotations,
+    fileRevision,
     onImageFocus,
     onRate,
     getThumbnail,
@@ -118,11 +115,6 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
     return ratings[focusedImage.path] ?? 0;
   }, [focusedImage, ratings]);
 
-  const focusedRotation = useMemo(() => {
-    if (!focusedImage) return 0;
-    return rotations[focusedImage.path] ?? 0;
-  }, [focusedImage, rotations]);
-
   if (!focusedImageId) {
     return (
       <div className="flex items-center justify-center h-full text-gray-500 text-sm">
@@ -138,7 +130,6 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
         focusedImageId={focusedImageId}
         ratings={ratings}
         qualityScores={qualityScores}
-        rotations={rotations}
         onImageFocus={onImageFocus}
         getThumbnail={getThumbnail}
         requestThumbnail={requestThumbnail}
@@ -148,10 +139,10 @@ export function FilmstripView(props: DetailViewProps): React.JSX.Element {
         focusedImageId={focusedImageId}
         focusedImage={focusedImage}
         focusedRating={focusedRating}
-        focusedRotation={focusedRotation}
         onRate={onRate}
         qualityScores={qualityScores}
         qualitySubscores={qualitySubscores}
+        fileRevision={fileRevision}
         allImages={flatImages}
         getThumbnail={getThumbnail}
         overlaySettings={overlaySettings}

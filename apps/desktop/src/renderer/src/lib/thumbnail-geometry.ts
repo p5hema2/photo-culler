@@ -63,57 +63,29 @@ export function fitWithin(width: number, height: number, maxEdge: number): Size 
   };
 }
 
-export interface RotatedFit {
-  /** On-screen footprint AFTER rotation — the canvas element's size. */
-  canvas: Size;
-  /** Size to draw the bitmap at, in its own pre-rotation axes. */
-  draw: Size;
-  /** Normalised rotation in radians. */
-  radians: number;
-}
-
 /**
- * Layout for drawing a bitmap rotated by a multiple of 90 degrees, centred in a
- * square box of `box` px.
+ * Scale a bitmap so its longest edge is exactly `box`, preserving aspect ratio.
  *
- * `box` is a PHYSICAL pixel count — the caller multiplies the cell's CSS size
- * by devicePixelRatio — so unlike `fitWithin` this DOES allow upscaling: a
- * 512px thumbnail still has to fill a 584px box on a 2x display at the 'large'
- * preset. Clamping instead would letterbox the cell.
+ * `fitWithin` without the clamp, and the difference is the whole point: `box` is
+ * a PHYSICAL pixel count — the caller multiplies the cell's CSS size by
+ * devicePixelRatio — so this DOES upscale. A 512px thumbnail still has to fill a
+ * 584px box on a 2x display at the 'large' preset; clamping there would
+ * letterbox the cell.
  *
- * The caller draws uniformly for all four angles:
- *   translate(canvas.width / 2, canvas.height / 2)
- *   rotate(radians)
- *   drawImage(bmp, -draw.width / 2, -draw.height / 2, draw.width, draw.height)
+ * This was `fitRotated` until rotation stopped being something the renderer
+ * applies: a rotation is now a change to the file's EXIF Orientation tag, and
+ * `createImageBitmap(…, { imageOrientation: 'from-image' })` has already turned
+ * the bitmap the right way up by the time it gets here. With the angle gone the
+ * pre- and post-rotation footprints are the same size, so one Size says
+ * everything there was to say.
  */
-export function fitRotated(
-  bitmapWidth: number,
-  bitmapHeight: number,
-  box: number,
-  rotation: number,
-): RotatedFit {
+export function fitToBox(bitmapWidth: number, bitmapHeight: number, box: number): Size {
   if (!(bitmapWidth > 0) || !(bitmapHeight > 0) || !(box > 0)) {
-    return { canvas: { width: 0, height: 0 }, draw: { width: 0, height: 0 }, radians: 0 };
+    return { width: 0, height: 0 };
   }
-
-  const deg = (((Math.round(rotation / 90) * 90) % 360) + 360) % 360;
-  const swap = deg === 90 || deg === 270;
-
-  // Footprint after rotation, in the bitmap's own units.
-  const outerW = swap ? bitmapHeight : bitmapWidth;
-  const outerH = swap ? bitmapWidth : bitmapHeight;
-
-  const scale = Math.min(box / outerW, box / outerH);
-
+  const scale = box / Math.max(bitmapWidth, bitmapHeight);
   return {
-    canvas: {
-      width: Math.max(1, Math.round(outerW * scale)),
-      height: Math.max(1, Math.round(outerH * scale)),
-    },
-    draw: {
-      width: Math.max(1, Math.round(bitmapWidth * scale)),
-      height: Math.max(1, Math.round(bitmapHeight * scale)),
-    },
-    radians: (deg * Math.PI) / 180,
+    width: Math.max(1, Math.round(bitmapWidth * scale)),
+    height: Math.max(1, Math.round(bitmapHeight * scale)),
   };
 }

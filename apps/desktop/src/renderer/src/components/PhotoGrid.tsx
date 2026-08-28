@@ -108,7 +108,6 @@ interface PhotoGridProps {
   folders: FolderSection[];
   ratings: Record<string, number>;
   qualityScores: Record<string, number>;
-  rotations: Record<string, number>;
   thumbnailSize: 'small' | 'medium' | 'large';
   focusedImageId: string | null;
   /** The batch rating and deletion act on — see lib/selection.ts. */
@@ -135,7 +134,6 @@ export function PhotoGrid({
   folders,
   ratings,
   qualityScores,
-  rotations,
   thumbnailSize,
   focusedImageId,
   selection,
@@ -424,7 +422,6 @@ export function PhotoGrid({
                   cellSize={cellSize}
                   ratings={ratings}
                   qualityScores={qualityScores}
-                  rotations={rotations}
                   focusedImageId={focusedImageId}
                   selection={selection}
                   onImageClick={handleCellClick}

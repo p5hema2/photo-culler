@@ -85,7 +85,7 @@ export async function saveResults(folderPath: string, results: ResultsFile): Pro
  *
  * This exists because the projection used to be hand-rolled in two places that
  * drifted: the copy in the delete path listed four of the six fields, so a
- * single Delete keypress silently stripped `qualitySubscores` and `rotation`
+ * single Delete keypress silently stripped `qualitySubscores` and the rotation
  * from every remaining image in the folder. Spreading the existing entry means a
  * field added to `ImageResult` later cannot be dropped here by omission.
  */
@@ -104,7 +104,6 @@ export function rebuildResults(results: ResultsFile, keepNames: Iterable<string>
 export interface ResultsProjection {
   qualityScores: Record<string, number | undefined>;
   qualitySubscores: Record<string, ImageResult['qualitySubscores']>;
-  rotations: Record<string, number | undefined>;
 }
 
 /**
@@ -113,7 +112,9 @@ export interface ResultsProjection {
  * Entries already on disk are preserved even when the image is not in `images`
  * — a filter narrowing the view must never erase somebody's scores.
  *
- * Ratings are absent on purpose: they live in the image files themselves.
+ * Ratings are absent on purpose: they live in the image files themselves, and so
+ * does the rotation — it is the file's EXIF Orientation tag now, which leaves
+ * `qualityScore` and `qualitySubscores` as the whole of what this file holds.
  */
 export function projectFolderResults(
   existing: ResultsFile,
@@ -129,15 +130,11 @@ export function projectFolderResults(
       ...prior,
       qualityScore: state.qualityScores[image.path] ?? prior?.qualityScore,
       qualitySubscores: state.qualitySubscores[image.path] ?? prior?.qualitySubscores,
-      // NO `?? prior?.rotation` here, deliberately: absence in state has to mean
-      // "cleared", not "look it up on disk". openFolder loads every stored
-      // rotation into the map and writeFolder passes the folder's FULL image
-      // list, so the map is authoritative for every image iterated here.
-      //
-      // With the fallback, Execute's "rotation applied, drop it from state" left
-      // the old angle sitting in `prior`, and the next open re-applied a visual
-      // 90 degrees on top of the file it had just physically rotated.
-      rotation: state.rotations[image.path],
+      // No `rotation` field: a rotation is a change to the image's own EXIF
+      // Orientation tag, applied on the keypress, so there is nothing pending
+      // for this file to remember. (It used to need a comment three times this
+      // length explaining why absence in state had to mean "cleared" rather
+      // than "look it up on disk" — that whole class of bug is now unreachable.)
     };
   }
 
