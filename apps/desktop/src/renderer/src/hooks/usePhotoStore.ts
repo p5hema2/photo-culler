@@ -11,6 +11,7 @@ import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import { groupByFolder, foldersOf } from '@photo-culler/image-utils/folders';
 import type { FolderSection } from '@photo-culler/image-utils/folders';
 import { MIN_RATING, clampRating, isInRatingRange } from '@photo-culler/image-utils/rating';
+import { THUMB_MAX_EDGE } from '../lib/thumbnail-geometry';
 import {
   loadAllResults,
   loadResults,
@@ -761,6 +762,20 @@ export function usePhotoStore(): PhotoStoreAPI {
           .catch(() => {
             // A missing count is a missing readout, nothing more.
           });
+
+        // Fill in every thumbnail the folder is missing, at strictly lower
+        // priority than anything on screen. Safe to start immediately: the
+        // sweep only reaches a worker once the visible queue is empty, and it
+        // is limited to a slice of the pool so it cannot take the platter away
+        // from a visible cell or from the InfoPanel's full-file read.
+        //
+        // Worth doing at all only since the embedded preview landed: 3470
+        // images at ~500 kB is ~1.7 GB, where reading the originals would have
+        // been 20.9 GB.
+        thumbnailWorker.sweepAll(
+          images.map((img) => img.path),
+          THUMB_MAX_EDGE,
+        );
 
         // Save session
         window.api.setSession({ lastFolderPath: folderPath });

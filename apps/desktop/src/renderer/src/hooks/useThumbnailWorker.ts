@@ -34,6 +34,18 @@ type ThumbnailStatus = ImageBitmap | 'loading' | 'error';
 export const MAX_CACHED_BITMAPS = 700;
 
 /**
+ * How many of the worker pool may take background sweep work.
+ *
+ * The pool is sized by hardwareConcurrency because it was sized for DECODE, but
+ * on a spinning disk the real limit is the platter: the measured folder read at
+ * ~7 files/s whole-file, and the sweep now reads ~500 kB embedded previews
+ * instead of 6.2 MB originals. Two workers is enough to saturate that while
+ * leaving the rest of the pool — and most of the bandwidth — for cells the user
+ * is looking at and for the InfoPanel's full-file read.
+ */
+const SWEEP_WORKERS = 2;
+
+/**
  * Cache a decoded thumbnail as the most recent entry, then close and drop
  * least-recently-used bitmaps until the cache is back inside the bound. Map
  * iteration is insertion order, and `getThumbnail` re-inserts on read, so the
@@ -146,6 +158,11 @@ interface ThumbnailWorkerAPI {
   clearAll: () => void;
   /** Drop a cached thumbnail so the next render re-requests it. */
   invalidate: (id: string) => void;
+  /**
+   * Generate a thumbnail for every listed image that has none yet, at strictly
+   * lower priority than anything on screen. Replaces any previous sweep.
+   */
+  sweepAll: (paths: readonly string[], size: number) => void;
 }
 
 function createWorker(): Worker {
@@ -179,6 +196,20 @@ export function useThumbnailWorker(options: ThumbnailWorkerOptions = {}): Thumbn
   const cacheRef = useRef<Map<string, ImageBitmap | 'error'>>(new Map());
   const pendingRef = useRef<Set<string>>(new Set());
   const queueRef = useRef<PendingRequest[]>([]);
+  /**
+   * The background sweep: every image in the folder that has no thumbnail yet.
+   *
+   * A SEPARATE queue rather than entries in the one above, for two reasons.
+   * Picking work becomes O(1) — folding 3470 items into the foreground queue
+   * would re-sort all of them after every finished thumbnail. And a visible cell
+   * can never end up behind the sweep, whatever the sort comparator does.
+   *
+   * An index rather than shift(), so walking 3470 entries does not copy the
+   * array 3470 times.
+   */
+  const sweepRef = useRef<{ items: PendingRequest[]; next: number }>({ items: [], next: 0 });
+  /** Ids currently in flight FOR the sweep, so their bitmaps are not cached. */
+  const sweepInFlightRef = useRef<Set<string>>(new Set());
   const busyRef = useRef<Set<number>>(new Set());
   const visibleRangeRef = useRef<{ first: number; last: number }>({ first: 0, last: 10 });
   /**
@@ -203,6 +234,23 @@ export function useThumbnailWorker(options: ThumbnailWorkerOptions = {}): Thumbn
   const dispatchNext = useCallback((workerIndex: number) => {
     const queue = queueRef.current;
     if (queue.length === 0) {
+      // Nothing visible is waiting, so take sweep work — but only on the first
+      // SWEEP_WORKERS workers. The rest of the pool, and with it most of the
+      // disk bandwidth, stays free for cells the user is actually looking at
+      // and for the InfoPanel's full-file read. Saturating the platter with
+      // work nobody is waiting for is exactly what v1.6.2 removed.
+      if (workerIndex < SWEEP_WORKERS) {
+        const sweep = sweepRef.current;
+        while (sweep.next < sweep.items.length) {
+          const candidate = sweep.items[sweep.next++]!;
+          if (cacheRef.current.has(candidate.id) || pendingRef.current.has(candidate.id)) continue;
+          pendingRef.current.add(candidate.id);
+          sweepInFlightRef.current.add(candidate.id);
+          busyRef.current.add(workerIndex);
+          loadThumbnail(workerIndex, candidate.id, candidate.size);
+          return;
+        }
+      }
       busyRef.current.delete(workerIndex);
       return;
     }
@@ -297,6 +345,25 @@ export function useThumbnailWorker(options: ThumbnailWorkerOptions = {}): Thumbn
           return;
         }
         cacheRef.current.set(id, 'error');
+      } else if (sweepInFlightRef.current.has(id)) {
+        // Sweep result: the file on disk is the whole point, the bitmap is a
+        // by-product nobody asked to look at. Caching it would let work the user
+        // cannot see evict thumbnails they can, and 3470 of them would churn the
+        // LRU from end to end. Closed here; a later scroll to this cell is then a
+        // 19 kB disk-cache hit.
+        sweepInFlightRef.current.delete(id);
+        pendingRef.current.delete(id);
+        bitmap.close();
+
+        if (thumbBuffer && window.api.saveThumbCache) {
+          window.api.saveThumbCache(id, thumbBuffer).catch(() => {
+            // Ignore cache save errors
+          });
+          onThumbnailGenerated?.(id);
+        }
+        // No setVersion: nothing on screen changed.
+        dispatchNext(workerIndex);
+        return;
       } else {
         storeBitmap(cacheRef.current, pendingRef.current, id, bitmap);
 
@@ -421,6 +488,8 @@ export function useThumbnailWorker(options: ThumbnailWorkerOptions = {}): Thumbn
 
     cacheRef.current.clear();
     pendingRef.current.clear();
+    sweepRef.current = { items: [], next: 0 };
+    sweepInFlightRef.current.clear();
     queueRef.current = [];
     busyRef.current.clear();
     epochRef.current.clear();
@@ -432,5 +501,29 @@ export function useThumbnailWorker(options: ThumbnailWorkerOptions = {}): Thumbn
     setVersion((v) => v + 1);
   }, [initWorkers]);
 
-  return { requestThumbnail, getThumbnail, updateVisibleRange, clearAll, invalidate };
+  /**
+   * Queue the whole folder. Idle workers pick these up only once nothing visible
+   * is waiting — see dispatchNext — so calling it right after a scan does not
+   * delay first paint.
+   *
+   * Nothing here checks the disk cache: loadThumbnail does that per item, and a
+   * hit costs one stat pair plus a 19 kB read. Filtering up front would mean
+   * 3470 IPC round trips before the sweep could even start.
+   */
+  const sweepAll = useCallback(
+    (paths: readonly string[], size: number) => {
+      sweepRef.current = {
+        items: paths.map((id) => ({ id, url: '', size, groupIndex: 0 })),
+        next: 0,
+      };
+      // Wake every idle worker allowed to sweep. Busy ones pick it up when they
+      // next call dispatchNext.
+      for (let i = 0; i < Math.min(SWEEP_WORKERS, workersRef.current.length); i++) {
+        if (!busyRef.current.has(i)) dispatchNext(i);
+      }
+    },
+    [dispatchNext],
+  );
+
+  return { requestThumbnail, getThumbnail, updateVisibleRange, clearAll, invalidate, sweepAll };
 }
