@@ -117,13 +117,17 @@ beforeEach(() => {
   (globalThis as unknown as { window: { api: unknown } }).window.api = {
     scanFolder: vi.fn(async (root: string) => {
       order.push('scan');
-      return foldersUnder(root).flatMap((folder) =>
-        (present[folder] ?? []).map((name) => {
-          const file = img(folder, name);
-          const rating = ratingsOnDisk[file.path];
-          return rating === undefined ? file : { ...file, rating };
-        }),
-      );
+      const folders = foldersUnder(root);
+      return {
+        images: folders.flatMap((folder) =>
+          (present[folder] ?? []).map((name) => {
+            const file = img(folder, name);
+            const rating = ratingsOnDisk[file.path];
+            return rating === undefined ? file : { ...file, rating };
+          }),
+        ),
+        directories: folders,
+      };
     }),
     loadResults: vi.fn(async (folder: string) => disk[folder] ?? null),
     saveResults: vi.fn(async (folder: string, data: string) => {

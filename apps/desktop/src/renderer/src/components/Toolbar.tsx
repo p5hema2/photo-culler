@@ -18,12 +18,7 @@ interface ToolbarProps {
    * is the resting state, and a permanent "1 selected" would be noise.
    */
   selectionCount: number;
-  scoringProgress: { completed: number; total: number };
-  /**
-   * Thumbnail coverage of the folder. Does not run to completion on its own:
-   * thumbnails are made per visible cell, so it climbs as the user scrolls.
-   */
-  thumbnailProgress: { completed: number; total: number };
+
   /**
    * A finished operation's one-line summary — what the last Rescan did — or null.
    *
@@ -132,8 +127,6 @@ export function Toolbar({
   groupingThresholdMs,
   visibleCount,
   selectionCount,
-  scoringProgress,
-  thumbnailProgress,
   status,
   folderPath,
   onSelectFolder,
@@ -214,14 +207,6 @@ export function Toolbar({
     },
     [onGroupingThresholdChange],
   );
-
-  const showScoringProgress =
-    scoringProgress.total > 0 && scoringProgress.completed < scoringProgress.total;
-  // Same rule as scoring: a counter sitting at its total is noise. Unlike
-  // scoring this one can rest below the total indefinitely, because a folder is
-  // only fully thumbnailed once every image has been on screen once.
-  const showThumbnailProgress =
-    thumbnailProgress.total > 0 && thumbnailProgress.completed < thumbnailProgress.total;
 
   const ratingFilterActive = !isFullRatingRange(filterRatingRange);
 
@@ -455,18 +440,13 @@ export function Toolbar({
         </span>
       )}
 
-      {/* Progress indicator — only while active */}
-      {showScoringProgress && (
-        <span className="text-[10px] text-gray-500" data-testid="scoring-progress">
-          Scoring {scoringProgress.completed}/{scoringProgress.total}
-        </span>
-      )}
-
-      {showThumbnailProgress && (
-        <span className="text-[10px] text-gray-500" data-testid="thumbnail-progress">
-          Thumbs {thumbnailProgress.completed}/{thumbnailProgress.total}
-        </span>
-      )}
+      {/*
+        The thumbnail and scoring counters used to sit here, as one pair for the
+        whole scan. They moved onto the folder headers in 1.8.1: with a tree that
+        single number cannot be split back up, and the question a user actually
+        has — "is this shoot done?" — is per folder. The root node carries the
+        total.
+      */}
 
       {/* What the last Rescan did. A shade brighter than the progress readouts
           beside it, because it is news rather than a running total — and it goes

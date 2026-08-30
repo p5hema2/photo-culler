@@ -92,11 +92,13 @@ beforeEach(() => {
 
   (globalThis as unknown as { Worker: unknown }).Worker = FakeWorker;
   (globalThis as unknown as { window: { api: unknown } }).window.api = {
-    scanFolder: vi.fn(async (root: string) =>
-      Object.keys(present)
-        .filter((f) => f === root || f.startsWith(`${root}/`))
-        .flatMap((folder) => (present[folder] ?? []).map((name) => img(folder, name))),
-    ),
+    scanFolder: vi.fn(async (root: string) => {
+      const folders = Object.keys(present).filter((f) => f === root || f.startsWith(`${root}/`));
+      return {
+        images: folders.flatMap((folder) => (present[folder] ?? []).map((n) => img(folder, n))),
+        directories: folders,
+      };
+    }),
     loadResults: vi.fn(async (folder: string) => disk[folder] ?? null),
     saveResults: vi.fn(async (folder: string, data: string) => {
       order.push(`save:${folder}`);
@@ -335,11 +337,14 @@ describe('applyRename quiesces first', () => {
     expect(savesBefore).toEqual([]);
   });
 
-  it('refuses to plan while the scan is still filling in metadata', async () => {
+  it('plans while the scan is still filling in metadata', async () => {
+    // Up to 1.8.0 this asserted the opposite. The guard existed because the
+    // deferred pass re-reads BY PATH and a miss comes back as {} — so a renamed
+    // image lost its date and its RATING for the session. It also made renaming
+    // impossible for the minutes a large library takes to scan, which is
+    // exactly when the user wants it. The pass is told where the files went
+    // instead; see main/scan-pass.ts.
     const result = await openFolder();
-    // The scan's deferred half reports over SCAN_PROGRESS, so this is the only
-    // way in — and `scanId` has to be the store's own open epoch or the report
-    // is dropped as belonging to a folder it has left.
     act(() => {
       progressListener?.({
         scanId: 1,
@@ -357,9 +362,60 @@ describe('applyRename quiesces first', () => {
       }),
     );
 
-    expect(outcome.plan).toBeNull();
-    expect(outcome.error).toMatch(/Scan/);
-    expect(window.api.planRename).not.toHaveBeenCalled();
+    expect(outcome.error).toBeUndefined();
+    expect(window.api.planRename).toHaveBeenCalled();
+  });
+
+  it('merges the metadata main re-read for the files that moved', async () => {
+    // The other half of dropping the guard: a file the pass had not reached
+    // comes back from the rename with its date and rating intact.
+    const result = await openFolder();
+    (window.api.executeRename as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      async (plan: RenamePlan) => {
+        const moving = plan.entries.filter((e) => e.action === 'rename');
+        return {
+          outcomes: moving.map((e) => ({ src: e.src, targetPath: e.targetPath, ok: true })),
+          renamed: moving.length,
+          failed: 0,
+          resultsFilesTouched: [],
+          refreshed: [{ ...img('/A', RENAMED), rating: 3, dateTaken: 999 }],
+        };
+      },
+    );
+
+    await act(async () => {
+      await result.current.applyRename(planOf([entry('/A', 'a1.jpg', RENAMED)]));
+    });
+
+    expect(result.current.state.ratings[`/A/${RENAMED}`]).toBe(3);
+    expect(result.current.state.images.find((i) => i.name === RENAMED)?.dateTaken).toBe(999);
+  });
+
+  it('does not let a refreshed rating undo one the user just typed', async () => {
+    // Same rule a SCAN_PROGRESS batch obeys: the file is the authority, but a
+    // rating still sitting out its debounce is not in the file yet.
+    const result = await openFolder();
+    await act(async () => {
+      result.current.setRating('/A/a1.jpg', 5);
+    });
+    (window.api.executeRename as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      async (plan: RenamePlan) => {
+        const moving = plan.entries.filter((e) => e.action === 'rename');
+        return {
+          outcomes: moving.map((e) => ({ src: e.src, targetPath: e.targetPath, ok: true })),
+          renamed: moving.length,
+          failed: 0,
+          resultsFilesTouched: [],
+          refreshed: [{ ...img('/A', RENAMED), rating: 0 }],
+        };
+      },
+    );
+
+    await act(async () => {
+      await result.current.applyRename(planOf([entry('/A', 'a1.jpg', RENAMED)]));
+    });
+
+    expect(result.current.state.ratings[`/A/${RENAMED}`]).toBe(5);
   });
 });
 

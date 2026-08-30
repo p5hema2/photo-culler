@@ -1,6 +1,13 @@
 import type { ImageFileInfo } from './image';
 import type { DetailedMetadata } from './focus';
-import type { RenameExecuteResult, RenamePlan, RenamePlanResult, RenameRequest } from './rename';
+import type {
+  FolderOpResult,
+  FolderStats,
+  RenameExecuteResult,
+  RenamePlan,
+  RenamePlanResult,
+  RenameRequest,
+} from './rename';
 
 export const IPC_CHANNELS = {
   SELECT_FOLDER: 'dialog:select-folder',
@@ -27,6 +34,14 @@ export const IPC_CHANNELS = {
   PLAN_RENAME: 'fs:plan-rename',
   /** Carry out a plan the user has confirmed. */
   EXECUTE_RENAME: 'fs:execute-rename',
+  /** Plan a move into another folder. Same plan shape, same executor. */
+  PLAN_MOVE: 'fs:plan-move',
+  /** Create one subfolder. */
+  CREATE_FOLDER: 'fs:create-folder',
+  /** Delete a folder and everything below it. */
+  DELETE_FOLDER: 'fs:delete-folder',
+  /** Count what a folder holds, for the delete confirmation. */
+  STAT_FOLDER: 'fs:stat-folder',
 } as const;
 
 /**
@@ -168,6 +183,19 @@ export interface ScanProgress {
   images: ImageFileInfo[];
 }
 
+/**
+ * What a scan hands back: the images, and every directory it entered.
+ *
+ * Was a bare `ImageFileInfo[]` until 1.8.1. The directory list is what lets the
+ * grid draw a real tree — a folder with no photos anywhere below it still has
+ * to be there, or a moved file would have nowhere to land and a freshly created
+ * subfolder would disappear the moment it was made.
+ */
+export interface ScanResult {
+  images: ImageFileInfo[];
+  directories: string[];
+}
+
 export interface QualitySubscores {
   sharpness: number;
   exposure: number;
@@ -267,7 +295,7 @@ export interface ElectronAPI {
    * pushes: a caller that does not listen has no use for one, and main defaults
    * it to 0.
    */
-  scanFolder: (folderPath: string, scanId?: number) => Promise<ImageFileInfo[]>;
+  scanFolder: (folderPath: string, scanId?: number) => Promise<ScanResult>;
   /**
    * Subscribe to scan progress. One subscriber by construction — the photo
    * store — which is why the unsubscribe below takes no handle.
@@ -366,8 +394,12 @@ export interface ElectronAPI {
    * to open a half-culled folder and report "1725 of 3470" instead of starting
    * the counter at zero. Counted from the cache directories, using the same
    * suffix rule the vacuum uses, so a past format never inflates it.
+   *
+   * Keyed BY DIRECTORY since 1.8.1: the counter lives on each folder header in
+   * the tree now, and one total for the whole scan cannot be split back up.
+   * Directories with no cache are absent rather than zero.
    */
-  countThumbCache: (folderPath: string) => Promise<number>;
+  countThumbCache: (folderPath: string) => Promise<Record<string, number>>;
   getAppVersion: () => Promise<string>;
   /**
    * Work out what renaming would do, without doing any of it.
@@ -387,4 +419,23 @@ export interface ElectronAPI {
    * scanner — so "it did not throw" is not evidence that a file moved.
    */
   executeRename: (plan: RenamePlan) => Promise<RenameExecuteResult>;
+  /**
+   * Work out what moving `paths` into `targetFolder` would do.
+   *
+   * Returns the same shape as `planRename` and is carried out by the same
+   * `executeRename`, because a move IS a rename that keeps the basename — and
+   * the parts that make either safe (the namespace allocation, the collision
+   * suffix, the companion pass, the results re-key) are worth having once.
+   */
+  planMove: (paths: string[], targetFolder: string) => Promise<RenamePlanResult>;
+  createFolder: (parentPath: string, name: string) => Promise<FolderOpResult>;
+  /**
+   * Delete a folder and everything below it, permanently.
+   *
+   * `root` is the opened tree, and main refuses anything outside it or equal to
+   * it. Defence in depth: this is the most destructive call in the app, and the
+   * renderer already only offers it on a node below the root.
+   */
+  deleteFolder: (folderPath: string, root: string) => Promise<FolderOpResult>;
+  statFolder: (folderPath: string) => Promise<FolderStats>;
 }

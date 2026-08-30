@@ -16,7 +16,9 @@ import { sortImages } from '@photo-culler/image-utils/sorting';
 import type { SortDirection } from '@photo-culler/image-utils/sorting';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import { groupByFolder, foldersOf } from '@photo-culler/image-utils/folders';
-import { isVideoFile } from '@photo-culler/image-utils/media';
+import { buildFolderTree, rollUpCounts } from '@photo-culler/image-utils/tree';
+import type { FolderCounts, FolderNode, FolderOwnCounts } from '@photo-culler/image-utils/tree';
+import { isPlayableVideo, isVideoFile } from '@photo-culler/image-utils/media';
 import type { FolderSection } from '@photo-culler/image-utils/folders';
 import { MIN_RATING, clampRating, isInRatingRange } from '@photo-culler/image-utils/rating';
 import { THUMB_MAX_EDGE } from '../lib/thumbnail-geometry';
@@ -64,6 +66,24 @@ export function isScanIncomplete(progress: ScanProgressState): boolean {
 export interface PhotoState {
   folderPath: string | null;
   images: ImageFileInfo[];
+  /**
+   * Cached thumbnails found on disk per directory, as they were when the folder
+   * opened.
+   *
+   * The floor each folder header's counter starts from. Thumbnails are made
+   * lazily, per visible cell, so a counter starting at zero would claim a
+   * half-culled shoot had none — and since 1.8.1 that claim would be made once
+   * per folder rather than once per scan.
+   */
+  thumbsOnDisk: Record<string, number>;
+  /**
+   * Every directory the last walk entered, the root included.
+   *
+   * Held apart from `images` because it is not derivable from them: an empty
+   * folder has no image to point at it, and the tree still has to show it.
+   * Purely structural — nothing here says anything about a file.
+   */
+  directories: string[];
   /**
    * Star rating per absolute image path, 0 = unrated.
    *
@@ -142,6 +162,8 @@ export interface PhotoState {
 const initialState: PhotoState = {
   folderPath: null,
   images: [],
+  thumbsOnDisk: {},
+  directories: [],
   ratings: {},
   sortDirection: 'asc',
   filterExtensions: new Set<string>(),
@@ -390,10 +412,20 @@ export interface PhotoStoreAPI {
    * what is orphaned, and keep everything else. Reports what it did through
    * `state.status`.
    */
+  /** The folder tree the grid renders, in sibling order. */
+  folderTree: FolderNode[];
+  /** Per-folder subtree tallies for the header counters, keyed by folder path. */
+  folderCounts: Map<string, FolderCounts>;
   rescanFolder: () => Promise<void>;
   /** Work out what a rename would do. Writes nothing; safe to call for a preview. */
   planRename: (request: RenameRequest) => Promise<RenamePlanResult>;
-  /** Carry out a plan the user has confirmed, and re-key everything that names a path. */
+  /** Work out what moving `paths` into `targetFolder` would do. Writes nothing. */
+  planMove: (paths: string[], targetFolder: string) => Promise<RenamePlanResult>;
+  /**
+   * Carry out a plan the user has confirmed, and re-key everything that names a
+   * path. Takes a move plan and a rename plan alike — they are the same shape,
+   * produced by the same allocator and executed by the same loop.
+   */
   applyRename: (plan: RenamePlan) => Promise<RenameExecuteResult | null>;
   /** Rate one image, 0-5, where 0 clears the rating. Writes to the file. */
   setRating: (imagePath: string, rating: number) => void;
@@ -451,11 +483,23 @@ export function usePhotoStore(): PhotoStoreAPI {
    * the readout past its own total.
    */
   const generatedThumbsRef = useRef<Set<string>>(new Set());
+  /**
+   * How many thumbnails this session generated, per directory.
+   *
+   * State rather than a ref because a folder header renders it: `generatedThumbs`
+   * is a Set of paths, which is the right shape for "have I already counted
+   * this one" and the wrong shape for a counter that has to re-render. Both are
+   * kept, and `onThumbnailGenerated` is the only writer of either.
+   */
+  const [generatedByFolder, setGeneratedByFolder] = useState<Record<string, number>>({});
 
   const thumbnailWorker = useThumbnailWorker({
     onThumbnailGenerated: (imagePath) => {
       if (generatedThumbsRef.current.has(imagePath)) return;
       generatedThumbsRef.current.add(imagePath);
+      const cut = Math.max(imagePath.lastIndexOf('/'), imagePath.lastIndexOf('\\'));
+      const folder = imagePath.slice(0, cut);
+      setGeneratedByFolder((prev) => ({ ...prev, [folder]: (prev[folder] ?? 0) + 1 }));
       setState((prev) => {
         const { completed, total } = prev.thumbnailProgress;
         if (total === 0 || completed >= total) return prev;
@@ -906,6 +950,7 @@ export function usePhotoStore(): PhotoStoreAPI {
 
       thumbnailWorker.clearAll();
       generatedThumbsRef.current = new Set();
+      setGeneratedByFolder({});
 
       try {
         // The root's results file is the one file we can read before the walk,
@@ -915,9 +960,15 @@ export function usePhotoStore(): PhotoStoreAPI {
         // cannot start early: their paths ARE the walk's output.
         const rootResults = loadResults(folderPath).catch(() => null);
 
-        const scanned = await window.api.scanFolder(folderPath, scanId);
+        // A scan hands back directories as well as images since 1.8.1 — the
+        // tree needs the ones that hold no photos, or a moved file would have
+        // nowhere to land and a new subfolder would vanish the moment it was
+        // made.
+        const { images: scanned, directories } = await window.api.scanFolder(folderPath, scanId);
 
-        // One results file per folder in the tree, loaded in parallel.
+        // One results file per folder in the tree, loaded in parallel. Derived
+        // from the IMAGES, not from `directories`: a folder with no photos has
+        // no records to load and no records to write.
         const folders = foldersOf(scanned);
         const [root, allResults] = await Promise.all([
           rootResults,
@@ -992,6 +1043,7 @@ export function usePhotoStore(): PhotoStoreAPI {
           const next: PhotoState = {
             ...prev,
             images,
+            directories,
             ratings,
             qualityScores,
             qualitySubscores,
@@ -1032,13 +1084,15 @@ export function usePhotoStore(): PhotoStoreAPI {
           .countThumbCache(folderPath)
           .then((onDisk) => {
             if (!mountedRef.current || openEpochRef.current !== countEpoch) return;
+            const total = Object.values(onDisk).reduce((sum, n) => sum + n, 0);
             setState((prev) => ({
               ...prev,
+              thumbsOnDisk: onDisk,
               thumbnailProgress: {
                 // Clamped: the count is folder-wide while `total` is the images
                 // actually scanned, and a filter or an unsupported extension can
                 // leave a thumbnail behind whose image is not in the list.
-                completed: Math.min(onDisk, prev.thumbnailProgress.total),
+                completed: Math.min(total, prev.thumbnailProgress.total),
                 total: prev.thumbnailProgress.total,
               },
             }));
@@ -1170,21 +1224,35 @@ export function usePhotoStore(): PhotoStoreAPI {
   }, [cancelPendingSave, flushRatingWrites, loadFolder, releaseHeldSave, showStatus]);
 
   const planRename = useCallback(async (request: RenameRequest): Promise<RenamePlanResult> => {
-    // The deferred metadata pass holds ImageFileInfo objects captured at walk
-    // time and re-reads them BY PATH. A rename underneath it means every one of
-    // those reads misses — silently, because `readImageMetadata` returns {}
-    // rather than throwing — and the affected images lose their date, their
-    // dimensions and their RATING for the rest of the session. There is no
-    // AbortController the renderer can reach, so waiting is the whole defence.
-    if (isScanIncomplete(stateRef.current.scanProgress)) {
-      return { plan: null, error: 'Der Scan läuft noch — bitte abwarten.' };
-    }
+    // No scan guard since 1.8.1. The deferred metadata pass reads BY PATH, so a
+    // rename underneath it used to make every one of those reads miss —
+    // silently, because `readImageMetadata` returns {} rather than throwing —
+    // and the affected images lost their date, their dimensions and their
+    // RATING for the rest of the session. Refusing to plan was the only defence
+    // the renderer had, and it made renaming impossible for the minutes a large
+    // library takes to scan.
+    //
+    // The pass and the rename both live in the MAIN process, so the rename now
+    // tells the pass where the files went instead: `remapScanPass` redirects
+    // every unread entry, and `executeRename` re-reads the handful that were
+    // mid-read anyway. See `main/scan-pass.ts`.
     try {
       return await window.api.planRename(request);
     } catch (err) {
       return { plan: null, error: err instanceof Error ? err.message : String(err) };
     }
   }, []);
+
+  const planMove = useCallback(
+    async (paths: string[], targetFolder: string): Promise<RenamePlanResult> => {
+      try {
+        return await window.api.planMove(paths, targetFolder);
+      } catch (err) {
+        return { plan: null, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    [],
+  );
 
   /**
    * Carry out a rename plan, then re-key everything in the renderer that names
@@ -1248,6 +1316,29 @@ export function usePhotoStore(): PhotoStoreAPI {
           return result;
         }
 
+        /**
+         * Metadata main re-read for the files that moved.
+         *
+         * Present only when the deferred scan pass was still running, which is
+         * exactly when an image could otherwise come out of a rename with no
+         * date and — worse — no rating, because the pass read it at its old path
+         * and `readImageMetadata` answers a miss with `{}`. Merged through the
+         * same two helpers a SCAN_PROGRESS batch goes through, so the "a rating
+         * the user just typed beats the one the file still holds" rule applies
+         * here too.
+         */
+        const refreshed = result.refreshed ?? [];
+
+        // Re-keyed BEFORE the updater, not with the other refs afterwards.
+        // `mergeRatings` below asks `userRated` about the NEW paths, and this is
+        // the set that tells it which ratings are the user's rather than the
+        // file's — left until after, every refreshed rating would win and a star
+        // typed a moment ago would be silently rolled back to what the file
+        // still holds.
+        for (const [from, to] of renamed) {
+          if (userRatedRef.current.delete(from)) userRatedRef.current.add(to.path);
+        }
+
         // One updater. Anything left keyed by the old path is not merely a
         // blank badge: `projectFolderResults` reads `qualityScores[image.path]`
         // and writes `next[image.name]`, so a missing entry OVERWRITES the disk
@@ -1263,18 +1354,22 @@ export function usePhotoStore(): PhotoStoreAPI {
           const moveSet = (set: ReadonlySet<string>): ReadonlySet<string> =>
             new Set([...set].map((path) => renamed.get(path)?.path ?? path));
 
+          const moved = prev.images.map((img) => {
+            const to = renamed.get(img.path);
+            // `folder` too, not just `path` and `name`: DCIM consolidation
+            // moves a file to a DIFFERENT directory, and `ImageFileInfo.folder`
+            // is `dirname(path)` by contract — it is what the folder tree
+            // sections by, so leaving it behind puts the renamed photo under a
+            // header naming the folder it just left.
+            return to ? { ...img, path: to.path, name: to.name, folder: to.folder } : img;
+          });
+
           return {
             ...prev,
-            images: prev.images.map((img) => {
-              const to = renamed.get(img.path);
-              // `folder` too, not just `path` and `name`: DCIM consolidation
-              // moves a file to a DIFFERENT directory, and `ImageFileInfo.folder`
-              // is `dirname(path)` by contract — it is what `groupByFolder`
-              // sections by, so leaving it behind puts the renamed photo under
-              // a header naming the folder it just left.
-              return to ? { ...img, path: to.path, name: to.name, folder: to.folder } : img;
-            }),
-            ratings: move(prev.ratings),
+            // Re-keyed FIRST, then refreshed: the fresh entries are keyed by the
+            // NEW paths, so merging them into the old list would match nothing.
+            images: mergeMetadata(moved, refreshed),
+            ratings: mergeRatings(move(prev.ratings), refreshed, userRatedRef.current),
             qualityScores: move(prev.qualityScores),
             qualitySubscores: move(prev.qualitySubscores),
             focusedImageId: prev.focusedImageId
@@ -1295,9 +1390,6 @@ export function usePhotoStore(): PhotoStoreAPI {
         // `resultsRef` is what the next `projectFolderResults` spreads `prior`
         // from — main has already rewritten those files, so the in-memory copy
         // has to follow or the next save undoes it.
-        for (const [from, to] of renamed) {
-          if (userRatedRef.current.delete(from)) userRatedRef.current.add(to.path);
-        }
         for (const entry of moving) {
           if (!renamed.has(entry.src)) continue;
           const from = resultsRef.current.get(entry.srcFolder);
@@ -1731,6 +1823,59 @@ export function usePhotoStore(): PhotoStoreAPI {
     [sortedImages, state.folderPath, state.groupingThresholdMs, state.sortDirection],
   );
 
+  /**
+   * The same sections, arranged as the tree the grid draws.
+   *
+   * Built from the sections AND the walk's directory list, because a folder
+   * with no images anywhere below it has no section to derive it from — and it
+   * still has to be there, as somewhere to drop a moved file and as the place a
+   * newly created subfolder appears.
+   */
+  const folderTree = useMemo(
+    () => buildFolderTree(folders, state.directories, state.folderPath ?? '', state.sortDirection),
+    [folders, state.directories, state.folderPath, state.sortDirection],
+  );
+
+  /**
+   * What each folder header reports, summed over its whole subtree.
+   *
+   * Bucketed here rather than in the tree because both inputs are renderer
+   * state keyed by image PATH: a quality score, and a thumbnail this session
+   * generated. The on-disk floor arrives per directory from the main process.
+   */
+  const folderCounts = useMemo(() => {
+    const own: Record<string, Partial<FolderOwnCounts>> = {};
+    const bump = (folder: string, key: keyof FolderOwnCounts): void => {
+      const entry = (own[folder] ??= {});
+      entry[key] = (entry[key] ?? 0) + 1;
+    };
+
+    for (const image of state.images) {
+      const video = isVideoFile(image.extension);
+      // Each counter measures against what is POSSIBLE, not against the image
+      // count. A video is never scored, and a container Chromium cannot demux
+      // never gets a poster — measured against the plain total, a finished
+      // folder would read 25/28 for ever.
+      if (!video) bump(image.folder, 'scoreable');
+      if (!video || isPlayableVideo(image.extension)) bump(image.folder, 'thumbable');
+      if (state.qualityScores[image.path] != null) bump(image.folder, 'scored');
+    }
+
+    for (const [folder, count] of Object.entries(state.thumbsOnDisk)) {
+      (own[folder] ??= {}).thumbs = count;
+    }
+    for (const [folder, count] of Object.entries(generatedByFolder)) {
+      // Not summed with the on-disk figure: a thumbnail generated this session
+      // is ON DISK by the time it is counted, and the two would double it. The
+      // larger of the pair is the honest answer — the on-disk count is a
+      // snapshot from when the folder opened.
+      const entry = (own[folder] ??= {});
+      entry.thumbs = Math.max(entry.thumbs ?? 0, count);
+    }
+
+    return rollUpCounts(folderTree, own);
+  }, [folderTree, state.images, state.qualityScores, state.thumbsOnDisk, generatedByFolder]);
+
   const foldersRef = useRef(folders);
   foldersRef.current = folders;
 
@@ -1777,8 +1922,11 @@ export function usePhotoStore(): PhotoStoreAPI {
     selectionTargets,
     thumbnailWorker,
     openFolder,
+    folderTree,
+    folderCounts,
     rescanFolder,
     planRename,
+    planMove,
     applyRename,
     setRating,
     rateSelection,

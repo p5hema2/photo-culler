@@ -91,6 +91,22 @@ export function ThumbnailCell({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    /**
+     * A bitmap the cache has already closed.
+     *
+     * `storeBitmap` evicts the least recently used entry once the cache is over
+     * MAX_CACHED_BITMAPS, and closing it detaches it. The eviction bumps the
+     * render version so the cell re-renders as 'loading' — but THIS effect can
+     * still run once more with the value it captured, and `drawImage` on a
+     * detached bitmap throws `InvalidStateError`, which unmounts the whole
+     * grid. A closed ImageBitmap reports zero dimensions, which is the only
+     * way to ask.
+     *
+     * Bailing leaves the pixels already on the canvas, which is exactly what
+     * the eviction comment promises happens.
+     */
+    if (thumbnail.width === 0 || thumbnail.height === 0) return;
+
     // Account for the image box's 4px inset on each side = 8px total
     const box = cellSize - 8;
     const size = fitToBox(thumbnail.width, thumbnail.height, box * dpr);
@@ -147,6 +163,10 @@ export function ThumbnailCell({
       // itself the browser would also drag a text selection across the badges.
       className="relative cursor-pointer flex-shrink-0 select-none"
       style={{ width: cellSize, height: cellSize }}
+      // Dragging a cell onto a folder header moves the selection there.
+      // PhotoGrid catches the dragstart by delegation and settles the batch
+      // first, the same way a right click does — see handleCellDragStart.
+      draggable
       onClick={(e) => onFocus('click', clickModifier(e))}
       data-image-path={image.path}
       data-testid="thumbnail-cell"

@@ -36,6 +36,11 @@ export default defineConfig({
         __dirname,
         '../../packages/image-utils/src/rename',
       ),
+      '@photo-culler/image-utils/tree': resolve(__dirname, '../../packages/image-utils/src/tree'),
+      '@photo-culler/image-utils/naming': resolve(
+        __dirname,
+        '../../packages/image-utils/src/naming',
+      ),
       '@photo-culler/image-utils': resolve(__dirname, '../../packages/image-utils/src'),
     },
   },

@@ -101,6 +101,16 @@ export interface ScanFolderOptions {
 export interface FolderScan {
   /** Every image found, in walk order. */
   images: ImageFileInfo[];
+  /**
+   * Every directory the walk entered, the root included, in walk order.
+   *
+   * Reported rather than derived from the images because a folder with no
+   * photos anywhere below it still has to appear in the tree: it is where a
+   * moved file can be dropped, and a subfolder the user has just created would
+   * otherwise vanish the instant it was made. Hidden directories are absent,
+   * which is what keeps `.photo-culler-thumbs` out of the tree.
+   */
+  directories: string[];
   /** How many of `images`, from the front, already carry their metadata. */
   metadataReady: number;
   /**
@@ -242,11 +252,13 @@ export async function scanFolder(
 ): Promise<FolderScan> {
   const { onProgress, signal } = options;
   const images: ImageFileInfo[] = [];
+  const directories: string[] = [];
   let directoriesVisited = 0;
 
   const walk = async (dirPath: string): Promise<void> => {
     if (directoriesVisited >= MAX_DIRECTORIES) return;
     directoriesVisited++;
+    directories.push(dirPath);
 
     let entries;
     try {
@@ -322,6 +334,7 @@ export async function scanFolder(
   let started = false;
   return {
     images,
+    directories,
     metadataReady: prefix,
     readRemainingMetadata: async () => {
       if (started) return;

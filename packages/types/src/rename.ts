@@ -1,3 +1,5 @@
+import type { ImageFileInfo } from './image';
+
 /**
  * The rename contract.
  *
@@ -100,5 +102,48 @@ export interface RenameExecuteResult {
   failed: number;
   /** Results files whose records were re-keyed, for the renderer to reload. */
   resultsFilesTouched: string[];
+  /**
+   * Metadata re-read for the files that moved, under their NEW paths.
+   *
+   * Present only when the deferred metadata pass was still running, which is
+   * the case this exists for. That pass reads BY PATH and
+   * `readImageMetadata` returns `{}` rather than throwing, so a file it had not
+   * reached — or was reading at the exact instant it moved — would silently
+   * lose its date, its dimensions and its RATING for the rest of the session.
+   * Renaming used to be forbidden during a scan for that single reason.
+   *
+   * Bounded by the size of the plan, not the size of the library.
+   */
+  refreshed?: ImageFileInfo[];
+  error?: string;
+}
+
+/* ------------------------------------------------------------ folder ops -- */
+
+/**
+ * What a folder holds, counted honestly.
+ *
+ * Walked in the main process rather than derived from `state.images`, and that
+ * is the whole point: the app lists stills and videos, so a count taken from
+ * what it can see would omit the RAW files, the sidecars and the AppleDouble
+ * twins — and those are exactly what a recursive delete would take with it. A
+ * confirmation that undercounts is worse than none.
+ */
+export interface FolderStats {
+  /** Every file below the folder, whether or not the app can display it. */
+  files: number;
+  /** Directories below it, the folder itself excluded. */
+  directories: number;
+  /** Total bytes, for the confirmation to quote. */
+  bytes: number;
+  /** Media files the app would have listed — a subset of `files`. */
+  mediaFiles: number;
+  error?: string;
+}
+
+export interface FolderOpResult {
+  ok: boolean;
+  /** The folder that was created. Present only when `ok` and only for create. */
+  path?: string;
   error?: string;
 }

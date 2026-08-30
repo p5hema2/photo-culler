@@ -19,8 +19,17 @@ import { ShortcutsTutorial } from './components/ShortcutsTutorial';
 import { ContextMenu, revealTarget, sharedRating } from './components/ContextMenu';
 import type { ContextMenuAction } from './components/ContextMenu';
 import { RenamePanel } from './components/RenamePanel';
+import type { PendingPlan } from './components/RenamePanel';
+import {
+  FolderPicker,
+  CreateFolderDialog,
+  DeleteFolderDialog,
+  foldersOfPaths,
+} from './components/FolderDialogs';
+import type { FolderStats } from '@photo-culler/types';
 import { folderLabel } from '@photo-culler/image-utils/folders';
-import type { RenameRequest } from '@photo-culler/types';
+import { visibleNodes } from '@photo-culler/image-utils/tree';
+import type { FolderNode } from '@photo-culler/image-utils/tree';
 
 function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX.Element {
   return (
@@ -127,7 +136,7 @@ function ConfirmDeleteDialog({
 
 function App(): React.JSX.Element {
   const store = usePhotoStore();
-  const { state, folders, thumbnailWorker } = store;
+  const { state, folderTree, folderCounts, thumbnailWorker } = store;
   const scoringWorker = useScoringWorker();
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const scoringTriggeredRef = useRef<string | null>(null);
@@ -148,9 +157,31 @@ function App(): React.JSX.Element {
   const [contextMenuFolder, setContextMenuFolder] = useState<{
     path: string;
     label: string;
+    /** 0 is the opened root, which cannot be deleted. */
+    depth: number;
   } | null>(null);
-  /** The rename the preview panel is showing, or null when it is closed. */
-  const [renameRequest, setRenameRequest] = useState<RenameRequest | null>(null);
+  /** The rename or move the preview panel is showing, or null when it is closed. */
+  const [pendingPlan, setPendingPlan] = useState<PendingPlan | null>(null);
+  /**
+   * The folder a dragged selection is currently over, or null.
+   *
+   * Held here rather than in each header so that only ONE can be highlighted:
+   * `dragleave` on the row being left can arrive after `dragover` on the row
+   * being entered, and two rows lit at once reads as two drop targets.
+   */
+  const [dropTargetFolder, setDropTargetFolder] = useState<string | null>(null);
+  /** Paths waiting for a move target, or null when the picker is closed. */
+  const [movePaths, setMovePaths] = useState<string[] | null>(null);
+  /** The folder a new subfolder goes into, or null. */
+  const [createFolderIn, setCreateFolderIn] = useState<{ path: string; label: string } | null>(
+    null,
+  );
+  /** The folder awaiting the delete confirmation, with its walked contents. */
+  const [deleteFolderTarget, setDeleteFolderTarget] = useState<{
+    path: string;
+    label: string;
+  } | null>(null);
+  const [deleteFolderStats, setDeleteFolderStats] = useState<FolderStats | null>(null);
   const [viewLayout, setViewLayout] = useState<'default' | 'loupe' | 'filmstrip'>('default');
 
   const { settings: overlaySettings, actions: overlayActions } = useOverlaySettings();
@@ -173,10 +204,14 @@ function App(): React.JSX.Element {
    */
   const sortedFlatImages = useMemo(
     () =>
-      folders
-        .filter((section) => !collapsedFolders.has(section.path))
-        .flatMap((section) => section.groups.flatMap((g) => g.images)),
-    [folders, collapsedFolders],
+      // `visibleNodes` has already dropped the descendants of a collapsed
+      // folder — that is the tree's whole behavioural difference from the flat
+      // list — so the only thing left to filter here is a node collapsed in its
+      // own right, whose OWN images are hidden too.
+      visibleNodes(folderTree, collapsedFolders)
+        .filter((node) => !collapsedFolders.has(node.path))
+        .flatMap((node) => node.section?.groups.flatMap((g) => g.images) ?? []),
+    [folderTree, collapsedFolders],
   );
 
   /**
@@ -184,6 +219,24 @@ function App(): React.JSX.Element {
    * and what the selection is reconciled against.
    */
   const visibleOrder = useMemo(() => sortedFlatImages.map((img) => img.path), [sortedFlatImages]);
+
+  /**
+   * A value-identity for `visibleOrder`, for effects that must fire when the
+   * list actually CHANGES rather than whenever it is rebuilt.
+   *
+   * `visibleOrder` is a fresh array on every render that touches `folders`, and
+   * during a scan that is every metadata batch — one every 400 ms. Its CONTENTS
+   * barely move there: `sortImages` orders by filename, which a metadata batch
+   * does not change, and `groupByTimestamp` only re-cuts the group boundaries
+   * inside an already-sorted list, so flattening yields the same paths in the
+   * same order. Only the identity is new.
+   *
+   * `syncVisibleOrder` is fine with that — reconciling a selection against an
+   * unchanged list is a no-op. The context menu is not: it was being shut two
+   * or three times a second for the whole scan, which is why renaming during
+   * one was impossible.
+   */
+  const visibleOrderKey = useMemo(() => visibleOrder.join('\u0000'), [visibleOrder]);
 
   /**
    * Keep the store's idea of the visible order current.
@@ -201,10 +254,10 @@ function App(): React.JSX.Element {
   /** Timestamp groups of the visible folders, for grid-shaped keyboard motion. */
   const navGroups = useMemo(
     () =>
-      folders
-        .filter((section) => !collapsedFolders.has(section.path))
-        .flatMap((section) => section.groups),
-    [folders, collapsedFolders],
+      visibleNodes(folderTree, collapsedFolders)
+        .filter((node) => !collapsedFolders.has(node.path))
+        .flatMap((node) => node.section?.groups ?? []),
+    [folderTree, collapsedFolders],
   );
 
   /**
@@ -227,13 +280,79 @@ function App(): React.JSX.Element {
     if (paths) void store.deleteImages(paths);
   }, [pendingDelete, store]);
 
-  const handleOpenFolderMenu = useCallback(
-    (folder: { path: string; label: string }, at: { x: number; y: number }) => {
-      setContextMenuFolder(folder);
-      setContextMenuAt(at);
-    },
-    [],
+  /**
+   * Walk the folder the delete dialog is asking about.
+   *
+   * Started when the dialog opens rather than before it, so the click is
+   * answered immediately — the dialog shows "counting…" and its confirm button
+   * stays disabled until the numbers land. A confirmation with no number in it
+   * is not a confirmation.
+   */
+  useEffect(() => {
+    if (!deleteFolderTarget) {
+      setDeleteFolderStats(null);
+      return;
+    }
+    let cancelled = false;
+    setDeleteFolderStats(null);
+    void window.api
+      .statFolder(deleteFolderTarget.path)
+      .then((stats) => {
+        if (!cancelled) setDeleteFolderStats(stats);
+      })
+      .catch(() => {
+        if (!cancelled) setDeleteFolderStats({ files: 0, directories: 0, bytes: 0, mediaFiles: 0 });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deleteFolderTarget]);
+
+  /**
+   * Compute the plan behind whichever preview is open.
+   *
+   * One callback for both because the panel is one panel: a move and a rename
+   * differ only in where the name comes from, and both come back as the same
+   * `RenamePlan` for the same executor.
+   */
+  // Depends on the two STABLE store callbacks, not on `store` itself: the hook
+  // returns a fresh object every render, so `[store]` would give this a new
+  // identity on every one — and during a scan that is every metadata batch.
+  // RenamePanel re-plans when `onPlan` changes, so the preview would abandon
+  // and restart its own plan two or three times a second and never settle.
+  const { planMove, planRename } = store;
+  const handlePlan = useCallback(
+    (pending: PendingPlan, consolidateDcim: boolean) =>
+      pending.kind === 'move'
+        ? planMove(pending.paths, pending.targetFolder)
+        : planRename({ ...pending.request, consolidateDcim }),
+    [planMove, planRename],
   );
+
+  /**
+   * A dragged selection was dropped on a folder header.
+   *
+   * Opens the preview rather than moving anything: a drag is the easiest gesture
+   * in the app to make by accident, and a move is a rename — it carries the RAW
+   * and the sidecar with it, and there is no undo.
+   */
+  const handleFolderDrop = useCallback(
+    (node: FolderNode) => {
+      setDropTargetFolder(null);
+      const paths = store.selectionTargets;
+      if (paths.length === 0) return;
+      setPendingPlan({ kind: 'move', paths: [...paths], targetFolder: node.path });
+    },
+    [store],
+  );
+
+  const handleOpenFolderMenu = useCallback((node: FolderNode, at: { x: number; y: number }) => {
+    // The node's own NAME, not its path relative to the root: the menu says
+    // which folder it is about to act on, and in a tree that is the one
+    // segment the user is looking at.
+    setContextMenuFolder({ path: node.path, label: node.name, depth: node.depth });
+    setContextMenuAt(at);
+  }, []);
 
   const handleCloseContextMenu = useCallback(() => {
     setContextMenuFolder(null);
@@ -303,21 +422,33 @@ function App(): React.JSX.Element {
           // Opens the preview; nothing is renamed here. A rename moves files the
           // user never picked and cannot be undone, so it goes through the same
           // shape of confirmation as Execute.
-          setRenameRequest(
-            action.scope === 'selection'
-              ? {
-                  target: { kind: 'files', paths: [...store.selectionTargets] },
-                  consolidateDcim: true,
-                }
-              : {
-                  target: {
-                    kind: 'folder',
-                    folder: renameFolder?.path ?? '',
-                    recursive: action.recursive,
+          setPendingPlan({
+            kind: 'rename',
+            request:
+              action.scope === 'selection'
+                ? {
+                    target: { kind: 'files', paths: [...store.selectionTargets] },
+                    consolidateDcim: true,
+                  }
+                : {
+                    target: {
+                      kind: 'folder',
+                      folder: renameFolder?.path ?? '',
+                      recursive: action.recursive,
+                    },
+                    consolidateDcim: true,
                   },
-                  consolidateDcim: true,
-                },
-          );
+          });
+          break;
+        case 'move':
+          // Opens the picker; the plan is computed once a target is chosen.
+          setMovePaths([...store.selectionTargets]);
+          break;
+        case 'create-folder':
+          if (renameFolder) setCreateFolderIn(renameFolder);
+          break;
+        case 'delete-folder':
+          if (renameFolder) setDeleteFolderTarget(renameFolder);
           break;
         case 'delete':
           handleDeleteSelection();
@@ -334,14 +465,16 @@ function App(): React.JSX.Element {
    * every dismissal a pointer can express — but the native menu reaches none of
    * those: Open Folder, Rescan and the layout commands all arrive without a
    * click in the renderer, and a menu left standing over a different folder
-   * would rate or delete that folder's images. `visibleOrder` covers the rest of
-   * the list — filter, search, sort, collapse, deletion — since every one of
+   * would rate or delete that folder's images. The visible order covers the rest
+   * of the list — filter, search, sort, collapse, deletion — since every one of
    * them moves it, and none of them can be provoked by opening the menu.
+   *
+   * Keyed on the order's VALUE, not the array's identity: see `visibleOrderKey`.
    */
   useEffect(() => {
     setContextMenuFolder(null);
     setContextMenuAt(null);
-  }, [state.folderPath, viewLayout, visibleOrder]);
+  }, [state.folderPath, viewLayout, visibleOrderKey]);
 
   /**
    * Whether the context menu is actually up. It needs a batch to act on, and a
@@ -365,7 +498,10 @@ function App(): React.JSX.Element {
     showShortcuts ||
     pendingDelete !== null ||
     contextMenuOpen ||
-    renameRequest !== null;
+    pendingPlan !== null ||
+    movePaths !== null ||
+    createFolderIn !== null ||
+    deleteFolderTarget !== null;
 
   useKeyboardNav({
     groups: navGroups,
@@ -596,7 +732,6 @@ function App(): React.JSX.Element {
   }, [state.folderPath, state.isLoading, scanIncomplete]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scoring progress read directly from hook — no sync needed
-  const scoringProgress = scoringWorker.progress;
 
   const visibleCount = store.filteredImages.length;
 
@@ -652,14 +787,14 @@ function App(): React.JSX.Element {
     if (!state.folderPath) {
       return <WelcomeState onOpenFolder={handleSelectFolder} />;
     }
-    if (folders.length === 0) {
+    if (state.images.length === 0) {
       return <EmptyState />;
     }
     if (viewLayout === 'loupe' || viewLayout === 'filmstrip') {
       const DetailView = viewLayout === 'loupe' ? LoupeView : FilmstripView;
       return (
         <DetailView
-          folders={folders}
+          folders={store.folders}
           focusedImageId={state.focusedImageId}
           ratings={state.ratings}
           qualityScores={state.qualityScores}
@@ -677,7 +812,6 @@ function App(): React.JSX.Element {
     }
     return (
       <PhotoGrid
-        folders={folders}
         collapsedFolders={collapsedFolders}
         onToggleFolder={handleToggleFolder}
         ratings={state.ratings}
@@ -691,6 +825,11 @@ function App(): React.JSX.Element {
           setContextMenuAt(at);
         }}
         onOpenFolderMenu={handleOpenFolderMenu}
+        folderTree={folderTree}
+        folderCounts={folderCounts}
+        dropTargetFolder={dropTargetFolder}
+        onFolderDragOver={(node) => setDropTargetFolder(node?.path ?? null)}
+        onFolderDrop={handleFolderDrop}
         onRate={store.setRating}
         getThumbnail={thumbnailWorker.getThumbnail}
         requestThumbnail={thumbnailWorker.requestThumbnail}
@@ -724,8 +863,6 @@ function App(): React.JSX.Element {
           onSearchQueryChange={store.setSearchQuery}
           onThumbnailSizeChange={store.setThumbnailSize}
           onGroupingThresholdChange={store.setGroupingThresholdMs}
-          scoringProgress={scoringProgress}
-          thumbnailProgress={state.thumbnailProgress}
           status={state.status}
           viewLayout={viewLayout}
           onSetViewLayout={setViewLayout}
@@ -802,6 +939,9 @@ function App(): React.JSX.Element {
           y={contextMenuAt.y}
           variant={contextMenuFolder ? 'folder' : 'image'}
           folder={renameFolder ?? undefined}
+          // Depth 0 is the opened root. Deleting it would leave the app
+          // pointing at nothing, and main refuses it as well.
+          canDeleteFolder={contextMenuFolder !== null && contextMenuFolder.depth > 0}
           count={store.selectionTargets.length}
           rating={sharedRating(store.selectionTargets, state.ratings)}
           canReveal={revealPath !== null}
@@ -810,11 +950,48 @@ function App(): React.JSX.Element {
         />
       )}
 
+      <FolderPicker
+        open={movePaths !== null}
+        tree={folderTree}
+        disabledFolders={foldersOfPaths(movePaths ?? [])}
+        onPick={(target) => {
+          const paths = movePaths ?? [];
+          setMovePaths(null);
+          if (paths.length > 0) setPendingPlan({ kind: 'move', paths, targetFolder: target });
+        }}
+        onClose={() => setMovePaths(null)}
+      />
+
+      <CreateFolderDialog
+        parent={createFolderIn}
+        onCreate={async (name) => {
+          const result = await window.api.createFolder(createFolderIn!.path, name);
+          // A rescan is what makes the new folder appear: the tree is built from
+          // the walk's directory list, and nothing else knows the folder exists.
+          if (result.ok) await store.rescanFolder();
+          return result;
+        }}
+        onClose={() => setCreateFolderIn(null)}
+      />
+
+      <DeleteFolderDialog
+        folder={deleteFolderTarget}
+        stats={deleteFolderStats}
+        onConfirm={async () => {
+          const target = deleteFolderTarget;
+          if (!target || !state.folderPath) return;
+          const result = await window.api.deleteFolder(target.path, state.folderPath);
+          setDeleteFolderTarget(null);
+          if (result.ok) await store.rescanFolder();
+        }}
+        onClose={() => setDeleteFolderTarget(null)}
+      />
+
       <RenamePanel
-        request={renameRequest}
-        onPlan={store.planRename}
+        pending={pendingPlan}
+        onPlan={handlePlan}
         onApply={store.applyRename}
-        onClose={() => setRenameRequest(null)}
+        onClose={() => setPendingPlan(null)}
       />
 
       <ShortcutsTutorial isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />

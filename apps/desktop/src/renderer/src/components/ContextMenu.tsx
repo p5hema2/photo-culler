@@ -41,6 +41,14 @@ export type ContextMenuAction =
    */
   | { kind: 'rename'; scope: 'selection' }
   | { kind: 'rename'; scope: 'folder'; recursive: boolean }
+  /**
+   * Move the selection somewhere else. Opens a folder picker rather than a
+   * submenu: a tree is arbitrarily deep, and a flyout of it would be unusable
+   * by the third level. Dragging onto a folder header does the same thing.
+   */
+  | { kind: 'move' }
+  | { kind: 'create-folder' }
+  | { kind: 'delete-folder' }
   | { kind: 'delete' };
 
 /**
@@ -199,8 +207,13 @@ interface ContextMenuProps {
    * handling, the focus restore — is the same problem in both.
    */
   variant?: 'image' | 'folder';
-  /** The folder the rename items name. Absent leaves them out. */
+  /** The folder the folder-wide items name. Absent leaves them out. */
   folder?: { path: string; label: string };
+  /**
+   * Whether that folder may be deleted. False for the opened root, which would
+   * leave the app pointing at nothing.
+   */
+  canDeleteFolder?: boolean;
   /** How many images the menu acts on. */
   count: number;
   rating: number | 'mixed';
@@ -219,6 +232,7 @@ export function ContextMenu({
   y,
   variant = 'image',
   folder,
+  canDeleteFolder = false,
   count,
   rating,
   canReveal,
@@ -258,6 +272,25 @@ export function ContextMenu({
           label: 'Rename all, subfolders included\u2026',
           action: { kind: 'rename', scope: 'folder', recursive: true },
         },
+        {
+          key: 'create-folder',
+          label: 'New subfolder\u2026',
+          separator: true,
+          action: { kind: 'create-folder' },
+        },
+        // Left out entirely at depth 0 rather than shown disabled: the opened
+        // root is not a folder the app can delete, and an item that explains
+        // itself only on hover is worse than one that is not there.
+        ...(canDeleteFolder
+          ? [
+              {
+                key: 'delete-folder',
+                label: `Delete ${folder.label} and everything in it\u2026`,
+                danger: true,
+                action: { kind: 'delete-folder' },
+              } satisfies Entry,
+            ]
+          : []),
       ]
     : [];
 
@@ -293,6 +326,11 @@ export function ContextMenu({
             label: `Rename ${count} file${count === 1 ? '' : 's'}\u2026`,
             separator: true,
             action: { kind: 'rename', scope: 'selection' },
+          },
+          {
+            key: 'move',
+            label: `Move ${count} file${count === 1 ? '' : 's'} to\u2026`,
+            action: { kind: 'move' },
           },
           ...folderEntries,
           {

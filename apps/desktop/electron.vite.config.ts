@@ -63,6 +63,9 @@ export default defineConfig({
           __dirname,
           '../../packages/image-utils/src/media',
         ),
+        // tree.ts imports only natural-orderby and two type-only modules, so
+        // the browser bundle carries nothing it should not.
+        '@photo-culler/image-utils/tree': resolve(__dirname, '../../packages/image-utils/src/tree'),
       },
     },
     plugins: [tailwindcss(), react()],

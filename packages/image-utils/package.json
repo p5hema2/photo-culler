@@ -16,7 +16,8 @@
     "./orientation": "./src/orientation.ts",
     "./naming": "./src/naming.ts",
     "./rename": "./src/rename.ts",
-    "./media": "./src/media.ts"
+    "./media": "./src/media.ts",
+    "./tree": "./src/tree.ts"
   },
   "scripts": {
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",

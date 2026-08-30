@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   consolidationTarget,
   joinPath,
+  planMoves,
   planRenames,
   type RenameSource,
   type PlanRenamesOptions,
@@ -417,5 +418,129 @@ describe('planRenames — the safety post-condition', () => {
     const plan = await planRenames([], opts([]));
     expect(plan.entries).toEqual([]);
     expect(plan.touchedFolders).toEqual([]);
+  });
+});
+
+describe('planMoves', () => {
+  const DEST = '/dest';
+
+  /** Options for a move: the source folder plus the destination must be listed. */
+  function moveOpts(paths: readonly string[], over: Partial<PlanRenamesOptions> = {}) {
+    const listing = listingOf(paths);
+    if (!listing.has(DEST)) listing.set(DEST, new Map());
+    return { listing, contentKey: keyer(), ...over };
+  }
+
+  it('moves a file and keeps its name', async () => {
+    const p = '/d/P1000001.JPG';
+    const plan = await planMoves([src(p)], DEST, moveOpts([p]));
+    expect(plan.entries[0]).toMatchObject({
+      action: 'rename',
+      targetPath: '/dest/P1000001.JPG',
+      targetName: 'P1000001.JPG',
+      tag: null,
+    });
+  });
+
+  it('needs no timestamp at all', async () => {
+    // The whole point of the split: a move keeps the name, so a file with no
+    // readable date still moves. planRenames would report it 'no-date'.
+    const p = '/d/undated.jpg';
+    const plan = await planMoves([src(p, {})], DEST, moveOpts([p]));
+    expect(plan.counts['no-date']).toBe(0);
+    expect(plan.counts.rename).toBe(1);
+  });
+
+  it('reports a file already in the target as unchanged', async () => {
+    const p = '/dest/already.JPG';
+    const plan = await planMoves([src(p)], DEST, moveOpts([p]));
+    expect(plan.entries[0]!.action).toBe('unchanged');
+    expect(plan.counts.rename).toBe(0);
+  });
+
+  it('moves only the half of a mixed selection that has somewhere to go', async () => {
+    const here = '/dest/here.JPG';
+    const there = '/d/there.JPG';
+    const plan = await planMoves([src(here), src(there)], DEST, moveOpts([here, there]));
+    expect(plan.counts).toMatchObject({ unchanged: 1, rename: 1 });
+  });
+
+  it('suffixes a name the target already holds, rather than overwriting it', async () => {
+    const mine = '/d/IMG_1.JPG';
+    const sitting = '/dest/IMG_1.JPG';
+    const plan = await planMoves(
+      [src(mine)],
+      DEST,
+      moveOpts([mine, sitting], {
+        contentKey: keyer({ [mine]: 'abcd1234', [sitting]: 'other' }),
+      }),
+    );
+    expect(plan.entries[0]!.targetName).toBe('IMG_1~abcd.JPG');
+  });
+
+  it('leaves a byte-identical duplicate where it is', async () => {
+    const mine = '/d/IMG_1.JPG';
+    const sitting = '/dest/IMG_1.JPG';
+    const plan = await planMoves(
+      [src(mine)],
+      DEST,
+      moveOpts([mine, sitting], { contentKey: keyer({ [mine]: 'same', [sitting]: 'same' }) }),
+    );
+    expect(plan.entries[0]).toMatchObject({ action: 'duplicate', targetPath: mine });
+  });
+
+  it('keeps a RAW and its JPEG on the same suffix', async () => {
+    const jpg = '/d/IMG_1.JPG';
+    const raw = '/d/IMG_1.RW2';
+    const sitting = '/dest/IMG_1.JPG';
+    const plan = await planMoves(
+      [src(jpg), src(raw)],
+      DEST,
+      moveOpts([jpg, raw, sitting], {
+        contentKey: keyer({ [jpg]: 'beef0000', [sitting]: 'other' }),
+      }),
+    );
+    expect(plan.entries.map((e) => e.targetName)).toEqual(['IMG_1~beef.JPG', 'IMG_1~beef.RW2']);
+  });
+
+  it('takes companions the app cannot see along', async () => {
+    const jpg = '/d/IMG_1.JPG';
+    const plan = await planMoves(
+      [src(jpg)],
+      DEST,
+      moveOpts([jpg, '/d/IMG_1.RW2', '/d/IMG_1.RW2.xmp', '/d/._IMG_1.JPG']),
+    );
+    expect(plan.entries.map((e) => e.targetName).sort()).toEqual([
+      '._IMG_1.JPG',
+      'IMG_1.JPG',
+      'IMG_1.RW2',
+      'IMG_1.RW2.xmp',
+    ]);
+    expect(plan.entries.every((e) => e.targetFolder === DEST)).toBe(true);
+  });
+
+  it('merges two folders without letting either overwrite the other', async () => {
+    // Both cards wrote P1000001.JPG. Neither may land on the other.
+    const a = '/cardA/P1000001.JPG';
+    const b = '/cardB/P1000001.JPG';
+    const plan = await planMoves(
+      [src(a), src(b)],
+      DEST,
+      moveOpts([a, b], { contentKey: keyer({ [a]: 'aaaa1111', [b]: 'bbbb2222' }) }),
+    );
+    const targets = plan.entries.map((e) => e.targetPath);
+    expect(new Set(targets).size).toBe(2);
+    expect(plan.counts.rename).toBe(2);
+  });
+
+  it('reports both folders as touched', async () => {
+    const p = '/d/x.JPG';
+    const plan = await planMoves([src(p)], DEST, moveOpts([p]));
+    expect(new Set(plan.touchedFolders)).toEqual(new Set(['/d', DEST]));
+  });
+
+  it('handles an empty source list', async () => {
+    const plan = await planMoves([], DEST, moveOpts([]));
+    expect(plan.entries).toEqual([]);
   });
 });

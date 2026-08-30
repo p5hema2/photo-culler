@@ -36,7 +36,9 @@ import {
 import { getSession, updateSession } from './store';
 import { readDetailedMetadata, rotateImage, writeRating, type RatingWriteResult } from './exiftool';
 import { withFileLock } from './file-lock';
-import { planRename, executeRename, type RenameHooks } from './rename';
+import { planRename, planMove, executeRename, type RenameHooks } from './rename';
+import { startScanPass, adoptScanImages, finishScanPass } from './scan-pass';
+import { createFolder, deleteFolder, statFolder } from './folder-ops';
 
 const RESULTS_FILENAME = '.photo-culler-results.json';
 /** Pre-1.2.0 name. Read once and migrated to RESULTS_FILENAME on first load. */
@@ -401,12 +403,6 @@ export async function vacuumThumbCache(folderPath: string): Promise<{ removed: n
  */
 const vacuumTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-/**
- * The deferred metadata pass of the most recent scan, so the next scan can stop
- * it. One at a time by construction: there is one window and it shows one tree.
- */
-let activeScanPass: AbortController | null = null;
-
 function scheduleVacuum(folderPath: string): void {
   const existing = vacuumTimers.get(folderPath);
   if (existing) clearTimeout(existing);
@@ -586,9 +582,10 @@ export function registerIpcHandlers(): void {
     // reasons: it reads EXIF headers off the same platter the new folder's
     // blocking prefix is queued behind, and a batch for a tree the user has
     // left has nowhere useful to land anyway.
-    activeScanPass?.abort();
-    const pass = new AbortController();
-    activeScanPass = pass;
+    // Registered in `scan-pass.ts` rather than held here, because the rename
+    // path has to reach it: a rename no longer waits for the scan, it tells the
+    // pass where the files went. `startScanPass` aborts any predecessor.
+    const pass = startScanPass();
 
     const sender = event.sender;
     const scan = await scanFolder(folderPath, {
@@ -606,13 +603,17 @@ export function registerIpcHandlers(): void {
     });
     scheduleVacuum(folderPath);
 
+    // The pass adopts the very array it is about to fill in, so `remapScanPass`
+    // can redirect an unread entry when a rename moves the file underneath it.
+    adoptScanImages(pass, scan.images);
+
     // Deliberately not awaited: handing the file list back now, with only a
     // screenful of headers read, is the entire point — the rest arrive over
     // SCAN_PROGRESS. The renderer buffers a batch that overtakes this reply, so
     // nothing here depends on which of the two messages lands first.
-    void scan.readRemainingMetadata();
+    void scan.readRemainingMetadata().finally(() => finishScanPass(pass));
 
-    return scan.images;
+    return { images: scan.images, directories: scan.directories };
   });
 
   ipcMain.handle(IPC_CHANNELS.SAVE_RESULTS, async (_event, folderPath: string, data: string) => {
@@ -642,7 +643,7 @@ export function registerIpcHandlers(): void {
    * than stat-ing 3470 pairs of files to be exact.
    */
   ipcMain.handle(IPC_CHANNELS.COUNT_THUMB_CACHE, async (_event, folderPath: string) => {
-    let total = 0;
+    const counts: Record<string, number> = {};
     for (const imageDir of await imageDirectories(folderPath)) {
       let entries: CacheDirEntry[];
       try {
@@ -650,9 +651,10 @@ export function registerIpcHandlers(): void {
       } catch {
         continue; // no cache in this directory yet
       }
-      total += partitionCacheEntries(entries).thumbs.length;
+      const thumbs = partitionCacheEntries(entries).thumbs.length;
+      if (thumbs > 0) counts[imageDir] = thumbs;
     }
-    return total;
+    return counts;
   });
 
   /**
@@ -859,4 +861,27 @@ export function registerIpcHandlers(): void {
     };
     return executeRename(plan, hooks);
   });
+
+  ipcMain.handle(IPC_CHANNELS.PLAN_MOVE, async (_event, paths: string[], targetFolder: string) =>
+    planMove(paths, targetFolder),
+  );
+
+  ipcMain.handle(IPC_CHANNELS.CREATE_FOLDER, async (_event, parentPath: string, name: string) =>
+    createFolder(parentPath, name),
+  );
+
+  /**
+   * Delete a folder and everything below it.
+   *
+   * The most destructive call in the app: it takes files the scanner never
+   * listed — the RAW, the sidecars, the thumbnail cache — and there is no undo.
+   * `root` is checked in the handler as well as in the menu that offers it.
+   */
+  ipcMain.handle(IPC_CHANNELS.DELETE_FOLDER, async (_event, folderPath: string, root: string) =>
+    deleteFolder(folderPath, root),
+  );
+
+  ipcMain.handle(IPC_CHANNELS.STAT_FOLDER, async (_event, folderPath: string) =>
+    statFolder(folderPath),
+  );
 }

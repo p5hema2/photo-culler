@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { ImageFileInfo } from '@photo-culler/types';
 import { groupByTimestamp } from '@photo-culler/image-utils/grouping';
 import type { FolderSection } from '@photo-culler/image-utils/folders';
+import type { FolderNode } from '@photo-culler/image-utils/tree';
 import {
   THUMBNAIL_SIZE_MAP,
   HEADER_HEIGHT,
@@ -96,6 +97,85 @@ describe('PhotoGrid', () => {
     });
   });
 
+  /**
+   * One flat level of the tree, which is what most of these tests need.
+   *
+   * `buildRows` takes FolderNodes since 1.8.1; before that it took sections and
+   * a `showFolderHeaders` flag. Every node now gets a header, so the tests that
+   * used to pass `false` build a single node and subtract nothing — the header
+   * is simply part of the offset.
+   */
+  function nodesOf(sections: FolderSection[]): FolderNode[] {
+    return sections.map((section) => ({
+      path: section.path,
+      name: section.path.slice(1),
+      depth: 0,
+      children: [],
+      section,
+      ownCount: section.imageCount,
+      totalCount: section.imageCount,
+    }));
+  }
+
+  /** A parent holding `children`, none of which carry images of their own. */
+  function parentOf(path: string, children: FolderNode[]): FolderNode {
+    return {
+      path,
+      name: path.slice(1),
+      depth: 0,
+      children: children.map((c) => ({ ...c, depth: 1 })),
+      section: null,
+      ownCount: 0,
+      totalCount: children.reduce((n, c) => n + c.totalCount, 0),
+    };
+  }
+
+  describe('buildRows over a tree', () => {
+    it('emits a header for every node, then that node’s own groups', () => {
+      const a = makeSection('/p/a', [2]);
+      const rows = buildRows([parentOf('/p', nodesOf([a]))], new Set());
+      expect(rows.map((r) => (r.kind === 'folder' ? `f:${r.node.path}` : 'g'))).toEqual([
+        'f:/p',
+        'f:/p/a',
+        'g',
+      ]);
+    });
+
+    it('hides a collapsed node’s whole subtree, not just its own images', () => {
+      // The behavioural difference from the flat list this replaced: there, one
+      // section's collapse could not hide another's.
+      const a = makeSection('/p/a', [2]);
+      const rows = buildRows([parentOf('/p', nodesOf([a]))], new Set(['/p']));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.kind).toBe('folder');
+    });
+
+    it('still shows a collapsed node itself, without its groups', () => {
+      const a = makeSection('/p/a', [2]);
+      const rows = buildRows([parentOf('/p', nodesOf([a]))], new Set(['/p/a']));
+      expect(rows.map((r) => r.kind)).toEqual(['folder', 'folder']);
+    });
+
+    it('keeps groupIndex aligned with the uncollapsed numbering', () => {
+      // groupIndex is the thumbnail fetch priority, not row bookkeeping.
+      // Advancing it past hidden groups is what stops collapsing one shoot from
+      // re-prioritising every folder after it.
+      const a = makeSection('/p/a', [2, 2]);
+      const b = makeSection('/p/b', [2]);
+      const tree = [parentOf('/p', nodesOf([a, b]))];
+
+      const open = buildRows(tree, new Set());
+      const collapsed = buildRows(tree, new Set(['/p/a']));
+
+      const indexIn = (rows: ReturnType<typeof buildRows>) =>
+        rows.find((r) => r.kind === 'group' && r.section.path === '/p/b');
+      const openB = indexIn(open);
+      const collapsedB = indexIn(collapsed);
+      expect(openB?.kind === 'group' && openB.groupIndex).toBe(2);
+      expect(collapsedB?.kind === 'group' && collapsedB.groupIndex).toBe(2);
+    });
+  });
+
   // The virtualizer positions rows from these same numbers, so an offset read
   // off the model is where the cell actually is — including for rows that are
   // not rendered, which is the case that matters when the view switches back.
@@ -105,38 +185,39 @@ describe('PhotoGrid', () => {
 
     it('finds the first image at the top of its group, below the header', () => {
       const section = makeSection('/a', [4]);
-      const rows = buildRows([section], new Set(), false);
+      const rows = buildRows(nodesOf([section]), new Set());
+      // Every folder has a header now, so its own 40 px sits above the group.
       expect(cellOffsetInGrid(rows, section.groups[0]!.images[0]!.path, 2, cellSize)).toEqual({
-        top: HEADER_HEIGHT,
+        top: FOLDER_HEADER_HEIGHT + HEADER_HEIGHT,
         height: cellSize,
       });
     });
 
     it('drops a full row height per wrapped line', () => {
       const section = makeSection('/a', [6]);
-      const rows = buildRows([section], new Set(), false);
+      const rows = buildRows(nodesOf([section]), new Set());
       // 2 per row: index 4 is on the third line.
       expect(cellOffsetInGrid(rows, section.groups[0]!.images[4]!.path, 2, cellSize)).toEqual({
-        top: HEADER_HEIGHT + 2 * rowPitch,
+        top: FOLDER_HEADER_HEIGHT + HEADER_HEIGHT + 2 * rowPitch,
         height: cellSize,
       });
     });
 
     it('adds up the groups above it', () => {
       const section = makeSection('/a', [2, 3]);
-      const rows = buildRows([section], new Set(), false);
+      const rows = buildRows(nodesOf([section]), new Set());
       const second = section.groups[1]!.images[0]!.path;
       expect(cellOffsetInGrid(rows, second, 2, cellSize)).toEqual({
-        top: groupHeight(2, 2, cellSize) + HEADER_HEIGHT,
+        top: FOLDER_HEADER_HEIGHT + groupHeight(2, 2, cellSize) + HEADER_HEIGHT,
         height: cellSize,
       });
       // Sanity: that first group really is header + one row + divider.
       expect(groupHeight(2, 2, cellSize)).toBe(HEADER_HEIGHT + cellSize + DIVIDER_HEIGHT);
     });
 
-    it('counts folder headers when they are shown', () => {
+    it('counts folder headers', () => {
       const sections = [makeSection('/a', [2]), makeSection('/b', [2])];
-      const rows = buildRows(sections, new Set(), true);
+      const rows = buildRows(nodesOf(sections), new Set());
       const inB = sections[1]!.groups[0]!.images[0]!.path;
       expect(cellOffsetInGrid(rows, inB, 2, cellSize)).toEqual({
         top:
@@ -147,13 +228,13 @@ describe('PhotoGrid', () => {
 
     it('returns null for an image in a collapsed folder, which has no cell', () => {
       const sections = [makeSection('/a', [2]), makeSection('/b', [2])];
-      const rows = buildRows(sections, new Set(['/b']), true);
+      const rows = buildRows(nodesOf(sections), new Set(['/b']));
       const inB = sections[1]!.groups[0]!.images[0]!.path;
       expect(cellOffsetInGrid(rows, inB, 2, cellSize)).toBe(null);
     });
 
     it('returns null for a path that is not in the grid at all', () => {
-      const rows = buildRows([makeSection('/a', [2])], new Set(), false);
+      const rows = buildRows(nodesOf([makeSection('/a', [2])]), new Set());
       expect(cellOffsetInGrid(rows, '/photos/nope.jpg', 2, cellSize)).toBe(null);
     });
   });

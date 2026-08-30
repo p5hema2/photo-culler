@@ -45,9 +45,10 @@ beforeEach(() => {
   disk = { '/A': null, '/B': B_RESULTS };
   (globalThis as unknown as { Worker: unknown }).Worker = FakeWorker;
   (globalThis as unknown as { window: { api: unknown } }).window.api = {
-    scanFolder: vi.fn(async (folder: string) => [
-      img(folder, folder === '/B' ? 'b1.jpg' : 'a1.jpg'),
-    ]),
+    scanFolder: vi.fn(async (folder: string) => ({
+      images: [img(folder, folder === '/B' ? 'b1.jpg' : 'a1.jpg')],
+      directories: [folder],
+    })),
     loadResults: vi.fn(async (folder: string) => {
       // Let a test hold folder B's load open to exercise the in-flight window
       if (folder === '/B' && deferredB) return deferredB.promise;

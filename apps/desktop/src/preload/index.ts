@@ -41,6 +41,13 @@ const api: ElectronAPI = {
   getAppVersion: () => ipcRenderer.invoke(IPC_CHANNELS.GET_APP_VERSION),
   planRename: (request) => ipcRenderer.invoke(IPC_CHANNELS.PLAN_RENAME, request),
   executeRename: (plan) => ipcRenderer.invoke(IPC_CHANNELS.EXECUTE_RENAME, plan),
+  planMove: (paths, targetFolder) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLAN_MOVE, paths, targetFolder),
+  createFolder: (parentPath, name) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CREATE_FOLDER, parentPath, name),
+  deleteFolder: (folderPath, root) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DELETE_FOLDER, folderPath, root),
+  statFolder: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.STAT_FOLDER, folderPath),
 };
 
 contextBridge.exposeInMainWorld('api', api);

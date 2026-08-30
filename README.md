@@ -10,8 +10,8 @@ Built with Electron, React, TypeScript, and Tailwind CSS.
 
 ## Features
 
-- **Thumbnail grid** with virtual scrolling — handles thousands of images, one collapsible section
-  per folder, ordered by folder name
+- **Thumbnail grid** with virtual scrolling — handles thousands of images, arranged as the real
+  folder tree: indented, collapsible, with the thumbnail and scoring counters on each folder
 - **Videos alongside the photos** — MP4, MOV, M4V, AVI, MKV, MTS, M2TS, 3GP and WebM are listed,
   previewed and renamed; the four Chromium can decode also play in the info panel
 - **Auto-grouping** by timestamp — burst shots are grouped together
@@ -26,6 +26,10 @@ Built with Electron, React, TypeScript, and Tailwind CSS.
 - **Right-click menu** — rating, rotate, rename and delete for the selection, with the keyboard
   shortcut shown beside each item that has one, plus “Reveal in Explorer/Finder” for the image under
   the cursor
+- **Folder operations** — right-click a folder to create a subfolder or delete it (with a
+  confirmation that counts what is really in there, RAW files and sidecars included)
+- **Move files** — drag a selection onto a folder, or right-click and pick a target. Names are kept;
+  only a genuine collision adds a content suffix, and nothing is ever overwritten
 - **Rename by capture time** — right-click a photo or a folder header to rename to
   `YYYY-MM-DD HH-MM-SS-fff`, the same format `rename-by-date` produces, with a preview of every
   move before anything happens. The RAW, the XMP sidecar and the macOS twin beside a photo come with
@@ -118,7 +122,8 @@ certificate is trusted on sight.
 | Shift+click | Select everything between the last click and this one |
 | Ctrl/Cmd+click | Add one image to the selection, or take it out |
 | Right click | Context menu — rating, rotate, rename, reveal, delete — for the selection |
-| Right click a folder header | Rename everything in that folder, with or without its subfolders |
+| Right click a folder header | Rename, create a subfolder, or delete the folder |
+| Drag a selection onto a folder | Move it there, after a preview |
 | Click a star | Rate that one image; clicking the lit star clears its rating |
 | Scroll / drag | Zoom and pan in the info panel |
 

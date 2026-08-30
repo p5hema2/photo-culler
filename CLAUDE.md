@@ -12,7 +12,9 @@ structural safety property in the app, because it means an image nobody has look
 deleted.
 
 Opening a folder scans it **recursively**, so a parent holding several shoots can be culled in one
-session; the grid shows one collapsible section per folder, ordered by folder NAME.
+session; the grid shows the folder TREE, indented and collapsible, with the thumbnail and scoring
+counters on each folder's own header. Folders can be created, deleted and moved between from the
+right-click menu, and a selection can be dragged onto a folder to move it.
 
 Videos are listed alongside the photos and can be viewed, renamed and deleted — but never rated,
 scored or rotated. Renaming is the second thing that changes a user's files: right-click a photo or
@@ -153,6 +155,109 @@ value and the write lands after it. And a rescan does discard in-memory quality 
 reached disk (one debounce window, plus anything scored while the prune ran): the re-walk rebuilds
 `qualityScores` from the files, and the scoring pass recomputes precisely those because they are then
 absent. `rescan.test.ts` guards all of it.
+
+**The grid renders a TREE as of 1.8.1, and it is still ONE FLAT ROW LIST.** Up to 1.8.0 the sections
+were flat and labelled with the path relative to the root, so a card read as one row saying
+`2026-07-03 - Heidewitzka Festival/DCIM/100_PANA`. That is a path, not a structure: it cannot be
+collapsed at the shoot level, it has nowhere to hang "new subfolder", and every level of nesting
+makes the label longer instead of the layout deeper.
+
+`tree.ts` builds the structure; `buildRows` still flattens it, because the virtualizer needs one
+array and CLAUDE.md's row-model trap has not moved. Four things are load-bearing:
+
+- **A folder row costs a flat `FOLDER_HEADER_HEIGHT` at every depth.** `cellOffsetInGrid` re-derives
+  every row's offset by summing heights — that is how it answers for an image whose row is not
+  rendered, which is what re-centres the grid on return from the loupe — and it charges 40 px with
+  no depth term. So the indent is PADDING INSIDE the row. A taller row for a deeper folder would
+  silently move every cell below it.
+- **A collapsed node hides its whole SUBTREE.** That is the behavioural difference from the flat
+  list, where one section's collapse could not affect another's. `visibleNodes` does it once, and
+  `buildRows`, `sortedFlatImages` and `navGroups` all read it.
+- **`groupIndex` still advances past everything hidden.** It is not row bookkeeping — it is the
+  thumbnail fetch priority — and keeping it aligned with the UNCOLLAPSED numbering is what stops
+  collapsing one shoot from re-prioritising every folder after it.
+- **Descending reverses SIBLINGS, not the list.** A flat list could simply be reversed; a tree
+  cannot, because a child may never sort above its parent. `direction` therefore means the only
+  thing it can mean here, and `buildFolderTree` applies it per level.
+
+**The scan reports DIRECTORIES as well as images, and that is not redundant.** `scanFolder` returns
+`{ images, directories }` since 1.8.1. A folder with no photos anywhere below it has no image to
+derive it from — and it still has to appear, because it is where a moved file can be dropped and
+where a subfolder the user has just created shows up. Hidden directories are excluded, which is what
+keeps `.photo-culler-thumbs` out of the tree.
+
+**The thumbnail and scoring counters live on the folder headers, and each has its OWN denominator.**
+They were one pair in the toolbar until 1.8.1; with a tree that number cannot be split back up, and
+the question a user has — "is this shoot done?" — is per folder. `rollUpCounts` sums a folder and
+everything below it.
+
+The denominators are the subtle half. A video is never scored, and a container Chromium cannot demux
+never gets a poster frame, so a counter measured against the plain image count would sit at 25/28
+for ever and read as unfinished work that is in fact finished. `FolderOwnCounts` therefore carries
+`scoreable` and `thumbable` beside `scored` and `thumbs`, and the store fills them from
+`isVideoFile` / `isPlayableVideo`. Both pairs are clamped: a thumbnail outlives its image until the
+next vacuum, and 41/40 is a bug report.
+
+**Renaming during a scan is allowed, and the mechanism is a REMAP rather than a wait.** Up to 1.8.0
+`planRename` refused while `isScanIncomplete`, because the deferred metadata pass re-reads BY PATH
+and `readImageMetadata` answers a miss with `{}` — so a renamed image silently lost its date, its
+dimensions and its RATING for the rest of the session. That was the only defence the renderer had,
+and it made renaming impossible for the minutes a large library takes to scan, which is exactly when
+the user wants it.
+
+The pass and the rename both run in the MAIN process, so the rename now tells the pass where the
+files went. `main/scan-pass.ts` holds the very `ImageFileInfo` objects the pass is filling in — the
+array is shared, not copied — and `remapScanPass` rewrites the entries it has not reached. Two
+details:
+
+- **It remaps before renaming, for every PLANNED entry**, not only the ones that succeed. A file
+  whose rename is refused keeps its old path and costs one image's metadata in a case that is
+  already an error; the reverse — moving a file the pass still thinks is elsewhere — costs it
+  silently in the common case.
+- **`executeRename` re-reads the renamed images and returns them** in `RenameExecuteResult.refreshed`,
+  but only when a pass was running. `METADATA_CONCURRENCY` is 8, so up to eight files can be mid-read
+  at the instant they move and come back empty; rather than work out which, re-read them all. The
+  renderer merges them through `mergeMetadata` and `mergeRatings`, and `userRatedRef` is re-keyed
+  BEFORE that updater — left until after, every refreshed rating would win and a star typed a moment
+  ago would be rolled back to what the file still holds.
+
+**The context menu closes on a CHANGE to the visible order, not on its identity.** `visibleOrder` is
+a fresh array on every render that touches the folder tree, and during a scan that is every metadata
+batch — one every 400 ms. Its CONTENTS barely move: `sortImages` orders by filename, which a batch
+does not change, and `groupByTimestamp` only re-cuts group boundaries inside an already-sorted list.
+`syncVisibleOrder` is fine with the churn; the menu was not, and was being shut two or three times a
+second for the whole scan. `visibleOrderKey` is the value-identity that fixed it.
+
+**Moving is renaming, and shares the executor deliberately.** `planMoves` and `planRenames` differ in
+exactly one thing — where the base name comes from, the clock or the file's own stem — so they share
+`planWith`, and with it the namespace allocation, the collision suffix, the companion pass and
+`assertNoOverlap`. A move therefore carries the RAW and the XMP sidecar too, cannot overwrite
+anything, and is carried out by the same `executeRename` that re-keys the results file and moves the
+thumbnail cache. Two entry points, one preview panel, one executor: a second dialog would be a second
+place for the confirmation wording to drift.
+
+**A recursive folder delete is the most destructive thing this app can do, and its confirmation
+counts what MAIN walked.** More destructive than Execute, which is bounded by a star range, and than
+the Delete key, which names the images it removes. `statFolder` walks the directory itself rather
+than deriving numbers from `state.images`: a folder showing 40 JPEGs may hold 40 RAW files, 40
+sidecars and a thumbnail cache, and all of it goes. Two rules in that walk:
+
+- every file is counted and its bytes totalled, hidden or not — all of it is being deleted;
+- but a file inside a HIDDEN directory never counts as media, because `.photo-culler-thumbs` is full
+  of `.webp` files and `isMediaFile` says yes to those. Without that the dialog claimed the app
+  displayed four photos where it displayed two.
+
+`deleteFolder` refuses three things in main as well as in the menu that offers it — a path outside
+the opened tree, the root itself, and anything that is not a directory. The renderer decides what to
+OFFER; main decides what to DO.
+
+**`drawImage` on an evicted ImageBitmap unmounts the whole grid.** `storeBitmap` closes the
+least-recently-used entry once the cache passes MAX_CACHED_BITMAPS, and the comment there says an
+evicted visible thumbnail is "not fatal" because the cell re-renders as 'loading'. It is not fatal
+only because `ThumbnailCell` now checks: the draw effect can still run once more with the value it
+captured, and `drawImage` on a detached bitmap throws `InvalidStateError` — which took the entire app
+to a blank window on a 1500-image folder. A closed ImageBitmap reports zero dimensions, which is the
+only way to ask.
 
 **Videos are listed, but they are not photos, and five paths say so separately.** `media.ts` is the
 single answer to "is this a video?" — deliberately NOT a field on `ImageFileInfo`, because the

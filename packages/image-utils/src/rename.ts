@@ -165,7 +165,66 @@ export async function planRenames(
   sources: readonly RenameSource[],
   options: PlanRenamesOptions,
 ): Promise<RenamePlan> {
-  const { consolidateDcim, listing, contentKey, companions = true, maxTargetPathLength } = options;
+  return planWith(sources, options, {
+    folderFor: (source) =>
+      options.consolidateDcim ? consolidationTarget(source.folder) : source.folder,
+    nameFor: timestampNamer,
+  });
+}
+
+/**
+ * Move files into `targetFolder`, keeping every basename.
+ *
+ * Shares everything below the name with `planRenames` — the namespace
+ * allocation, the collision suffix, the companion pass, the post-condition —
+ * because those are the parts that make either operation safe, and a second
+ * copy of them is a second thing to get wrong. The ONLY difference is where the
+ * base name comes from: the clock, or the file's own stem.
+ *
+ * A file already in `targetFolder` comes out 'unchanged' rather than being
+ * moved onto itself, so dropping a mixed selection onto the folder half of it
+ * already lives in moves only the half that has somewhere to go.
+ */
+export async function planMoves(
+  sources: readonly RenameSource[],
+  targetFolder: string,
+  options: Omit<PlanRenamesOptions, 'consolidateDcim'>,
+): Promise<RenamePlan> {
+  return planWith(
+    sources,
+    { ...options, consolidateDcim: false },
+    {
+      folderFor: () => targetFolder,
+      // A move renames nothing, so the group's own stem IS the base name. It is
+      // still routed through the group rather than taken per file, because that
+      // is what keeps a RAW and its JPEG on one suffix when the target folder
+      // already holds their name.
+      nameFor: (group) => ({ base: group.stem, tag: null }),
+    },
+  );
+}
+
+/** How one flavour of plan decides where a group goes and what it is called. */
+interface PlanStrategy {
+  folderFor: (source: RenameSource) => string;
+  nameFor: (group: Group) => { base: string; tag: string | null } | null;
+}
+
+/** The timestamp ladder, as a namer. Null means no member carried a date. */
+function timestampNamer(group: Group): { base: string; tag: string | null } | null {
+  const dated = group.members
+    .filter((m): m is Member & { stamp: MemberStamp } => m.stamp !== null)
+    .sort((a, b) => a.stamp.epoch - b.stamp.epoch || b.stamp.ms - a.stamp.ms);
+  if (dated.length === 0) return null;
+  return { base: dated[0]!.stamp.name, tag: dated[0]!.stamp.tag };
+}
+
+async function planWith(
+  sources: readonly RenameSource[],
+  options: PlanRenamesOptions,
+  strategy: PlanStrategy,
+): Promise<RenamePlan> {
+  const { listing, contentKey, companions = true, maxTargetPathLength } = options;
 
   const entries: RenamePlanEntry[] = [];
   const groups = new Map<string, Group>();
@@ -184,7 +243,7 @@ export async function planRenames(
   // enough to name the whole group, and only a group where NO member carries a
   // date comes out as 'no-date'.
   for (const source of sources) {
-    const targetFolder = consolidateDcim ? consolidationTarget(source.folder) : source.folder;
+    const targetFolder = strategy.folderFor(source);
     const found = nameFromTags(source.tags);
     const { stem, ext } = splitBasename(source.name);
     const key = `${source.folder}\u0000${stem}`;
@@ -230,13 +289,12 @@ export async function planRenames(
     const group = groups.get(key)!;
     const ns = namespaceFor(group.targetFolder);
 
-    // Earliest wins, and within one second the LARGEST fraction — the Perl's
-    // rule, kept verbatim so both tools pick the same member of a pair.
-    const dated = group.members
-      .filter((m): m is Member & { stamp: MemberStamp } => m.stamp !== null)
-      .sort((a, b) => a.stamp.epoch - b.stamp.epoch || b.stamp.ms - a.stamp.ms);
+    // For a rename: earliest wins, and within one second the LARGEST fraction —
+    // the Perl's rule, kept verbatim so both tools pick the same member of a
+    // pair. For a move: the group's own stem, unchanged.
+    const named = strategy.nameFor(group);
 
-    if (dated.length === 0) {
+    if (named === null) {
       for (const member of group.members) {
         entries.push(
           leaveAlone(member.source, 'no-date', 'kein brauchbarer Zeitstempel in der Datei'),
@@ -245,10 +303,16 @@ export async function planRenames(
       continue;
     }
 
-    const base = dated[0]!.stamp.name;
-    const groupTag: string = dated[0]!.stamp.tag;
-    /** The photo a companion is said to belong to. */
-    const primary = dated[0]!.source.path;
+    const base = named.base;
+    const groupTag = named.tag;
+    /**
+     * The photo a companion is said to belong to: the member that named the
+     * group where one did, and otherwise simply the first — a move has no
+     * ranking among its members.
+     */
+    const primary =
+      group.members.find((m) => m.stamp?.name === base)?.source.path ??
+      group.members[0]!.source.path;
 
     // Does any member collide? If one does they ALL take the same suffix, so
     // the pair does not come apart.

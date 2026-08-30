@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   RenameExecuteResult,
   RenamePlan,
@@ -20,11 +20,26 @@ import type {
  * between, so what the user approved is what happens.
  */
 
+/**
+ * The two operations this panel previews.
+ *
+ * One panel rather than two because they produce the SAME plan and are carried
+ * out by the same executor — a move is a rename that keeps the basename — so a
+ * second dialog would be a second place for the confirmation wording, the
+ * failure list and the companion column to drift.
+ */
+export type PendingPlan =
+  | { kind: 'rename'; request: RenameRequest }
+  | { kind: 'move'; paths: string[]; targetFolder: string };
+
 interface RenamePanelProps {
-  /** What the user right-clicked. Null closes the panel. */
-  request: RenameRequest | null;
+  /** What the user asked for. Null closes the panel. */
+  pending: PendingPlan | null;
   /** Compute the plan. Writes nothing. */
-  onPlan: (request: RenameRequest) => Promise<{ plan: RenamePlan | null; error?: string }>;
+  onPlan: (
+    pending: PendingPlan,
+    consolidateDcim: boolean,
+  ) => Promise<{ plan: RenamePlan | null; error?: string }>;
   onApply: (plan: RenamePlan) => Promise<RenameExecuteResult | null>;
   onClose: () => void;
 }
@@ -47,11 +62,12 @@ const COMPANION_LABEL: Record<NonNullable<RenamePlanEntry['companionKind']>, str
 };
 
 export function RenamePanel({
-  request,
+  pending,
   onPlan,
   onApply,
   onClose,
 }: RenamePanelProps): React.JSX.Element | null {
+  const isMove = pending?.kind === 'move';
   const [consolidateDcim, setConsolidateDcim] = useState(true);
   const [plan, setPlan] = useState<RenamePlan | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,11 +75,24 @@ export function RenamePanel({
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState<RenameExecuteResult | null>(null);
 
+  /**
+   * `onPlan` through a ref, so the effect below depends only on the two inputs
+   * that actually change the plan.
+   *
+   * Belt and braces with App's own memoisation: planning reads tags with
+   * exiftool and takes seconds on a real folder, and an effect that re-runs on
+   * a callback's identity would abandon and restart that work on every render —
+   * which during a scan is every metadata batch, so the preview would never
+   * settle and its confirm button would never enable.
+   */
+  const onPlanRef = useRef(onPlan);
+  onPlanRef.current = onPlan;
+
   // Re-plan whenever the target or the consolidation switch changes. The plan is
   // a pure function of the two plus what is on disk, so there is nothing to
   // reconcile — the previous one is simply replaced.
   useEffect(() => {
-    if (!request) {
+    if (!pending) {
       setPlan(null);
       setError(null);
       setResult(null);
@@ -72,7 +101,8 @@ export function RenamePanel({
     let cancelled = false;
     setIsPlanning(true);
     setError(null);
-    void onPlan({ ...request, consolidateDcim })
+    void onPlanRef
+      .current(pending, consolidateDcim)
       .then((outcome) => {
         if (cancelled) return;
         setPlan(outcome.plan);
@@ -84,7 +114,7 @@ export function RenamePanel({
     return () => {
       cancelled = true;
     };
-  }, [request, consolidateDcim, onPlan]);
+  }, [pending, consolidateDcim]);
 
   const moving = useMemo(() => plan?.entries.filter((e) => e.action === 'rename') ?? [], [plan]);
   const problems = useMemo(
@@ -103,7 +133,7 @@ export function RenamePanel({
   }, [plan, onApply]);
 
   useEffect(() => {
-    if (!request) return;
+    if (!pending) return;
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
@@ -114,23 +144,25 @@ export function RenamePanel({
     // so a handler bound to this element would stop hearing Escape.
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [request, isRunning, onClose]);
+  }, [pending, isRunning, onClose]);
 
-  if (!request) return null;
+  if (!pending) return null;
 
   const scopeLabel =
-    request.target.kind === 'files'
-      ? `${request.target.paths.length} ausgewählte Datei${request.target.paths.length === 1 ? '' : 'en'}`
-      : request.target.recursive
-        ? 'Ordner mit Unterordnern'
-        : 'Ordner';
+    pending.kind === 'move'
+      ? `${pending.paths.length} Datei${pending.paths.length === 1 ? '' : 'en'} nach ${baseName(pending.targetFolder)}`
+      : pending.request.target.kind === 'files'
+        ? `${pending.request.target.paths.length} ausgewählte Datei${pending.request.target.paths.length === 1 ? '' : 'en'}`
+        : pending.request.target.recursive
+          ? 'Ordner mit Unterordnern'
+          : 'Ordner';
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       role="dialog"
       aria-modal="true"
-      aria-label="Dateien umbenennen"
+      aria-label={isMove ? 'Dateien verschieben' : 'Dateien umbenennen'}
       data-testid="rename-panel"
       onClick={() => {
         if (!isRunning) onClose();
@@ -142,10 +174,13 @@ export function RenamePanel({
       >
         {result ? (
           <>
-            <h2 className="text-lg font-semibold mb-4">Umbenennen abgeschlossen</h2>
+            <h2 className="text-lg font-semibold mb-4">
+              {isMove ? 'Verschieben abgeschlossen' : 'Umbenennen abgeschlossen'}
+            </h2>
             <div className="space-y-2 mb-6 text-sm">
               <p className="text-green-400">
-                {result.renamed} Datei{result.renamed === 1 ? '' : 'en'} umbenannt
+                {result.renamed} Datei{result.renamed === 1 ? '' : 'en'}{' '}
+                {isMove ? 'verschoben' : 'umbenannt'}
               </p>
               {result.failed > 0 && (
                 <>
@@ -179,29 +214,41 @@ export function RenamePanel({
           </>
         ) : (
           <>
-            <h2 className="text-lg font-semibold mb-1">Nach Aufnahmezeit umbenennen</h2>
+            <h2 className="text-lg font-semibold mb-1">
+              {isMove ? 'In einen anderen Ordner verschieben' : 'Nach Aufnahmezeit umbenennen'}
+            </h2>
             <p className="text-xs text-gray-500 mb-4">
-              {scopeLabel} · Format <span className="font-mono">JJJJ-MM-TT SS-MM-SS-mmm</span>,
-              identisch zu rename-by-date
+              {scopeLabel}
+              {isMove ? (
+                <> · Namen bleiben; nur bei Konflikt kommt ein Inhalts-Suffix dazu</>
+              ) : (
+                <>
+                  {' '}
+                  · Format <span className="font-mono">JJJJ-MM-TT SS-MM-SS-mmm</span>, identisch zu
+                  rename-by-date
+                </>
+              )}
             </p>
 
-            <label className="flex items-start gap-2 mb-4 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                checked={consolidateDcim}
-                onChange={(e) => setConsolidateDcim(e.target.checked)}
-                className="mt-0.5"
-                data-testid="rename-consolidate-dcim"
-              />
-              <span>
-                Unterordner unter <span className="font-mono">DCIM</span> zusammenführen
-                <span className="block text-xs text-gray-500">
-                  Verschiebt Dateien aus <span className="font-mono">DCIM/100_PANA</span> direkt
-                  nach <span className="font-mono">DCIM</span>. Die einzige Strukturänderung, die
-                  ein Umbenennen vornimmt — alles andere bleibt, wo es liegt.
+            {!isMove && (
+              <label className="flex items-start gap-2 mb-4 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={consolidateDcim}
+                  onChange={(e) => setConsolidateDcim(e.target.checked)}
+                  className="mt-0.5"
+                  data-testid="rename-consolidate-dcim"
+                />
+                <span>
+                  Unterordner unter <span className="font-mono">DCIM</span> zusammenführen
+                  <span className="block text-xs text-gray-500">
+                    Verschiebt Dateien aus <span className="font-mono">DCIM/100_PANA</span> direkt
+                    nach <span className="font-mono">DCIM</span>. Die einzige Strukturänderung, die
+                    ein Umbenennen vornimmt — alles andere bleibt, wo es liegt.
+                  </span>
                 </span>
-              </span>
-            </label>
+              </label>
+            )}
 
             {isPlanning && (
               <p className="text-sm text-gray-400 mb-4" data-testid="rename-planning">
@@ -218,9 +265,16 @@ export function RenamePanel({
             {plan && !isPlanning && (
               <>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3 text-sm">
-                  <Count label="umbenennen" value={plan.counts.rename} tone="text-green-400" />
-                  <Count label="unverändert" value={plan.counts.unchanged} />
-                  <Count label="ohne Datum" value={plan.counts['no-date']} />
+                  <Count
+                    label={isMove ? 'verschieben' : 'umbenennen'}
+                    value={plan.counts.rename}
+                    tone="text-green-400"
+                  />
+                  <Count
+                    label={isMove ? 'liegen schon dort' : 'unverändert'}
+                    value={plan.counts.unchanged}
+                  />
+                  {!isMove && <Count label="ohne Datum" value={plan.counts['no-date']} />}
                   <Count label="Duplikate" value={plan.counts.duplicate} tone="text-yellow-400" />
                   <Count label="blockiert" value={plan.counts.blocked} tone="text-red-400" />
                 </div>
@@ -247,7 +301,11 @@ export function RenamePanel({
                               {entry.companionKind
                                 ? COMPANION_LABEL[entry.companionKind]
                                 : entry.srcFolder !== entry.targetFolder
-                                  ? '→ DCIM'
+                                  ? // The destination's own name, not a
+                                    // hardcoded 'DCIM': a rename can only ever
+                                    // move a file into a DCIM folder, but a
+                                    // move goes wherever the user picked.
+                                    `→ ${baseName(entry.targetFolder)}`
                                   : ''}
                             </td>
                           </tr>
@@ -296,8 +354,12 @@ export function RenamePanel({
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded text-sm font-medium transition-colors"
               >
                 {isRunning
-                  ? 'Wird umbenannt…'
-                  : `${moving.length} Datei${moving.length === 1 ? '' : 'en'} umbenennen`}
+                  ? isMove
+                    ? 'Wird verschoben…'
+                    : 'Wird umbenannt…'
+                  : `${moving.length} Datei${moving.length === 1 ? '' : 'en'} ${
+                      isMove ? 'verschieben' : 'umbenennen'
+                    }`}
               </button>
             </div>
           </>

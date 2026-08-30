@@ -2,6 +2,8 @@ import { useRef, useEffect, useLayoutEffect, useState, useCallback, useMemo } fr
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import type { FolderSection } from '@photo-culler/image-utils/folders';
+import type { FolderCounts, FolderNode } from '@photo-culler/image-utils/tree';
+import { FolderHeaderRow } from './FolderHeaderRow';
 import { GroupRow, HEADER_HEIGHT } from './GroupRow';
 import { centeredScrollOffset, centerElementVertically, setScrollTop } from '../lib/focus-scroll';
 import type { SelectionClickModifier } from '../lib/selection';
@@ -46,27 +48,42 @@ export function groupHeight(imageCount: number, perRow: number, cellSize: number
  * across thousands of images spread over many shoots.
  */
 export type GridRow =
-  | { kind: 'folder'; section: FolderSection }
+  | { kind: 'folder'; node: FolderNode }
   | { kind: 'group'; section: FolderSection; group: PhotoGroup; groupIndex: number };
 
-export function buildRows(
-  sections: readonly FolderSection[],
-  collapsed: ReadonlySet<string>,
-  showFolderHeaders: boolean,
-): GridRow[] {
+export function buildRows(roots: readonly FolderNode[], collapsed: ReadonlySet<string>): GridRow[] {
   const rows: GridRow[] = [];
   let groupIndex = 0;
 
-  for (const section of sections) {
-    if (showFolderHeaders) rows.push({ kind: 'folder', section });
-    if (collapsed.has(section.path)) {
-      groupIndex += section.groups.length;
-      continue;
+  /**
+   * `hidden` is the tree's whole behavioural difference from the flat list it
+   * replaced: a collapsed folder used to hide only its OWN groups, because no
+   * section knew about any other. Here a collapsed node takes its descendants
+   * with it, and they contribute no rows at all.
+   *
+   * `groupIndex` still advances past everything hidden. It is not row
+   * bookkeeping — it is the thumbnail fetch priority (`useThumbnailWorker`
+   * sorts the queue by it against the visible range) — and keeping it aligned
+   * with the UNCOLLAPSED numbering is what stops collapsing one shoot from
+   * re-prioritising every folder after it.
+   */
+  const walk = (node: FolderNode, hidden: boolean): void => {
+    if (!hidden) rows.push({ kind: 'folder', node });
+
+    const collapsedHere = collapsed.has(node.path);
+    const groups = node.section?.groups ?? [];
+    if (!hidden && !collapsedHere && node.section) {
+      for (const group of groups) {
+        rows.push({ kind: 'group', section: node.section, group, groupIndex: groupIndex++ });
+      }
+    } else {
+      groupIndex += groups.length;
     }
-    for (const group of section.groups) {
-      rows.push({ kind: 'group', section, group, groupIndex: groupIndex++ });
-    }
-  }
+
+    for (const child of node.children) walk(child, hidden || collapsedHere);
+  };
+
+  for (const root of roots) walk(root, false);
   return rows;
 }
 
@@ -105,7 +122,10 @@ export function cellOffsetInGrid(
 }
 
 interface PhotoGridProps {
-  folders: FolderSection[];
+  /** The folder tree, in sibling order. Replaced the flat section list in 1.8.1. */
+  folderTree: FolderNode[];
+  /** Per-folder subtree tallies for the header counters, keyed by folder path. */
+  folderCounts: Map<string, FolderCounts>;
   ratings: Record<string, number>;
   qualityScores: Record<string, number>;
   thumbnailSize: 'small' | 'medium' | 'large';
@@ -132,7 +152,12 @@ interface PhotoGridProps {
    * selection: there is no image under the pointer, so a right click here has
    * nothing to select and must leave the batch exactly as it was.
    */
-  onOpenFolderMenu: (folder: { path: string; label: string }, at: { x: number; y: number }) => void;
+  onOpenFolderMenu: (node: FolderNode, at: { x: number; y: number }) => void;
+  /** The folder a dragged selection is currently over, or null. */
+  dropTargetFolder: string | null;
+  /** A dragged selection entered, left, or was released on a folder header. */
+  onFolderDragOver: (node: FolderNode | null) => void;
+  onFolderDrop: (node: FolderNode) => void;
   onRate: (imagePath: string, rating: number) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
@@ -140,7 +165,8 @@ interface PhotoGridProps {
 }
 
 export function PhotoGrid({
-  folders,
+  folderTree,
+  folderCounts,
   ratings,
   qualityScores,
   thumbnailSize,
@@ -151,6 +177,9 @@ export function PhotoGrid({
   onImageSelect,
   onOpenContextMenu,
   onOpenFolderMenu,
+  dropTargetFolder,
+  onFolderDragOver,
+  onFolderDrop,
   onRate,
   getThumbnail,
   requestThumbnail,
@@ -186,6 +215,33 @@ export function PhotoGrid({
   );
 
   /**
+   * A cell started a drag.
+   *
+   * Settles the selection first, with the same `'context'` modifier a right
+   * click uses: dragging a photo that is NOT in the batch replaces the batch
+   * with it, and dragging one that IS leaves the batch alone. Without that,
+   * dragging an unselected photo would silently move whatever happened to be
+   * selected somewhere else.
+   */
+  const handleCellDragStart = useCallback(
+    (event: React.DragEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const cell = target.closest('[data-image-path]');
+      const path = cell?.getAttribute('data-image-path');
+      if (!path) return;
+
+      handleCellClick(path, 'context');
+      event.dataTransfer.effectAllowed = 'move';
+      // Firefox and Chromium both refuse to start a drag with an empty payload.
+      // Nothing reads it back: the drop handler spends `selectionTargets`,
+      // which is the only value that applies the batch's visibility rule.
+      event.dataTransfer.setData('text/plain', path);
+    },
+    [handleCellClick],
+  );
+
+  /**
    * Right click, resolved by delegation on the scroll container.
    *
    * `data-image-path` is already how this component finds a cell — the centring
@@ -214,11 +270,13 @@ export function PhotoGrid({
 
   // A single folder needs no disclosure — that is the classic one-shoot case,
   // and a header for it would only cost vertical space.
-  const showFolderHeaders = folders.length > 1;
+  // Every node gets a header now, single-folder shoots included: the tree IS the
+  // structure, and the thumbnail and scoring counters have nowhere else to live
+  // since they left the toolbar.
 
   const rows = useMemo(
-    () => buildRows(folders, collapsedFolders, showFolderHeaders),
-    [folders, collapsedFolders, showFolderHeaders],
+    () => buildRows(folderTree, collapsedFolders),
+    [folderTree, collapsedFolders],
   );
   // The row model, held in a ref so that reading it does not tie an effect to
   // it. The rows churn constantly — scoring rebuilds them — and re-centring on
@@ -245,7 +303,7 @@ export function PhotoGrid({
 
   // Fingerprint that changes when the row set or any group's size changes
   const rowsKey = rows
-    .map((r) => (r.kind === 'folder' ? `f:${r.section.path}` : `g:${r.group.images.length}`))
+    .map((r) => (r.kind === 'folder' ? `f:${r.node.path}` : `g:${r.group.images.length}`))
     .join(',');
 
   useEffect(() => {
@@ -379,6 +437,7 @@ export function PhotoGrid({
       tabIndex={0}
       onMouseEnter={() => parentRef.current?.focus()}
       onContextMenu={handleContextMenu}
+      onDragStart={handleCellDragStart}
     >
       <div
         style={{
@@ -405,37 +464,17 @@ export function PhotoGrid({
               data-testid={row.kind === 'folder' ? 'folder-header-row' : 'virtual-group'}
             >
               {row.kind === 'folder' ? (
-                <button
-                  onClick={() => onToggleFolder(row.section.path)}
-                  onContextMenu={(event) => {
-                    // Not routed through handleCellClick, unlike a cell's right
-                    // click: there is nothing here to focus or select, and
-                    // moving the cursor onto a header would have nowhere to go.
-                    event.preventDefault();
-                    onOpenFolderMenu(
-                      { path: row.section.path, label: row.section.label },
-                      { x: event.clientX, y: event.clientY },
-                    );
-                  }}
-                  className="w-full h-full flex items-center gap-2 px-3 text-left bg-gray-850 hover:bg-gray-800 border-b border-gray-700 transition-colors"
-                  style={{ backgroundColor: '#1a1d23' }}
-                  data-testid="folder-header"
-                  data-folder-path={row.section.path}
-                  aria-expanded={!collapsedFolders.has(row.section.path)}
-                >
-                  <span className="text-gray-500 w-3 flex-shrink-0">
-                    {collapsedFolders.has(row.section.path) ? '▸' : '▾'}
-                  </span>
-                  <span
-                    className="text-sm font-medium text-gray-200 truncate"
-                    title={row.section.path}
-                  >
-                    {row.section.label}
-                  </span>
-                  <span className="text-xs text-gray-500 flex-shrink-0">
-                    {row.section.imageCount}
-                  </span>
-                </button>
+                <FolderHeaderRow
+                  node={row.node}
+                  collapsed={collapsedFolders.has(row.node.path)}
+                  counts={folderCounts.get(row.node.path)}
+                  dropTarget={dropTargetFolder === row.node.path}
+                  onToggle={onToggleFolder}
+                  onContextMenu={onOpenFolderMenu}
+                  onDragOver={onFolderDragOver}
+                  onDragLeave={() => onFolderDragOver(null)}
+                  onDrop={onFolderDrop}
+                />
               ) : (
                 <GroupRow
                   group={row.group}

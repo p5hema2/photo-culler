@@ -52,7 +52,10 @@ beforeEach(() => {
   vi.useFakeTimers();
   listener = null;
   loadResults = vi.fn(async () => null);
-  scanFolder = vi.fn(async () => SCANNED.map((i) => ({ ...i })));
+  scanFolder = vi.fn(async () => ({
+    images: SCANNED.map((i) => ({ ...i })),
+    directories: ['/A'],
+  }));
   (globalThis as unknown as { Worker: unknown }).Worker = FakeWorker;
   (globalThis as unknown as { window: { api: unknown } }).window.api = {
     scanFolder,

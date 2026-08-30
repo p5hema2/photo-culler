@@ -36,7 +36,10 @@ beforeEach(() => {
   deleteFiles = vi.fn(async (paths: string[]) => ({ succeeded: paths, failed: [] }));
   (globalThis as unknown as { Worker: unknown }).Worker = FakeWorker;
   (globalThis as unknown as { window: { api: unknown } }).window.api = {
-    scanFolder: vi.fn(async () => NAMES.map(img)),
+    scanFolder: vi.fn(async (root: string) => ({
+      images: NAMES.map(img),
+      directories: [root],
+    })),
     loadResults: vi.fn(async () => null),
     saveResults: vi.fn(async () => undefined),
     getSession: vi.fn(async () => ({})),

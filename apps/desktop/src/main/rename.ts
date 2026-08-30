@@ -35,6 +35,7 @@ import { createHash } from 'node:crypto';
 import { open, readdir, rename, stat, unlink, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import type {
+  ImageFileInfo,
   RenameExecuteResult,
   RenameOutcome,
   RenamePlan,
@@ -43,9 +44,11 @@ import type {
   RenameRequest,
   ResultsFile,
 } from '@photo-culler/types';
-import { planRenames, type RenameSource } from '@photo-culler/image-utils/rename';
+import { planMoves, planRenames, type RenameSource } from '@photo-culler/image-utils/rename';
 import { isMediaFile } from '@photo-culler/image-utils/media';
+import { readImageMetadata } from '@photo-culler/image-utils/metadata';
 import { readTimestampTags, forgetCachedMetadata } from './exiftool';
+import { isScanPassRunning, remapScanPass } from './scan-pass';
 import { withFileLock } from './file-lock';
 
 /**
@@ -332,6 +335,26 @@ export async function executeRename(
   }
   for (const folder of folders) hooks.dropQueuedWrite(hooks.resultsFilePathOf(folder));
 
+  /**
+   * Tell the deferred metadata pass where these files are going, BEFORE moving
+   * them.
+   *
+   * The pass reads `image.path` at the moment it reaches that image, so
+   * rewriting an entry it has not reached simply redirects it. Doing this
+   * first, rather than forbidding the rename while a scan runs, is what makes
+   * renaming possible during one at all — see `scan-pass.ts`.
+   *
+   * Remapped for every planned entry, not only the ones that end up succeeding:
+   * a file whose rename is refused keeps its old path, and the pass would then
+   * read a path that does not exist. That costs one image's metadata in a case
+   * that is already an error; the reverse — moving a file the pass still thinks
+   * is elsewhere — costs it silently in the common case.
+   */
+  const passWasRunning = isScanPassRunning();
+  if (passWasRunning) {
+    remapScanPass(new Map(moving.map((e) => [e.src, e.targetPath])));
+  }
+
   const outcomes: RenameOutcome[] = [];
 
   for (const entry of moving) {
@@ -365,17 +388,53 @@ export async function executeRename(
   }
 
   const succeeded = new Set(outcomes.filter((o) => o.ok).map((o) => o.src));
-  const resultsFilesTouched = await rekeyResults(
-    moving.filter((e) => succeeded.has(e.src)),
-    hooks,
-  );
+  const landed = moving.filter((e) => succeeded.has(e.src));
+  const resultsFilesTouched = await rekeyResults(landed, hooks);
 
   return {
     outcomes,
     renamed: outcomes.filter((o) => o.ok).length,
     failed: outcomes.filter((o) => !o.ok).length,
     resultsFilesTouched,
+    refreshed: passWasRunning ? await rereadMetadata(landed) : undefined,
   };
+}
+
+/**
+ * Re-read metadata for files that have just moved, under their new paths.
+ *
+ * Only called when the deferred scan pass was running. `remapScanPass` redirects
+ * every entry the pass has not REACHED, which covers almost everything — but a
+ * file being read at the instant it moved comes back empty, and
+ * `METADATA_CONCURRENCY` is 8, so up to eight images could be in that state.
+ * Rather than work out which, re-read them all: the set is the plan, which the
+ * user just waited for anyway.
+ *
+ * Companions are skipped — the app does not display a RAW or a sidecar, so
+ * nothing reads metadata for one.
+ */
+async function rereadMetadata(entries: readonly RenamePlanEntry[]): Promise<ImageFileInfo[]> {
+  const out: ImageFileInfo[] = [];
+  for (const entry of entries) {
+    if (entry.companionOf !== undefined) continue;
+    if (!isMediaFile(entry.targetName)) continue;
+    try {
+      const info = await stat(entry.targetPath);
+      const dot = entry.targetName.lastIndexOf('.');
+      out.push({
+        path: entry.targetPath,
+        name: entry.targetName,
+        folder: entry.targetFolder,
+        extension: dot === -1 ? '' : entry.targetName.slice(dot + 1).toLowerCase(),
+        size: info.size,
+        lastModified: info.mtimeMs,
+        ...(await readImageMetadata(entry.targetPath)),
+      });
+    } catch {
+      // Gone again, or unreadable. The renderer keeps what it has.
+    }
+  }
+  return out;
 }
 
 /**
@@ -440,4 +499,45 @@ async function rekeyResults(
     written.push(hooks.resultsFilePathOf(folder));
   }
   return written;
+}
+
+/**
+ * Work out what moving `paths` into `targetFolder` would do.
+ *
+ * Deliberately does NOT read timestamp tags: a move keeps every basename, so
+ * there is nothing to read, and skipping that is what makes dropping a hundred
+ * files onto a folder feel instant where renaming the same hundred takes
+ * seconds. Everything after the name — the namespace allocation, the collision
+ * suffix, the companion pass — is the rename planner's, unchanged.
+ */
+export async function planMove(
+  paths: readonly string[],
+  targetFolder: string,
+): Promise<RenamePlanResult> {
+  try {
+    const media = paths.filter((p) => isMediaFile(p));
+    if (media.length === 0) {
+      return { plan: { entries: [], counts: emptyCounts(), touchedFolders: [] } };
+    }
+
+    const sources: RenameSource[] = media.map((filePath) => ({
+      path: filePath,
+      folder: path.dirname(filePath),
+      name: path.basename(filePath),
+      tags: {},
+    }));
+
+    const folders = new Set<string>([targetFolder]);
+    for (const source of sources) folders.add(source.folder);
+
+    const plan = await planMoves(sources, targetFolder, {
+      listing: await listDirectories(folders),
+      contentKey,
+      maxTargetPathLength: process.platform === 'win32' ? WINDOWS_MAX_TARGET_PATH : undefined,
+    });
+
+    return { plan };
+  } catch (err) {
+    return { plan: null, error: err instanceof Error ? err.message : String(err) };
+  }
 }

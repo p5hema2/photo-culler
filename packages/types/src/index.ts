@@ -22,6 +22,7 @@ export type {
   RotateDirection,
   RotateResult,
   ScanProgress,
+  ScanResult,
   ThumbSource,
   ThumbSourceFallback,
 } from './ipc';
@@ -48,4 +49,6 @@ export type {
   RenamePlanResult,
   RenameOutcome,
   RenameExecuteResult,
+  FolderStats,
+  FolderOpResult,
 } from './rename';
