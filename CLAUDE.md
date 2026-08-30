@@ -203,6 +203,16 @@ Why the tag rather than the pixels, measured on one 6102 kB camera JPEG:
 | bytes changed | 6 226 940 | **1** |
 | embedded MPF preview | **destroyed** | intact |
 
+The right-hand column is the STEADY STATE — every turn after the first. The FIRST exiftool write to
+a camera original also drops the padding the camera reserved in its EXIF block, so that one shrinks
+the file: measured on a Panasonic DC-S5D frame, 4 827 648 -> 4 811 050 bytes, all of it APP1 going
+51 610 -> 35 012. Nothing is lost — 236 tags identical, the IFD1 thumbnail and the 438 789-byte MPF
+preview both intact, and `sharp(...).raw()` bit-identical either side — and every rotation after it is
+0 bytes of size change and exactly 1 byte of content. `rotate.test.ts` takes a priming turn for this
+reason, though its comment names sharp's EXIF block rather than camera padding, because its fixture
+is built with sharp. Worth knowing before someone measures one rotation of one camera file and
+concludes the write is lossy.
+
 So the old path re-encoded at sharp's default JPEG quality, threw away ~76% of the photo, and
 stripped the preview — which permanently drops that file off the fast thumbnail path. It was latent
 data loss rather than a reported bug only because the user rotates about one image in 3000. Three
