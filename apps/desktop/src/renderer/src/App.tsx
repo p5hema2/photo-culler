@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { MenuCommand } from '@photo-culler/types';
+import { isVideoFile } from '@photo-culler/image-utils/media';
 import { usePhotoStore, isScanIncomplete } from './hooks/usePhotoStore';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useScoringWorker } from './hooks/useScoringWorker';
@@ -17,6 +18,9 @@ import { FilmstripView } from './components/FilmstripView';
 import { ShortcutsTutorial } from './components/ShortcutsTutorial';
 import { ContextMenu, revealTarget, sharedRating } from './components/ContextMenu';
 import type { ContextMenuAction } from './components/ContextMenu';
+import { RenamePanel } from './components/RenamePanel';
+import { folderLabel } from '@photo-culler/image-utils/folders';
+import type { RenameRequest } from '@photo-culler/types';
 
 function WelcomeState({ onOpenFolder }: { onOpenFolder: () => void }): React.JSX.Element {
   return (
@@ -134,6 +138,19 @@ function App(): React.JSX.Element {
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
   /** Where the context menu is open, in viewport coordinates, or null. */
   const [contextMenuAt, setContextMenuAt] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * The section header the context menu was opened on, or null when it was
+   * opened on a photo.
+   *
+   * A header has no image under the pointer, so the menu shows only the
+   * folder-wide items — see ContextMenu's `variant`.
+   */
+  const [contextMenuFolder, setContextMenuFolder] = useState<{
+    path: string;
+    label: string;
+  } | null>(null);
+  /** The rename the preview panel is showing, or null when it is closed. */
+  const [renameRequest, setRenameRequest] = useState<RenameRequest | null>(null);
   const [viewLayout, setViewLayout] = useState<'default' | 'loupe' | 'filmstrip'>('default');
 
   const { settings: overlaySettings, actions: overlayActions } = useOverlaySettings();
@@ -210,7 +227,16 @@ function App(): React.JSX.Element {
     if (paths) void store.deleteImages(paths);
   }, [pendingDelete, store]);
 
+  const handleOpenFolderMenu = useCallback(
+    (folder: { path: string; label: string }, at: { x: number; y: number }) => {
+      setContextMenuFolder(folder);
+      setContextMenuAt(at);
+    },
+    [],
+  );
+
   const handleCloseContextMenu = useCallback(() => {
+    setContextMenuFolder(null);
     setContextMenuAt(null);
   }, []);
 
@@ -235,6 +261,24 @@ function App(): React.JSX.Element {
    * straight to the store: deletion is permanent and has no undo, and a menu
    * click is no more deliberate than a keypress.
    */
+  /**
+   * The folder the menu's folder-wide items act on.
+   *
+   * The header the menu was opened on when there was one; otherwise the folder
+   * of the CURSOR, not of the selection — a selection can legitimately span
+   * several folders, and "rename all in this folder" then has no single answer.
+   */
+  const renameFolder =
+    contextMenuFolder ??
+    (() => {
+      const path =
+        state.images.find((img) => img.path === state.focusedImageId)?.folder ?? state.folderPath;
+      // The same label the section header shows, not the raw path and not a
+      // placeholder: the item says which folder it is about to rename, so it
+      // has to name the one the user can see.
+      return path ? { path, label: folderLabel(path, state.folderPath ?? '') } : null;
+    })();
+
   const handleContextAction = useCallback(
     (action: ContextMenuAction) => {
       setContextMenuAt(null);
@@ -255,12 +299,32 @@ function App(): React.JSX.Element {
             });
           }
           break;
+        case 'rename':
+          // Opens the preview; nothing is renamed here. A rename moves files the
+          // user never picked and cannot be undone, so it goes through the same
+          // shape of confirmation as Execute.
+          setRenameRequest(
+            action.scope === 'selection'
+              ? {
+                  target: { kind: 'files', paths: [...store.selectionTargets] },
+                  consolidateDcim: true,
+                }
+              : {
+                  target: {
+                    kind: 'folder',
+                    folder: renameFolder?.path ?? '',
+                    recursive: action.recursive,
+                  },
+                  consolidateDcim: true,
+                },
+          );
+          break;
         case 'delete':
           handleDeleteSelection();
           break;
       }
     },
-    [store, handleDeleteSelection, revealPath],
+    [store, handleDeleteSelection, revealPath, renameFolder],
   );
 
   /**
@@ -275,6 +339,7 @@ function App(): React.JSX.Element {
    * them moves it, and none of them can be provoked by opening the menu.
    */
   useEffect(() => {
+    setContextMenuFolder(null);
     setContextMenuAt(null);
   }, [state.folderPath, viewLayout, visibleOrder]);
 
@@ -284,7 +349,8 @@ function App(): React.JSX.Element {
    * selection also takes the gate below down with it, rather than trapping the
    * keyboard behind an overlay with nothing in it.
    */
-  const contextMenuOpen = contextMenuAt !== null && store.selectionTargets.length > 0;
+  const contextMenuOpen =
+    contextMenuAt !== null && (contextMenuFolder !== null || store.selectionTargets.length > 0);
 
   /**
    * True while a dialog is up. Every keyboard handler in this app listens on
@@ -294,7 +360,12 @@ function App(): React.JSX.Element {
    * The context menu counts: while it is open the arrow keys belong to it, and
    * a Delete aimed at its own item must not also reach the grid.
    */
-  const modalOpen = showExecutePanel || showShortcuts || pendingDelete !== null || contextMenuOpen;
+  const modalOpen =
+    showExecutePanel ||
+    showShortcuts ||
+    pendingDelete !== null ||
+    contextMenuOpen ||
+    renameRequest !== null;
 
   useKeyboardNav({
     groups: navGroups,
@@ -496,6 +567,12 @@ function App(): React.JSX.Element {
     const timer = setTimeout(() => {
       const currentState = stateRef.current;
       const unscoredFiles = currentState.images
+        // Videos are not scored. The scoring worker's pixel loops assume one
+        // frame, and a score derived from one arbitrary frame of a clip would
+        // be worse than no score — it would look exactly like a photo's and
+        // mean nothing. It would also cost a whole-file read of a 2 GB clip to
+        // produce.
+        .filter((img) => !isVideoFile(img.extension))
         .filter((img) => currentState.qualityScores[img.path] == null)
         .map((img) => ({ path: img.path, name: img.name }));
 
@@ -609,7 +686,11 @@ function App(): React.JSX.Element {
         focusedImageId={state.focusedImageId}
         selection={state.selection}
         onImageSelect={store.selectImage}
-        onOpenContextMenu={setContextMenuAt}
+        onOpenContextMenu={(at) => {
+          setContextMenuFolder(null);
+          setContextMenuAt(at);
+        }}
+        onOpenFolderMenu={handleOpenFolderMenu}
         onRate={store.setRating}
         getThumbnail={thumbnailWorker.getThumbnail}
         requestThumbnail={thumbnailWorker.requestThumbnail}
@@ -719,6 +800,8 @@ function App(): React.JSX.Element {
         <ContextMenu
           x={contextMenuAt.x}
           y={contextMenuAt.y}
+          variant={contextMenuFolder ? 'folder' : 'image'}
+          folder={renameFolder ?? undefined}
           count={store.selectionTargets.length}
           rating={sharedRating(store.selectionTargets, state.ratings)}
           canReveal={revealPath !== null}
@@ -726,6 +809,13 @@ function App(): React.JSX.Element {
           onClose={handleCloseContextMenu}
         />
       )}
+
+      <RenamePanel
+        request={renameRequest}
+        onPlan={store.planRename}
+        onApply={store.applyRename}
+        onClose={() => setRenameRequest(null)}
+      />
 
       <ShortcutsTutorial isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </DropZone>

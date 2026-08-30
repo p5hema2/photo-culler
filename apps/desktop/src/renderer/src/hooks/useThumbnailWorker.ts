@@ -1,5 +1,8 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
+import { isPlayableVideo, isVideoFile } from '@photo-culler/image-utils/media';
 import { THUMB_MIME } from '../lib/thumbnail-geometry';
+import { appUrlFor } from '../lib/app-url';
+import { extractVideoPoster } from '../lib/video-poster';
 import type { ThumbnailResponse } from '../workers/thumbnail.worker';
 
 interface PendingRequest {
@@ -158,6 +161,8 @@ interface ThumbnailWorkerAPI {
   clearAll: () => void;
   /** Drop a cached thumbnail so the next render re-requests it. */
   invalidate: (id: string) => void;
+  /** Follow a file that has been renamed, keeping its decoded thumbnail. */
+  rekey: (oldId: string, newId: string) => void;
   /**
    * Generate a thumbnail for every listed image that has none yet, at strictly
    * lower priority than anything on screen. Replaces any previous sweep.
@@ -271,6 +276,73 @@ export function useThumbnailWorker(options: ThumbnailWorkerOptions = {}): Thumbn
   }, []);
 
   /**
+   * The video half of `loadThumbnail`.
+   *
+   * Mirrors `handleWorkerMessage`'s bookkeeping exactly rather than sharing it,
+   * because there is no worker in this path and so no message to hang it on:
+   * same epoch guard, same sweep special case, same fire-and-forget cache
+   * write, same `onThumbnailGenerated` rule that only a NEWLY generated
+   * thumbnail is counted.
+   *
+   * `workerIndex` names a worker that never receives anything. It is still the
+   * right parameter: the slot is marked busy by `dispatchNext` and has to be
+   * handed back the same way, or the pool loses a worker per video.
+   */
+  const loadVideoPoster = useCallback(
+    async (workerIndex: number, id: string, size: number) => {
+      const epoch = epochRef.current.get(id) ?? 0;
+      try {
+        // Chromium can demux MP4, M4V, MOV and WebM and nothing else. Trying
+        // anyway would work — the element errors quickly — but it would spawn
+        // a decoder per file to learn something the extension already says.
+        if (!isPlayableVideo(id)) throw new Error('no decoder for this container');
+
+        const poster = await extractVideoPoster(appUrlFor(id), size);
+
+        // A rename or a rescan since the request went out: the bytes behind
+        // this path are not the ones we asked about.
+        if (epoch < (epochRef.current.get(id) ?? 0)) {
+          poster.bitmap.close();
+          pendingRef.current.delete(id);
+          sweepInFlightRef.current.delete(id);
+          dispatchNext(workerIndex);
+          return;
+        }
+
+        pendingRef.current.delete(id);
+
+        if (window.api.saveThumbCache) {
+          window.api.saveThumbCache(id, poster.thumbBuffer).catch(() => {
+            // Ignore cache save errors
+          });
+          onThumbnailGenerated?.(id);
+        }
+
+        if (sweepInFlightRef.current.has(id)) {
+          // Sweep result: the file on disk was the point, not the pixels.
+          sweepInFlightRef.current.delete(id);
+          poster.bitmap.close();
+          dispatchNext(workerIndex);
+          return;
+        }
+
+        storeBitmap(cacheRef.current, pendingRef.current, id, poster.bitmap);
+      } catch {
+        // Sticky, and that is the point: an 'error' entry holds no pixels and
+        // is exempt from eviction, so a container with no decoder is not
+        // re-attempted on every scroll pass. The cell reads the path itself to
+        // decide between "broken" and "no preview for this format".
+        pendingRef.current.delete(id);
+        sweepInFlightRef.current.delete(id);
+        cacheRef.current.set(id, 'error');
+      }
+      setVersion((v) => v + 1);
+      dispatchNext(workerIndex);
+    },
+    [dispatchNext, onThumbnailGenerated],
+  );
+
+  /**
    * Try loading from disk cache first, then fall back to reading source bytes —
    * the embedded preview where there is one — and dispatching to a worker for
    * thumbnail generation.
@@ -295,7 +367,16 @@ export function useThumbnailWorker(options: ThumbnailWorkerOptions = {}): Thumbn
           }
         }
 
-        // Cache miss — read source bytes and send them to a worker.
+        // Cache miss. A video never reaches the worker: there is no
+        // HTMLVideoElement in a Worker, and `readDecodeSource` would ask
+        // READ_THUMB_SOURCE for it — which finds no MPF index in an MP4 and
+        // falls back to pulling the WHOLE FILE through IPC. On a 2 GB clip
+        // that is the difference between one seek and two gigabytes.
+        if (isVideoFile(id)) {
+          await loadVideoPoster(workerIndex, id, size);
+          return;
+        }
+
         const source = await readDecodeSource(id, size, !fullFileOnlyRef.current.has(id));
         const worker = workersRef.current[workerIndex];
         if (worker) {
@@ -464,6 +545,45 @@ export function useThumbnailWorker(options: ThumbnailWorkerOptions = {}): Thumbn
    * Forget a thumbnail so it is regenerated. Bumping the epoch first means an
    * in-flight worker response for the old bitmap is dropped on arrival.
    */
+  /**
+   * Move every trace of one id to another, because the FILE moved.
+   *
+   * A rename changes a path without changing a byte, so the decoded thumbnail
+   * is still exactly right — throwing it away, which is what `invalidate`
+   * would do, costs one decode per file for nothing, and a folder-wide rename
+   * is hundreds of files at once.
+   *
+   * Bumping the OLD id's epoch is the load-bearing half: a worker response
+   * already in flight for the pre-rename path would otherwise land, and
+   * `handleWorkerMessage` would call `saveThumbCache(oldPath)` — re-creating
+   * the very cache file the main process just renamed away, where nothing but
+   * the next vacuum would ever find it. Call this BEFORE the rename, not after.
+   */
+  const rekey = useCallback((oldId: string, newId: string) => {
+    if (oldId === newId) return;
+    epochRef.current.set(oldId, (epochRef.current.get(oldId) ?? 0) + 1);
+
+    const entry = cacheRef.current.get(oldId);
+    cacheRef.current.delete(oldId);
+    pendingRef.current.delete(oldId);
+    sweepInFlightRef.current.delete(oldId);
+    previewDecodesRef.current.delete(oldId);
+    // A file whose embedded preview the decoder already rejected keeps that
+    // verdict: the rename did not change its bytes.
+    if (fullFileOnlyRef.current.delete(oldId)) fullFileOnlyRef.current.add(newId);
+
+    if (entry === undefined) return;
+    const existing = cacheRef.current.get(newId);
+    if (existing !== undefined) {
+      // Nothing should already hold the new key — the planner guarantees the
+      // target was free — but closing rather than leaking is the cheap answer.
+      if (entry !== 'error') entry.close();
+      return;
+    }
+    cacheRef.current.set(newId, entry);
+    setVersion((v) => v + 1);
+  }, []);
+
   const invalidate = useCallback((id: string) => {
     epochRef.current.set(id, (epochRef.current.get(id) ?? 0) + 1);
     const existing = cacheRef.current.get(id);
@@ -525,5 +645,13 @@ export function useThumbnailWorker(options: ThumbnailWorkerOptions = {}): Thumbn
     [dispatchNext],
   );
 
-  return { requestThumbnail, getThumbnail, updateVisibleRange, clearAll, invalidate, sweepAll };
+  return {
+    requestThumbnail,
+    getThumbnail,
+    updateVisibleRange,
+    clearAll,
+    invalidate,
+    rekey,
+    sweepAll,
+  };
 }

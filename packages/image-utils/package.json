@@ -13,7 +13,10 @@
     "./scanner": "./src/scanner.ts",
     "./metadata": "./src/metadata.ts",
     "./rating": "./src/rating.ts",
-    "./orientation": "./src/orientation.ts"
+    "./orientation": "./src/orientation.ts",
+    "./naming": "./src/naming.ts",
+    "./rename": "./src/rename.ts",
+    "./media": "./src/media.ts"
   },
   "scripts": {
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",

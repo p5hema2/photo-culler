@@ -57,6 +57,12 @@ export default defineConfig({
           __dirname,
           '../../packages/image-utils/src/rating',
         ),
+        // media.ts is import-free: it is two Sets and four predicates, and the
+        // renderer asks "is this a video?" on every cell it paints.
+        '@photo-culler/image-utils/media': resolve(
+          __dirname,
+          '../../packages/image-utils/src/media',
+        ),
       },
     },
     plugins: [tailwindcss(), react()],

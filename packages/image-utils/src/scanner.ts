@@ -2,9 +2,16 @@ import { readdir, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { ImageFileInfo, ScanProgress } from '@photo-culler/types';
 import { readImageMetadata } from './metadata';
+import { isMediaFile, isVideoFile } from './media';
 import { sortImages } from './sorting';
 
-const SUPPORTED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.tiff', '.tif', '.webp']);
+/**
+ * What the walk lists.
+ *
+ * Was a literal set of six still formats; videos joined it in 1.8.0, and the
+ * membership test moved to `media.ts` so the renderer, the rename planner and
+ * this walk cannot disagree about what a video is.
+ */
 
 // Pre-1.2.0 results filename. The current name is a dotfile and so is already
 // covered by the hidden-file skip below; this entry only shields folders that
@@ -159,7 +166,17 @@ async function readMetadataPass({
     while (next < end) {
       if (signal?.aborted) return;
       const image = order[next++]!;
-      Object.assign(image, await readImageMetadata(image.path));
+      // exifr reads stills. Handed an MP4 or a MOV it walks the file looking
+      // for a signature it will never find, then returns {} — two seeking
+      // reads and a parse attempt for a guaranteed miss, and on a 2 GB clip
+      // that is not free. A video's capture time lives in the `moov` atom,
+      // which only exiftool reads, and the one place that needs it is the
+      // rename planner, which asks exiftool directly and in bulk. Until then
+      // grouping falls back to `lastModified` — which for a file straight off
+      // a card IS the capture time, because the camera wrote it.
+      if (!isVideoFile(image.extension)) {
+        Object.assign(image, await readImageMetadata(image.path));
+      }
       completed += 1;
       batch.push(image);
       if (
@@ -256,7 +273,7 @@ export async function scanFolder(
       if (EXCLUDED_FILES.has(entry.name)) continue;
 
       const ext = extname(entry.name).toLowerCase();
-      if (!SUPPORTED_EXTENSIONS.has(ext)) continue;
+      if (!isMediaFile(entry.name)) continue;
 
       const filePath = join(dirPath, entry.name);
       let stats;

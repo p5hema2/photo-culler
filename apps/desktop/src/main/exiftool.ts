@@ -429,3 +429,101 @@ export async function rotateImage(
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
+
+/* ------------------------------------------------- capture times, in bulk -- */
+
+/**
+ * The tag ladder, as ExifTool arguments.
+ *
+ * `-fast2` stops before the image data, which is where none of these live, and
+ * on a 2 GB video that is the difference between milliseconds and seconds.
+ *
+ * NOT `-api QuickTimeUTC`. QuickTime stores its dates in UTC per the spec, and
+ * that option would convert them to local time on the way out — but
+ * H:\rename-by-date does not pass it either, and the whole point of this read
+ * is that both tools name a file identically. Cameras write local time into
+ * that field in practice, so the default is also the right answer.
+ *
+ * NOT `-m` either, for the reason the Perl records at rename-by-date.pl:194:
+ * `-m` demotes "Tag not defined" to ignorable, and an undefined tag then
+ * interpolates as empty rather than being reported missing.
+ */
+const TIMESTAMP_READ_ARGS = [
+  '-fast2',
+  '-SubSecDateTimeOriginal',
+  '-DateTimeOriginal',
+  '-SubSecCreateDate',
+  '-CreateDate',
+  '-SubSecMediaCreateDate',
+  '-MediaCreateDate',
+  '-FileModifyDate',
+];
+
+/** Raw tag strings for one file, exactly as ExifTool prints them. */
+export type TimestampTagValues = Record<string, string>;
+
+/**
+ * Read the capture-time ladder for many files.
+ *
+ * Goes through the same `-stay_open` child every rating and rotation write
+ * uses, and that is deliberate rather than incidental: `maxProcs: 1` means a
+ * read here cannot interleave with a write to the same file. It costs a
+ * round trip per file — a few milliseconds — so `onProgress` exists to keep a
+ * folder of several thousand from looking hung.
+ *
+ * `readRaw` rather than `read`: exiftool-vendored's `read` parses dates into
+ * `ExifDateTime` objects, and re-serialising one back into ExifTool's own
+ * `YYYY:MM:DD HH:MM:SS.fff` is a lossy round trip through a timezone the
+ * naming rules deliberately discard. The raw strings are what `parseStamp`
+ * was written against.
+ */
+export async function readTimestampTags(
+  filePaths: readonly string[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<Map<string, TimestampTagValues>> {
+  const out = new Map<string, TimestampTagValues>();
+  const exiftool = getExifTool();
+  if (!exiftool) return out;
+
+  let done = 0;
+  for (const filePath of filePaths) {
+    // Same guard as readDetailedMetadata: batch-cluster feeds -stay_open one
+    // argument per line, so a newline in a path would inject an argument.
+    if (path.isAbsolute(filePath) && !/[\r\n]/.test(filePath)) {
+      try {
+        const raw = await exiftool.readRaw<Record<string, unknown>>(filePath, {
+          readArgs: TIMESTAMP_READ_ARGS,
+        });
+        const values: TimestampTagValues = {};
+        for (const [key, value] of Object.entries(raw)) {
+          if (typeof value === 'string') values[key] = value;
+        }
+        out.set(filePath, values);
+      } catch (err) {
+        // A file ExifTool cannot read is not a reason to abandon the folder;
+        // it simply has no date and the planner will leave it alone.
+        if (isSpawnFailure(err)) {
+          unavailable = true;
+          void endExifTool();
+          return out;
+        }
+        out.set(filePath, {});
+      }
+    }
+    done += 1;
+    onProgress?.(done, filePaths.length);
+  }
+  return out;
+}
+
+/**
+ * Forget the deep-metadata cache entry for a file that has just moved.
+ *
+ * Exported for the rename path. The cache key is path plus mtime plus size, so
+ * a rename already makes the entry unreachable — but unreachable is not the
+ * same as evicted, and leaving it there means a dead path occupying one of the
+ * 512 slots for the rest of the session.
+ */
+export function forgetCachedMetadata(filePath: string): void {
+  dropCachedMetadata(filePath);
+}

@@ -38,3 +38,14 @@ export type {
   MetadataTag,
   DetailedMetadata,
 } from './focus';
+export type {
+  RenameAction,
+  RenameCompanionKind,
+  RenamePlanEntry,
+  RenamePlan,
+  RenameTarget,
+  RenameRequest,
+  RenamePlanResult,
+  RenameOutcome,
+  RenameExecuteResult,
+} from './rename';

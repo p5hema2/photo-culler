@@ -10,7 +10,10 @@ Built with Electron, React, TypeScript, and Tailwind CSS.
 
 ## Features
 
-- **Thumbnail grid** with virtual scrolling — handles thousands of images
+- **Thumbnail grid** with virtual scrolling — handles thousands of images, one collapsible section
+  per folder, ordered by folder name
+- **Videos alongside the photos** — MP4, MOV, M4V, AVI, MKV, MTS, M2TS, 3GP and WebM are listed,
+  previewed and renamed; the four Chromium can decode also play in the info panel
 - **Auto-grouping** by timestamp — burst shots are grouped together
 - **Star ratings in the file** — 0-5, written as `xmp:Rating` plus the EXIF rating tag, so other
   photo tools and the OS file browser read them back
@@ -20,8 +23,14 @@ Built with Electron, React, TypeScript, and Tailwind CSS.
 - **Keyboard-first workflow** — arrow keys to navigate, 0-5 to rate
 - **Multi-select** — click, Shift+click for a range, Ctrl/Cmd+click to pick and choose; rating, rotation and
   delete then act on the whole selection
-- **Right-click menu** — rating, rotate and delete for the selection, with the keyboard shortcut shown
-  beside each item that has one, plus “Reveal in Explorer/Finder” for the image under the cursor
+- **Right-click menu** — rating, rotate, rename and delete for the selection, with the keyboard
+  shortcut shown beside each item that has one, plus “Reveal in Explorer/Finder” for the image under
+  the cursor
+- **Rename by capture time** — right-click a photo or a folder header to rename to
+  `YYYY-MM-DD HH-MM-SS-fff`, the same format `rename-by-date` produces, with a preview of every
+  move before anything happens. The RAW, the XMP sidecar and the macOS twin beside a photo come with
+  it, and quality scores and cached thumbnails follow the new names. Camera bucket folders under
+  `DCIM` can be merged into `DCIM` in the same pass — the only change it ever makes to your folders
 - **Image rotation** — Alt+Arrow to rotate, written to the photo immediately as an EXIF
   orientation change: one byte, no re-encode, and rotating back restores the file exactly
 - **EXIF display** — camera body, lens, exposure settings, histogram
@@ -31,6 +40,11 @@ Built with Electron, React, TypeScript, and Tailwind CSS.
 - **Batch execute** — permanently delete a 1-to-_x_ star range among the images you can see
 - **Persistent state** — quality scores saved per folder; ratings and orientation live in the images
   themselves
+
+Videos are deliberately not rated, scored or rotated: a rating lives in the file, and writing one
+into an MP4 means rewriting the whole container. Because an unrated file is never in Execute's
+delete range, **Execute can never remove a video** — the Delete key still can, with its usual
+confirmation.
 
 ## Installing
 
@@ -103,7 +117,8 @@ certificate is trusted on sight.
 | Click | Select one image, and move the cursor to it |
 | Shift+click | Select everything between the last click and this one |
 | Ctrl/Cmd+click | Add one image to the selection, or take it out |
-| Right click | Context menu — rating, rotate, reveal, delete — for the selection |
+| Right click | Context menu — rating, rotate, rename, reveal, delete — for the selection |
+| Right click a folder header | Rename everything in that folder, with or without its subfolders |
 | Click a star | Rate that one image; clicking the lit star clears its rating |
 | Scroll / drag | Zoom and pan in the info panel |
 

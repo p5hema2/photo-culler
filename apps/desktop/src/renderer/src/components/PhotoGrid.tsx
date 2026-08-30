@@ -124,6 +124,15 @@ interface PhotoGridProps {
    * already been settled by then — see handleContextMenu.
    */
   onOpenContextMenu: (position: { x: number; y: number }) => void;
+  /**
+   * A folder SECTION HEADER was right-clicked.
+   *
+   * Separate from `onOpenContextMenu` because it carries a target the image
+   * menu has no use for and, more importantly, because it must NOT settle the
+   * selection: there is no image under the pointer, so a right click here has
+   * nothing to select and must leave the batch exactly as it was.
+   */
+  onOpenFolderMenu: (folder: { path: string; label: string }, at: { x: number; y: number }) => void;
   onRate: (imagePath: string, rating: number) => void;
   getThumbnail: (id: string) => ImageBitmap | 'loading' | 'error';
   requestThumbnail: (id: string, url: string, size: number, groupIndex?: number) => void;
@@ -141,6 +150,7 @@ export function PhotoGrid({
   onToggleFolder,
   onImageSelect,
   onOpenContextMenu,
+  onOpenFolderMenu,
   onRate,
   getThumbnail,
   requestThumbnail,
@@ -397,6 +407,16 @@ export function PhotoGrid({
               {row.kind === 'folder' ? (
                 <button
                   onClick={() => onToggleFolder(row.section.path)}
+                  onContextMenu={(event) => {
+                    // Not routed through handleCellClick, unlike a cell's right
+                    // click: there is nothing here to focus or select, and
+                    // moving the cursor onto a header would have nowhere to go.
+                    event.preventDefault();
+                    onOpenFolderMenu(
+                      { path: row.section.path, label: row.section.label },
+                      { x: event.clientX, y: event.clientY },
+                    );
+                  }}
                   className="w-full h-full flex items-center gap-2 px-3 text-left bg-gray-850 hover:bg-gray-800 border-b border-gray-700 transition-colors"
                   style={{ backgroundColor: '#1a1d23' }}
                   data-testid="folder-header"

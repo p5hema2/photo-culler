@@ -2,6 +2,10 @@ import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type {
   ImageFileInfo,
   PruneResult,
+  RenameExecuteResult,
+  RenamePlan,
+  RenamePlanResult,
+  RenameRequest,
   ResultsFile,
   QualitySubscores,
   RotateDirection,
@@ -12,6 +16,7 @@ import { sortImages } from '@photo-culler/image-utils/sorting';
 import type { SortDirection } from '@photo-culler/image-utils/sorting';
 import type { PhotoGroup } from '@photo-culler/image-utils/grouping';
 import { groupByFolder, foldersOf } from '@photo-culler/image-utils/folders';
+import { isVideoFile } from '@photo-culler/image-utils/media';
 import type { FolderSection } from '@photo-culler/image-utils/folders';
 import { MIN_RATING, clampRating, isInRatingRange } from '@photo-culler/image-utils/rating';
 import { THUMB_MAX_EDGE } from '../lib/thumbnail-geometry';
@@ -175,6 +180,20 @@ export interface RescanCounts {
 
 function plural(count: number, word: string): string {
   return count === 1 ? word : `${word}s`;
+}
+
+/**
+ * The line the toolbar shows after a rename.
+ *
+ * Failures are never folded into the success count and never left out, however
+ * few there are: on Windows any single rename can be refused by a handle the
+ * app does not own — Explorer's preview pane, the indexer, a virus scanner —
+ * and a run that silently moved 199 of 200 files would be indistinguishable
+ * from one that moved all of them.
+ */
+export function formatRenameStatus(result: RenameExecuteResult): string {
+  const renamed = `${result.renamed} ${plural(result.renamed, 'file')} renamed`;
+  return result.failed > 0 ? `${renamed}, ${result.failed} failed` : renamed;
 }
 
 /**
@@ -372,6 +391,10 @@ export interface PhotoStoreAPI {
    * `state.status`.
    */
   rescanFolder: () => Promise<void>;
+  /** Work out what a rename would do. Writes nothing; safe to call for a preview. */
+  planRename: (request: RenameRequest) => Promise<RenamePlanResult>;
+  /** Carry out a plan the user has confirmed, and re-key everything that names a path. */
+  applyRename: (plan: RenamePlan) => Promise<RenameExecuteResult | null>;
   /** Rate one image, 0-5, where 0 clears the rating. Writes to the file. */
   setRating: (imagePath: string, rating: number) => void;
   /** Rate every image in `selectionTargets`, 0-5. One file write per image. */
@@ -1146,6 +1169,161 @@ export function usePhotoStore(): PhotoStoreAPI {
     }
   }, [cancelPendingSave, flushRatingWrites, loadFolder, releaseHeldSave, showStatus]);
 
+  const planRename = useCallback(async (request: RenameRequest): Promise<RenamePlanResult> => {
+    // The deferred metadata pass holds ImageFileInfo objects captured at walk
+    // time and re-reads them BY PATH. A rename underneath it means every one of
+    // those reads misses — silently, because `readImageMetadata` returns {}
+    // rather than throwing — and the affected images lose their date, their
+    // dimensions and their RATING for the rest of the session. There is no
+    // AbortController the renderer can reach, so waiting is the whole defence.
+    if (isScanIncomplete(stateRef.current.scanProgress)) {
+      return { plan: null, error: 'Der Scan läuft noch — bitte abwarten.' };
+    }
+    try {
+      return await window.api.planRename(request);
+    } catch (err) {
+      return { plan: null, error: err instanceof Error ? err.message : String(err) };
+    }
+  }, []);
+
+  /**
+   * Carry out a rename plan, then re-key everything in the renderer that names
+   * a path.
+   *
+   * The quiesce order is `rescanFolder`'s, for the same reasons plus one:
+   *
+   * - the hold goes up BEFORE the first await, because `flushRatingWrites`
+   *   awaits real IPC and a scoring result arriving in that window would
+   *   schedule a debounce while the hold was still off;
+   * - **rating writes are flushed and not merely cancelled**, and here that is
+   *   not housekeeping. A `setRating` debounce is keyed by the OLD path; left
+   *   to fire after the rename it calls `writeRating` on a file that no longer
+   *   exists, the write fails, `persistRating` rolls the star back, and the
+   *   rating is gone from the only place it lived;
+   * - the thumbnail cache is re-keyed BEFORE the rename, so a worker response
+   *   already in flight cannot re-create the cache file main just moved.
+   *
+   * The results FILES are re-keyed in the main process, inside the same pass as
+   * the rename — see `executeRename`. What happens here is the in-memory half.
+   */
+  const applyRename = useCallback(
+    async (plan: RenamePlan): Promise<RenameExecuteResult | null> => {
+      const moving = plan.entries.filter((e) => e.action === 'rename');
+      if (moving.length === 0) return null;
+
+      const startEpoch = openEpochRef.current;
+      setState((prev) => ({ ...prev, error: null, status: null }));
+
+      rescanHoldsRef.current += 1;
+      let finished = false;
+      try {
+        cancelPendingSave();
+        await flushRatingWrites();
+
+        // Before the rename, deliberately. See the doc comment.
+        for (const entry of moving) thumbnailWorker.rekey(entry.src, entry.targetPath);
+
+        const result = await window.api.executeRename(plan);
+
+        // Put back what did not move. A rename can be refused per file on
+        // Windows by a handle the app does not own.
+        for (const outcome of result.outcomes) {
+          if (!outcome.ok) thumbnailWorker.rekey(outcome.targetPath, outcome.src);
+        }
+
+        if (!mountedRef.current || openEpochRef.current !== startEpoch) return result;
+
+        const renamed = new Map<string, { path: string; name: string; folder: string }>();
+        for (const entry of moving) {
+          const outcome = result.outcomes.find((o) => o.src === entry.src);
+          if (!outcome?.ok) continue;
+          renamed.set(entry.src, {
+            path: entry.targetPath,
+            name: entry.targetName,
+            folder: entry.targetFolder,
+          });
+        }
+        if (renamed.size === 0) {
+          finished = true;
+          return result;
+        }
+
+        // One updater. Anything left keyed by the old path is not merely a
+        // blank badge: `projectFolderResults` reads `qualityScores[image.path]`
+        // and writes `next[image.name]`, so a missing entry OVERWRITES the disk
+        // record with an empty one on the next save.
+        setState((prev) => {
+          const move = <T>(map: Record<string, T>): Record<string, T> => {
+            const next: Record<string, T> = {};
+            for (const [key, value] of Object.entries(map)) {
+              next[renamed.get(key)?.path ?? key] = value;
+            }
+            return next;
+          };
+          const moveSet = (set: ReadonlySet<string>): ReadonlySet<string> =>
+            new Set([...set].map((path) => renamed.get(path)?.path ?? path));
+
+          return {
+            ...prev,
+            images: prev.images.map((img) => {
+              const to = renamed.get(img.path);
+              // `folder` too, not just `path` and `name`: DCIM consolidation
+              // moves a file to a DIFFERENT directory, and `ImageFileInfo.folder`
+              // is `dirname(path)` by contract — it is what `groupByFolder`
+              // sections by, so leaving it behind puts the renamed photo under
+              // a header naming the folder it just left.
+              return to ? { ...img, path: to.path, name: to.name, folder: to.folder } : img;
+            }),
+            ratings: move(prev.ratings),
+            qualityScores: move(prev.qualityScores),
+            qualitySubscores: move(prev.qualitySubscores),
+            focusedImageId: prev.focusedImageId
+              ? (renamed.get(prev.focusedImageId)?.path ?? prev.focusedImageId)
+              : null,
+            selection: moveSet(prev.selection),
+            selectionAnchor: prev.selectionAnchor
+              ? (renamed.get(prev.selectionAnchor)?.path ?? prev.selectionAnchor)
+              : null,
+            // Cache-busting for useFullImage and useDetailedMetadata, which are
+            // keyed by path alone and cannot see that the bytes behind one moved.
+            fileRevision: prev.fileRevision + 1,
+          };
+        });
+
+        // Refs, outside the updater. `userRatedRef` is what stops a late
+        // metadata batch putting a file's older rating back on screen, and
+        // `resultsRef` is what the next `projectFolderResults` spreads `prior`
+        // from — main has already rewritten those files, so the in-memory copy
+        // has to follow or the next save undoes it.
+        for (const [from, to] of renamed) {
+          if (userRatedRef.current.delete(from)) userRatedRef.current.add(to.path);
+        }
+        for (const entry of moving) {
+          if (!renamed.has(entry.src)) continue;
+          const from = resultsRef.current.get(entry.srcFolder);
+          const record = from?.images[entry.srcName];
+          if (from) delete from.images[entry.srcName];
+          if (record === undefined) continue;
+          const to = resultsRef.current.get(entry.targetFolder);
+          if (to) to.images[entry.targetName] = record;
+        }
+
+        finished = true;
+        showStatus(formatRenameStatus(result));
+        return result;
+      } catch (err) {
+        setState((prev) => ({
+          ...prev,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+        return null;
+      } finally {
+        releaseHeldSave(finished);
+      }
+    },
+    [cancelPendingSave, flushRatingWrites, releaseHeldSave, showStatus, thumbnailWorker],
+  );
+
   /** Look up which folder an image belongs to, for dirty-marking. */
   const folderOf = useCallback((imagePath: string): string | undefined => {
     return stateRef.current.images.find((img) => img.path === imagePath)?.folder;
@@ -1153,6 +1331,14 @@ export function usePhotoStore(): PhotoStoreAPI {
 
   const setRating = useCallback(
     (imagePath: string, rating: number) => {
+      // Videos are not ratable, and the check belongs HERE rather than only in
+      // the cell that hides the stars: the 0-5 keys act on the whole selection,
+      // which routinely mixes photos and clips. A rating lives in the file, and
+      // ExifTool writes XMP into an MP4 by rewriting the entire container —
+      // seconds and gigabytes per keypress. Silently skipping is the right
+      // outcome: rating four photos and one video must rate the four.
+      if (isVideoFile(imagePath)) return;
+
       const value = clampRating(rating) ?? MIN_RATING;
       const pending = ratingWritesRef.current.get(imagePath);
       // What the file still holds, and so what a failed write must restore: the
@@ -1535,8 +1721,14 @@ export function usePhotoStore(): PhotoStoreAPI {
    * instead of replacing them.
    */
   const folders = useMemo(
-    () => groupByFolder(sortedImages, state.groupingThresholdMs, state.folderPath ?? ''),
-    [sortedImages, state.folderPath, state.groupingThresholdMs],
+    () =>
+      groupByFolder(
+        sortedImages,
+        state.groupingThresholdMs,
+        state.folderPath ?? '',
+        state.sortDirection,
+      ),
+    [sortedImages, state.folderPath, state.groupingThresholdMs, state.sortDirection],
   );
 
   const foldersRef = useRef(folders);
@@ -1586,6 +1778,8 @@ export function usePhotoStore(): PhotoStoreAPI {
     thumbnailWorker,
     openFolder,
     rescanFolder,
+    planRename,
+    applyRename,
     setRating,
     rateSelection,
     setSortDirection,

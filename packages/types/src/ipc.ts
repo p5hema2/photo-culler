@@ -1,5 +1,6 @@
 import type { ImageFileInfo } from './image';
 import type { DetailedMetadata } from './focus';
+import type { RenameExecuteResult, RenamePlan, RenamePlanResult, RenameRequest } from './rename';
 
 export const IPC_CHANNELS = {
   SELECT_FOLDER: 'dialog:select-folder',
@@ -22,6 +23,10 @@ export const IPC_CHANNELS = {
   READ_DETAILED_METADATA: 'meta:read-detailed',
   COUNT_THUMB_CACHE: 'fs:count-thumb-cache',
   GET_APP_VERSION: 'app:get-version',
+  /** Compute a rename plan. Reads tags and directories; writes nothing. */
+  PLAN_RENAME: 'fs:plan-rename',
+  /** Carry out a plan the user has confirmed. */
+  EXECUTE_RENAME: 'fs:execute-rename',
 } as const;
 
 /**
@@ -364,4 +369,22 @@ export interface ElectronAPI {
    */
   countThumbCache: (folderPath: string) => Promise<number>;
   getAppVersion: () => Promise<string>;
+  /**
+   * Work out what renaming would do, without doing any of it.
+   *
+   * Reads timestamp tags with exiftool and lists the directories involved, so
+   * it is not free — but it writes nothing, and the plan it returns is exactly
+   * what `executeRename` will carry out. The two are split for the same reason
+   * Execute has a confirmation panel: a rename moves files the user did not
+   * pick (the RAW, the sidecar) and there is no undo.
+   */
+  planRename: (request: RenameRequest) => Promise<RenamePlanResult>;
+  /**
+   * Carry out a plan. Reports every file individually.
+   *
+   * Never optimistic: on Windows any single rename can be refused by an open
+   * handle the app does not own — Explorer's preview pane, the indexer, a virus
+   * scanner — so "it did not throw" is not evidence that a file moved.
+   */
+  executeRename: (plan: RenamePlan) => Promise<RenameExecuteResult>;
 }

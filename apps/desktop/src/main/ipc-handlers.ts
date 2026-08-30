@@ -22,6 +22,8 @@ import type {
   SessionConfig,
   ThumbSource,
   ThumbSourceFallback,
+  RenamePlan,
+  RenameRequest,
 } from '@photo-culler/types';
 import { scanFolder } from '@photo-culler/image-utils';
 // Deep import: `mpf.ts` holds the parsing, and `./metadata` is the entry point
@@ -34,6 +36,7 @@ import {
 import { getSession, updateSession } from './store';
 import { readDetailedMetadata, rotateImage, writeRating, type RatingWriteResult } from './exiftool';
 import { withFileLock } from './file-lock';
+import { planRename, executeRename, type RenameHooks } from './rename';
 
 const RESULTS_FILENAME = '.photo-culler-results.json';
 /** Pre-1.2.0 name. Read once and migrated to RESULTS_FILENAME on first load. */
@@ -827,4 +830,33 @@ export function registerIpcHandlers(): void {
       });
     },
   );
+
+  /**
+   * What renaming would do. Reads and computes; writes nothing.
+   *
+   * Split from the execute half because a rename moves files the user never
+   * picked — the RAW beside the JPEG, the XMP sidecar, the AppleDouble twin —
+   * and there is no undo. The plan the preview shows IS the plan that runs.
+   */
+  ipcMain.handle(IPC_CHANNELS.PLAN_RENAME, async (_event, request: RenameRequest) => {
+    return planRename(request);
+  });
+
+  /**
+   * Carry out a confirmed plan.
+   *
+   * The hooks hand the executor the results-file and thumbnail-cache machinery
+   * that lives in this file. Injected rather than imported the other way round,
+   * because `./rename` is imported HERE — the cycle would be real.
+   */
+  ipcMain.handle(IPC_CHANNELS.EXECUTE_RENAME, async (_event, plan: RenamePlan) => {
+    const hooks: RenameHooks = {
+      thumbCachePathOf: getThumbCachePath,
+      resultsFilePathOf: (folder) => path.join(folder, RESULTS_FILENAME),
+      readResults: readResultsFile,
+      writeResults: writeResultsFile,
+      dropQueuedWrite,
+    };
+    return executeRename(plan, hooks);
+  });
 }

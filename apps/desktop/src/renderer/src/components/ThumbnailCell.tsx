@@ -3,7 +3,9 @@ import type { ImageFileInfo } from '@photo-culler/types';
 import type { FocusOrigin } from '../lib/focus-scroll';
 import { clickModifier } from '../lib/selection';
 import type { SelectionClickModifier } from '../lib/selection';
+import { appUrlFor } from '../lib/app-url';
 import { fitToBox, THUMB_MAX_EDGE } from '../lib/thumbnail-geometry';
+import { isVideoFile, isPlayableVideo, extensionOf } from '@photo-culler/image-utils/media';
 import { StarRating } from './StarRating';
 import type { StarRatingSize } from './StarRating';
 
@@ -76,8 +78,8 @@ export function ThumbnailCell({
   // Request thumbnail if not yet requested
   useEffect(() => {
     if (thumbnail === 'loading') {
-      const encodedPath = image.path.split('/').map(encodeURIComponent).join('/');
-      requestThumbnail(image.path, `app://file${encodedPath}`, THUMB_MAX_EDGE, groupIndex);
+      // app-url.ts owns this format; it is the other end of main/protocol.ts.
+      requestThumbnail(image.path, appUrlFor(image.path), THUMB_MAX_EDGE, groupIndex);
     }
   }, [image.path, thumbnail, requestThumbnail, groupIndex]);
 
@@ -115,9 +117,29 @@ export function ThumbnailCell({
   }, [thumbnail, cellSize, dpr]);
 
   const stars = starsForCell(cellSize);
+  /**
+   * Videos carry no stars.
+   *
+   * Not a layout decision: a rating lives in the file, and writing one into an
+   * MP4 means ExifTool rewriting the whole container — seconds and gigabytes
+   * per keypress on a real clip. So videos are never rated, which also means
+   * Execute can never reach one: its range starts at 1 and an unrated file is
+   * 0. Deleting a video is the Delete key, deliberately and one dialog at a
+   * time.
+   */
+  const isVideo = isVideoFile(image.name);
   // Five empty stars on every unrated cell would be noise where they cannot be
   // clicked anyway; where they can, they are the affordance.
-  const showStars = stars.interactive || (rating ?? 0) > 0;
+  const showStars = !isVideo && (stars.interactive || (rating ?? 0) > 0);
+  /**
+   * A video the app lists but cannot draw a frame from.
+   *
+   * Either the container has no decoder here (AVI, MKV, MTS, M2TS, 3GP — see
+   * PLAYABLE_VIDEO_EXTENSIONS) or the decode failed. Both get the same tile,
+   * because both mean the same thing to the user: the file is there, it can be
+   * renamed and deleted, there is just no picture.
+   */
+  const videoWithoutPoster = isVideo && (thumbnail === 'error' || !isPlayableVideo(image.name));
 
   return (
     <div
@@ -166,7 +188,32 @@ export function ThumbnailCell({
             data-testid="thumbnail-loading"
           />
         )}
-        {thumbnail === 'error' && (
+        {videoWithoutPoster && (
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-gray-800"
+            data-testid="thumbnail-video-placeholder"
+          >
+            <svg
+              className="w-8 h-8 text-gray-500"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+            >
+              <rect x="2.5" y="5" width="19" height="14" rx="1.5" />
+              <line x1="7" y1="5" x2="7" y2="19" />
+              <line x1="17" y1="5" x2="17" y2="19" />
+              <line x1="2.5" y1="9.5" x2="7" y2="9.5" />
+              <line x1="2.5" y1="14.5" x2="7" y2="14.5" />
+              <line x1="17" y1="9.5" x2="21.5" y2="9.5" />
+              <line x1="17" y1="14.5" x2="21.5" y2="14.5" />
+            </svg>
+            <span className="text-[10px] font-mono uppercase tracking-wide text-gray-400">
+              {extensionOf(image.name)}
+            </span>
+          </div>
+        )}
+        {thumbnail === 'error' && !isVideo && (
           <div
             className="absolute inset-0 flex items-center justify-center bg-gray-700"
             data-testid="thumbnail-error"
@@ -189,6 +236,24 @@ export function ThumbnailCell({
         )}
         {thumbnail !== 'loading' && thumbnail !== 'error' && (
           <canvas ref={canvasRef} className="block max-w-full max-h-full" />
+        )}
+        {/*
+          A poster frame is indistinguishable from a photo without this, and the
+          difference matters: the 0-5 keys do nothing on a video, and Execute
+          can never reach one.
+        */}
+        {isVideo && !videoWithoutPoster && (
+          <div
+            className="absolute bottom-1 right-1 z-10 flex items-center gap-0.5 rounded bg-black/65 px-1 py-0.5"
+            data-testid="cell-video-badge"
+          >
+            <svg className="h-2.5 w-2.5 text-white" viewBox="0 0 12 12" fill="currentColor">
+              <path d="M3 1.5 L10 6 L3 10.5 Z" />
+            </svg>
+            <span className="text-[9px] font-mono uppercase text-gray-200">
+              {extensionOf(image.name)}
+            </span>
+          </div>
         )}
         {showStars && (
           <div

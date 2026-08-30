@@ -54,7 +54,9 @@ describe('scanFolder', () => {
     mockReadImageMetadata.mockResolvedValue({});
   });
 
-  it('returns ImageFileInfo[] for supported image types only', async () => {
+  it('returns ImageFileInfo[] for supported media types only', async () => {
+    // Videos joined the walk in 1.8.0; until then `video.mp4` sat in this
+    // fixture precisely to prove it was skipped.
     mockReaddir.mockResolvedValue([
       makeDirent('photo.jpg'),
       makeDirent('image.jpeg'),
@@ -69,7 +71,7 @@ describe('scanFolder', () => {
     mockStat.mockResolvedValue(makeStats(1024, 1000000));
 
     const result = (await scanFolder('/test/folder')).images;
-    expect(result).toHaveLength(6);
+    expect(result).toHaveLength(7);
     const names = result.map((r) => r.name);
     expect(names).toContain('photo.jpg');
     expect(names).toContain('image.jpeg');
@@ -77,7 +79,53 @@ describe('scanFolder', () => {
     expect(names).toContain('raw.tiff');
     expect(names).toContain('scan.tif');
     expect(names).toContain('web.webp');
+    expect(names).toContain('video.mp4');
     expect(names).not.toContain('document.pdf');
+    expect(names).not.toContain('readme.txt');
+  });
+
+  it('lists every video container the rename planner knows about', async () => {
+    const videos = [
+      'a.mp4',
+      'b.mov',
+      'c.m4v',
+      'd.avi',
+      'e.mkv',
+      'f.mts',
+      'g.m2ts',
+      'h.3gp',
+      'i.webm',
+    ];
+    mockReaddir.mockResolvedValue(videos.map((n) => makeDirent(n)) as Dirent[]);
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
+
+    const result = (await scanFolder('/test/folder')).images;
+    expect(result.map((r) => r.name).sort()).toEqual([...videos].sort());
+  });
+
+  it('matches extensions case-insensitively, as a camera card writes them', async () => {
+    mockReaddir.mockResolvedValue([
+      makeDirent('P1000001.JPG'),
+      makeDirent('C0001.MP4'),
+    ] as Dirent[]);
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
+
+    const result = (await scanFolder('/test/folder')).images;
+    expect(result).toHaveLength(2);
+    expect(result.map((r) => r.extension)).toEqual(['jpg', 'mp4']);
+  });
+
+  it('does not send a video through exifr', async () => {
+    // exifr reads stills. Handing it a 2 GB MOV costs seeking reads for a
+    // guaranteed miss; the video's date comes from exiftool at rename time.
+    mockReaddir.mockResolvedValue([makeDirent('photo.jpg'), makeDirent('clip.mov')] as Dirent[]);
+    mockStat.mockResolvedValue(makeStats(1024, 1000000));
+
+    await scanFolder('/test/folder');
+
+    const seen = mockReadImageMetadata.mock.calls.map((c) => norm(c[0]));
+    expect(seen).toContain('/test/folder/photo.jpg');
+    expect(seen).not.toContain('/test/folder/clip.mov');
   });
 
   it('excludes hidden files (names starting with .)', async () => {

@@ -191,10 +191,22 @@ describe('the menu itself', () => {
 
   it('walks the items with the arrow keys and acts on Enter', () => {
     renderMenu();
-    // From Rating past both Rotate items and Reveal to Delete, which is last.
-    for (let i = 0; i < 4; i++) fireEvent.keyDown(document, { key: 'ArrowDown' });
+    // `End` rather than counting ArrowDowns: the item list grows, and a test
+    // that hardcodes its length fails on the next item added rather than on the
+    // behaviour it is guarding. Delete is last by construction — it is the
+    // destructive one, set apart below the separator.
+    fireEvent.keyDown(document, { key: 'End' });
     fireEvent.keyDown(document, { key: 'Enter' });
     expect(onAction).toHaveBeenCalledWith({ kind: 'delete' });
+  });
+
+  it('wraps from the last item back to the first', () => {
+    renderMenu();
+    fireEvent.keyDown(document, { key: 'End' });
+    fireEvent.keyDown(document, { key: 'ArrowDown' });
+    // Back on Rating, which opens a submenu rather than acting.
+    fireEvent.keyDown(document, { key: 'Enter' });
+    expect(onAction).not.toHaveBeenCalled();
   });
 
   it('prints the shortcut of every item that has one', () => {

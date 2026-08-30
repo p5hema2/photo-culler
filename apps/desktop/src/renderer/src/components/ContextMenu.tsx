@@ -30,6 +30,17 @@ export type ContextMenuAction =
    * Explorer windows is not what anyone means by "reveal".
    */
   | { kind: 'reveal' }
+  /**
+   * Rename to capture time. Two scopes, because they answer two different
+   * questions: `'selection'` is "this photo, and whatever travels with it",
+   * `'folder'` is "this whole shoot".
+   *
+   * Neither renames anything on its own — both open a preview first. A rename
+   * moves files the user never picked (the RAW, the XMP sidecar) and there is
+   * no undo, so it gets the same treatment as Execute.
+   */
+  | { kind: 'rename'; scope: 'selection' }
+  | { kind: 'rename'; scope: 'folder'; recursive: boolean }
   | { kind: 'delete' };
 
 /**
@@ -178,6 +189,18 @@ interface ContextMenuProps {
   /** Viewport coordinates of the click that opened the menu. */
   x: number;
   y: number;
+  /**
+   * Which set of items to show.
+   *
+   * `'folder'` is the menu of a section HEADER, where there is no image under
+   * the pointer and so nothing to rate, rotate, reveal or delete. It shares
+   * this component rather than getting one of its own because everything hard
+   * here — the placement that keeps a flyout on screen, the document-level key
+   * handling, the focus restore — is the same problem in both.
+   */
+  variant?: 'image' | 'folder';
+  /** The folder the rename items name. Absent leaves them out. */
+  folder?: { path: string; label: string };
   /** How many images the menu acts on. */
   count: number;
   rating: number | 'mixed';
@@ -194,6 +217,8 @@ interface ContextMenuProps {
 export function ContextMenu({
   x,
   y,
+  variant = 'image',
+  folder,
   count,
   rating,
   canReveal,
@@ -214,39 +239,71 @@ export function ContextMenu({
   const [submenuPosition, setSubmenuPosition] = useState<Placement | null>(null);
   const submenuOpen = submenu !== null;
 
-  const entries: Entry[] = [
-    {
-      key: 'rating',
-      label: 'Rating',
-      hint: rating === 'mixed' ? 'Mixed' : rating === 0 ? 'None' : '★'.repeat(rating),
-      submenu: true,
-    },
-    {
-      key: 'rotate-cw',
-      label: 'Rotate clockwise',
-      shortcut: SHORTCUTS.rotate.cw.label,
-      action: { kind: 'rotate', direction: 'cw' },
-    },
-    {
-      key: 'rotate-ccw',
-      label: 'Rotate counter-clockwise',
-      shortcut: SHORTCUTS.rotate.ccw.label,
-      action: { kind: 'rotate', direction: 'ccw' },
-    },
-    // No shortcut: revealing has no key binding, and inventing a label for one
-    // that does not exist is worse than leaving the column empty.
-    ...(canReveal
-      ? [{ key: 'reveal', label: revealLabel(), action: { kind: 'reveal' } } satisfies Entry]
-      : []),
-    {
-      key: 'delete',
-      label: `Delete ${count} image${count === 1 ? '' : 's'}`,
-      shortcut: SHORTCUTS.delete.label,
-      danger: true,
-      separator: true,
-      action: { kind: 'delete' },
-    },
-  ];
+  /**
+   * The two folder-wide rename items.
+   *
+   * Shown on both variants: right-clicking a photo and right-clicking its
+   * section header are two ways of asking the same thing, and having to find
+   * the header to rename a shoot would be a worse menu.
+   */
+  const folderEntries: Entry[] = folder
+    ? [
+        {
+          key: 'rename-folder',
+          label: `Rename all in ${folder.label}\u2026`,
+          action: { kind: 'rename', scope: 'folder', recursive: false },
+        },
+        {
+          key: 'rename-folder-recursive',
+          label: 'Rename all, subfolders included\u2026',
+          action: { kind: 'rename', scope: 'folder', recursive: true },
+        },
+      ]
+    : [];
+
+  const entries: Entry[] =
+    variant === 'folder'
+      ? folderEntries
+      : [
+          {
+            key: 'rating',
+            label: 'Rating',
+            hint: rating === 'mixed' ? 'Mixed' : rating === 0 ? 'None' : '★'.repeat(rating),
+            submenu: true,
+          },
+          {
+            key: 'rotate-cw',
+            label: 'Rotate clockwise',
+            shortcut: SHORTCUTS.rotate.cw.label,
+            action: { kind: 'rotate', direction: 'cw' },
+          },
+          {
+            key: 'rotate-ccw',
+            label: 'Rotate counter-clockwise',
+            shortcut: SHORTCUTS.rotate.ccw.label,
+            action: { kind: 'rotate', direction: 'ccw' },
+          },
+          // No shortcut: revealing has no key binding, and inventing a label for one
+          // that does not exist is worse than leaving the column empty.
+          ...(canReveal
+            ? [{ key: 'reveal', label: revealLabel(), action: { kind: 'reveal' } } satisfies Entry]
+            : []),
+          {
+            key: 'rename',
+            label: `Rename ${count} file${count === 1 ? '' : 's'}\u2026`,
+            separator: true,
+            action: { kind: 'rename', scope: 'selection' },
+          },
+          ...folderEntries,
+          {
+            key: 'delete',
+            label: `Delete ${count} image${count === 1 ? '' : 's'}`,
+            shortcut: SHORTCUTS.delete.label,
+            danger: true,
+            separator: true,
+            action: { kind: 'delete' },
+          },
+        ];
 
   const openSubmenu = (): void => {
     // Land on the current value, so Enter twice is a no-op rather than a change.
@@ -453,11 +510,20 @@ export function ContextMenu({
       className="fixed z-50 w-56 py-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl text-xs text-gray-200 select-none"
       style={{ left: position.left, top: position.top }}
       role="menu"
-      aria-label="Image actions"
+      aria-label={variant === 'folder' ? 'Folder actions' : 'Image actions'}
       data-testid="context-menu"
       onContextMenu={(e) => e.preventDefault()}
     >
-      {count > 1 && (
+      {variant === 'folder' && folder && (
+        <div
+          className="px-3 py-1 text-[10px] uppercase tracking-wider text-gray-500 truncate"
+          data-testid="context-menu-folder"
+        >
+          {folder.label}
+        </div>
+      )}
+
+      {variant === 'image' && count > 1 && (
         <div
           className="px-3 py-1 text-[10px] uppercase tracking-wider text-gray-500"
           data-testid="context-menu-count"

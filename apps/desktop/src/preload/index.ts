@@ -39,6 +39,8 @@ const api: ElectronAPI = {
   pruneFolder: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.PRUNE_FOLDER, folderPath),
   countThumbCache: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.COUNT_THUMB_CACHE, folderPath),
   getAppVersion: () => ipcRenderer.invoke(IPC_CHANNELS.GET_APP_VERSION),
+  planRename: (request) => ipcRenderer.invoke(IPC_CHANNELS.PLAN_RENAME, request),
+  executeRename: (plan) => ipcRenderer.invoke(IPC_CHANNELS.EXECUTE_RENAME, plan),
 };
 
 contextBridge.exposeInMainWorld('api', api);

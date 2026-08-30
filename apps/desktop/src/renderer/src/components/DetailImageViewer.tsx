@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { ImageFileInfo, QualitySubscores } from '@photo-culler/types';
 import { StarRating } from './StarRating';
+import { extensionOf, isVideoFile, videoMimeType } from '@photo-culler/image-utils/media';
 import { useZoomPan } from '../hooks/useZoomPan';
 import { useFullImage } from '../hooks/useFullImage';
+import { appUrlFor } from '../lib/app-url';
 import { FocusPeakingOverlay } from './FocusPeakingOverlay';
 import { ExposureClippingOverlay } from './ExposureClippingOverlay';
 import { AfPointOverlay } from './AfPointOverlay';
@@ -125,13 +127,29 @@ export function DetailImageViewer({
   const placeholderCanvasRef = useRef<HTMLCanvasElement>(null);
 
   /** The two images an arrow key can reach from here — read ahead, not on demand. */
+  /**
+   * Whether the cursor is on a video, which changes almost everything below.
+   *
+   * A video never goes through `useFullImage`: that reads the WHOLE file over
+   * IPC into a blob URL, which is right for a 6 MB photo and would pull two
+   * gigabytes into memory for a clip. It streams over `app://` instead, whose
+   * handler answers Range requests precisely so this can seek.
+   */
+  const isVideo = focusedImage !== null && isVideoFile(focusedImage.name);
+  const videoUrl = isVideo && focusedImage ? appUrlFor(focusedImage.path) : null;
+  const videoType = focusedImage ? videoMimeType(focusedImage.name) : null;
+
   const neighbours = useMemo(() => {
     if (!focusedImageId) return [];
     const idx = allImages.findIndex((img) => img.path === focusedImageId);
     if (idx === -1) return [];
     const paths: string[] = [];
-    if (idx > 0) paths.push(allImages[idx - 1]!.path);
-    if (idx < allImages.length - 1) paths.push(allImages[idx + 1]!.path);
+    // Neighbours are read whole, so a clip beside the photo you are looking at
+    // must not be prefetched.
+    if (idx > 0 && !isVideoFile(allImages[idx - 1]!.name)) paths.push(allImages[idx - 1]!.path);
+    if (idx < allImages.length - 1 && !isVideoFile(allImages[idx + 1]!.name)) {
+      paths.push(allImages[idx + 1]!.path);
+    }
     return paths;
   }, [allImages, focusedImageId]);
 
@@ -139,7 +157,7 @@ export function DetailImageViewer({
   // already makes the common case a cache hit. `reloadToken` covers the one way
   // an original can change without its path changing: a rotation writes the
   // file's EXIF Orientation tag, and the bytes already read carry the old one.
-  const { url: imageUrl, isLoading } = useFullImage(focusedImageId, {
+  const { url: imageUrl, isLoading } = useFullImage(isVideo ? null : focusedImageId, {
     neighbours,
     reloadToken: fileRevision,
   });
@@ -263,7 +281,7 @@ export function DetailImageViewer({
 
       {/* Rating. stopPropagation because the container's mousedown starts a
           pan, and a rating click is not a drag. */}
-      {focusedImage && (
+      {focusedImage && !isVideo && (
         <div
           className="absolute top-2 right-2 z-20 bg-gray-800/80 rounded px-2 py-1"
           onMouseDown={(e) => e.stopPropagation()}
@@ -279,8 +297,51 @@ export function DetailImageViewer({
         </div>
       )}
 
+      {/*
+        The player.
+        Placed before the still-image branch and mutually exclusive with it:
+        `imageUrl` is null for a video because `useFullImage` was never asked
+        for one, so the two can never both render.
+
+        No zoom/pan wrapper and no overlays. Focus peaking, exposure clipping
+        and the AF box all read pixels out of a decoded still and all describe a
+        single exposure; none of them means anything on a clip, and the AF box
+        in particular would be positioned from maker-note data a video does not
+        carry.
+      */}
+      {isVideo && videoUrl && (
+        <div className="flex h-full w-full items-center justify-center p-4">
+          {videoType ? (
+            <video
+              key={videoUrl}
+              src={videoUrl}
+              controls
+              preload="metadata"
+              className="max-h-full max-w-full"
+              data-testid="detail-video"
+              // The container's mousedown starts a pan; the player's own
+              // controls are not a drag.
+              onMouseDown={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <div
+              className="rounded-lg border border-gray-700 bg-gray-800/60 px-6 py-5 text-center"
+              data-testid="detail-video-unsupported"
+            >
+              <p className="text-sm text-gray-300">{focusedImage?.name}</p>
+              <p className="mt-2 max-w-sm text-xs text-gray-500">
+                Für{' '}
+                <span className="font-mono uppercase">{extensionOf(focusedImage?.name ?? '')}</span>{' '}
+                bringt Chromium keinen Decoder mit. Die Datei lässt sich trotzdem umbenennen,
+                verschieben und löschen — nur nicht hier abspielen.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Blurred placeholder */}
-      {isLoading && (
+      {!isVideo && isLoading && (
         <div className="absolute inset-0 flex items-center justify-center">
           <canvas
             ref={placeholderCanvasRef}

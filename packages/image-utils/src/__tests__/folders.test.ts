@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ImageFileInfo } from '@photo-culler/types';
-import { folderLabel, foldersOf, groupByFolder } from '../folders';
+import { folderLabel, foldersOf, groupByFolder, compareFolderPaths } from '../folders';
 
 function img(folder: string, name: string, dateTaken: number): ImageFileInfo {
   return {
@@ -52,6 +52,37 @@ describe('foldersOf', () => {
   });
 });
 
+describe('compareFolderPaths', () => {
+  it('sorts a prefix path before the paths it is a prefix of', () => {
+    expect(compareFolderPaths('/a', '/a/b')).toBeLessThan(0);
+    expect(compareFolderPaths('/a/b', '/a')).toBeGreaterThan(0);
+  });
+
+  it('is zero for the same path', () => {
+    expect(compareFolderPaths('/a/b', '/a/b')).toBe(0);
+  });
+
+  it('treats the two separators as equivalent', () => {
+    expect(compareFolderPaths('C:\\a\\b', 'C:/a/b')).toBe(0);
+  });
+
+  it('ignores repeated and trailing separators', () => {
+    expect(compareFolderPaths('/a//b/', '/a/b')).toBe(0);
+  });
+
+  it('produces a total order a sort can rely on', () => {
+    const paths = ['/r/b/2', '/r/a', '/r/b', '/r/b/10', '/r/b/1', '/r/a b'];
+    expect([...paths].sort(compareFolderPaths)).toEqual([
+      '/r/a',
+      '/r/a b',
+      '/r/b',
+      '/r/b/1',
+      '/r/b/2',
+      '/r/b/10',
+    ]);
+  });
+});
+
 describe('groupByFolder', () => {
   it('splits images into one section per folder, each with its own groups', () => {
     const images = [
@@ -82,9 +113,84 @@ describe('groupByFolder', () => {
     expect(ids[0]).toContain('/root/a');
   });
 
-  it('keeps folder order following the image sort, not the alphabet', () => {
+  it('orders folders by NAME, not by where their first image landed', () => {
+    // Up to 1.7.0 this asserted the opposite — sections inherited the image
+    // sort, so this case produced ['zulu', 'alpha']. It reads fine for one card
+    // and scrambles a parent holding several shoots.
     const images = [img('/root/zulu', 'z.jpg', 1000), img('/root/alpha', 'a.jpg', 2000)];
-    expect(groupByFolder(images, 5000, '/root').map((s) => s.label)).toEqual(['zulu', 'alpha']);
+    expect(groupByFolder(images, 5000, '/root').map((s) => s.label)).toEqual(['alpha', 'zulu']);
+  });
+
+  it('orders folder names naturally, so 100_PANA precedes 1000_PANA', () => {
+    const images = [
+      img('/root/1000_PANA', 'a.jpg', 1000),
+      img('/root/9_PANA', 'b.jpg', 1000),
+      img('/root/100_PANA', 'c.jpg', 1000),
+    ];
+    expect(groupByFolder(images, 5000, '/root').map((s) => s.label)).toEqual([
+      '9_PANA',
+      '100_PANA',
+      '1000_PANA',
+    ]);
+  });
+
+  it('keeps a subtree contiguous — a sibling never lands between parent and child', () => {
+    // The trap this guards: ' ' (0x20) sorts before '/' (0x2f), so a plain
+    // string compare puts '/root/a b' between '/root/a' and '/root/a/z'.
+    const images = [
+      img('/root/a/z', 'x.jpg', 1000),
+      img('/root/a b', 'y.jpg', 1000),
+      img('/root/a', 'w.jpg', 1000),
+    ];
+    expect(groupByFolder(images, 5000, '/root').map((s) => s.label)).toEqual(['a', 'a/z', 'a b']);
+  });
+
+  it('puts a parent folder above its own subfolders', () => {
+    const images = [img('/root/dcim/100_PANA', 'a.jpg', 1000), img('/root/dcim', 'b.jpg', 1000)];
+    expect(groupByFolder(images, 5000, '/root').map((s) => s.label)).toEqual([
+      'dcim',
+      'dcim/100_PANA',
+    ]);
+  });
+
+  it('descending is the exact mirror of ascending', () => {
+    const images = [
+      img('/root/c', 'c.jpg', 1000),
+      img('/root/a', 'a.jpg', 1000),
+      img('/root/b', 'b.jpg', 1000),
+    ];
+    const asc = groupByFolder(images, 5000, '/root', 'asc').map((s) => s.label);
+    const desc = groupByFolder(images, 5000, '/root', 'desc').map((s) => s.label);
+    expect(asc).toEqual(['a', 'b', 'c']);
+    expect(desc).toEqual([...asc].reverse());
+  });
+
+  it('defaults to ascending when no direction is given', () => {
+    const images = [img('/root/b', 'b.jpg', 1000), img('/root/a', 'a.jpg', 1000)];
+    expect(groupByFolder(images, 5000, '/root').map((s) => s.label)).toEqual(
+      groupByFolder(images, 5000, '/root', 'asc').map((s) => s.label),
+    );
+  });
+
+  it('leaves the image order inside a section alone', () => {
+    // The direction has already been applied to the images by sortImages; a
+    // section must not reverse them a second time.
+    const images = [
+      img('/root/a', 'a3.jpg', 1000),
+      img('/root/a', 'a1.jpg', 1000),
+      img('/root/a', 'a2.jpg', 1000),
+    ];
+    const [section] = groupByFolder(images, 5000, '/root', 'desc');
+    expect(section!.groups.flatMap((g) => g.images.map((i) => i.name))).toEqual([
+      'a3.jpg',
+      'a1.jpg',
+      'a2.jpg',
+    ]);
+  });
+
+  it('orders Windows paths the same way as POSIX ones', () => {
+    const images = [img('C:\\root\\zulu', 'z.jpg', 1000), img('C:\\root\\alpha', 'a.jpg', 1000)];
+    expect(groupByFolder(images, 5000, 'C:\\root').map((s) => s.label)).toEqual(['alpha', 'zulu']);
   });
 
   it('labels the root folder itself by its basename', () => {

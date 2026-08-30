@@ -12,7 +12,12 @@ structural safety property in the app, because it means an image nobody has look
 deleted.
 
 Opening a folder scans it **recursively**, so a parent holding several shoots can be culled in one
-session; the grid shows one collapsible section per folder.
+session; the grid shows one collapsible section per folder, ordered by folder NAME.
+
+Videos are listed alongside the photos and can be viewed, renamed and deleted — but never rated,
+scored or rotated. Renaming is the second thing that changes a user's files: right-click a photo or
+a section header and the whole shoot can be renamed to its capture time, in the exact format
+`H:\rename-by-date` produces.
 
 No server, no accounts, no network calls. All state lives beside the user's photos:
 `.photo-culler-results.json` (quality scores and nothing else) and a `.photo-culler-thumbs/`
@@ -148,6 +153,173 @@ value and the write lands after it. And a rescan does discard in-memory quality 
 reached disk (one debounce window, plus anything scored while the prune ran): the re-walk rebuilds
 `qualityScores` from the files, and the scoring pass recomputes precisely those because they are then
 absent. `rescan.test.ts` guards all of it.
+
+**Videos are listed, but they are not photos, and five paths say so separately.** `media.ts` is the
+single answer to "is this a video?" — deliberately NOT a field on `ImageFileInfo`, because the
+extension is already carried there and a second copy of one fact is a second thing to keep honest.
+What follows from it:
+
+- **No rating.** `setRating` returns early for a video, and the check is in the STORE rather than
+  only in the cell that hides the stars, because the 0-5 keys act on the whole selection and a
+  selection routinely mixes stills and clips. The reason is not taste: a rating lives in the file,
+  and ExifTool writes XMP into an MP4 by rewriting the whole container — seconds and gigabytes per
+  keypress on a real clip. A consequence worth stating: since Execute's range starts at 1 and an
+  unrated file is 0, **Execute can never delete a video.** The Delete key still can, with its dialog.
+- **No quality score.** The scoring worker's pixel loops assume one frame, and a score from one
+  arbitrary frame of a clip would look exactly like a photo's and mean nothing. It would also cost a
+  whole-file read of a 2 GB file.
+- **No rotation.** `ROTATABLE_EXTENSIONS` already refused everything but JPEG, so this needed nothing.
+- **No exifr.** `scanFolder` skips the metadata read for a video: exifr reads stills, and handing it
+  an MP4 buys two seeking reads and a parse attempt for a guaranteed miss. A video's capture time
+  lives in the `moov` atom, which only exiftool reads, and the only thing that needs it is the rename
+  planner — which asks exiftool directly, in bulk, on demand. Until then grouping falls back to
+  `lastModified`, which for a file straight off a card IS the capture time, because the camera wrote it.
+- **No thumbnail worker.** See the next trap.
+
+**A video's poster frame is decoded on the MAIN THREAD, and there is no ffmpeg — that was a legal
+decision, not a technical one.** A Web Worker has no `HTMLVideoElement`, so `lib/video-poster.ts`
+creates a `<video>`, seeks a second in, and draws one frame — bounded to two at a time, because
+unlike every other thumbnail this competes with React for the main thread. It produces the same
+512px WebP the worker does, so the disk cache needs no second format marker.
+
+That limits posters to what Chromium can demux: MP4, M4V, MOV and WebM. AVI, MKV, MTS, M2TS and 3GP
+are listed, renamed and deleted like anything else and get a film-strip tile with their extension.
+ffmpeg would fix that, and all three off-the-shelf npm packages were examined and rejected — the
+binaries themselves, not the metadata:
+
+| package | npm `license` says | the binary says |
+|---|---|---|
+| `@ffmpeg-installer/darwin-arm64` | *(a URL)* | `--enable-nonfree` → "nonfree and **unredistributable**" |
+| `@ffmpeg-installer/win32-x64` | `GPLv3` | a 2018 **zeranoe** build; zeranoe shut down in 2020, so the corresponding source GPLv3 §6 obliges you to convey cannot be produced |
+| `@ffmpeg-installer/darwin-x64` | `LGPL-2.1` | actually `--enable-gpl --enable-version3` — mislabeled |
+| `ffmpeg-static` | — | same nonfree arm64 binary, and its install hook fetches only the HOST platform, which per-target vendoring cannot use |
+
+Shipping the first is a copyright violation with no compliance path. BtbN's builds have no macOS
+assets at all. The clean route is a minimal LGPL ffmpeg built in-house and published as three
+platform packages — ~10 MB each, since only the needed demuxers and decoders go in — and it is a
+subproject, not a dependency bump. **Do not "just add ffmpeg-static".**
+
+**`app://` answers Range requests, and that is load-bearing rather than tidy.** `main/protocol.ts`
+used to be `net.fetch('file://…')`, which streams a whole file and says nothing about ranges. That is
+fine for an image and useless for a video: Chromium's media stack will not seek in a resource it
+cannot request a slice of, so `currentTime = 1` on a 2 GB clip either does nothing or buffers the
+whole file into memory. Both the poster frame and the loupe's player depend on seeking. `Accept-Ranges:
+bytes` on the plain response is the half that makes Chromium ask at all — without it the 206 branch
+is dead code.
+
+Images do NOT come through here: `useFullImage` reads them over `READ_FILE`, which takes the per-path
+lock that stands between a read and exiftool's rename-over-the-original on Windows. A video is
+different — this app never writes one — so there is nothing to serialise against, and streaming is the
+only way not to pull gigabytes through IPC. `appUrlFor` in `lib/app-url.ts` is the other end of the
+format; the encoding it replaced was **wrong on Windows** and had simply never been fetched.
+
+**Folder sections are ordered by NAME as of 1.8.0, reversing a documented decision.** Up to 1.7.0
+`groupByFolder` emitted sections in `Map` insertion order — i.e. by each folder's first image under
+the active sort — and `folders.test.ts` pinned it with "folder order follows the image sort, not the
+alphabet". It reads fine for one card and scrambles a parent holding several shoots the moment two
+folders interleave in time. A shoot is a place in a tree, so the tree decides.
+
+Two details that are not obvious. The comparison is **segment by segment**, not on the whole string:
+`' '` (0x20) sorts before `'/'` (0x2f), so a plain string compare puts `/root/a b` between `/root/a`
+and `/root/a/z` and lifts a sibling in between a parent and its own child. And `direction` REVERSES
+the finished list rather than flipping the comparator, so descending is the exact mirror of ascending
+and a subtree stays contiguous in both.
+
+**Renaming: `fs.rename` overwrites its destination silently, and the planner is what makes that
+safe.** On POSIX and on Windows alike, and Node exposes no no-replace flag — so a naive rename batch
+is an unconfirmed, unrecoverable delete, worse than the Delete key, which at least shows a dialog.
+
+`planRenames` in `packages/image-utils/src/rename.ts` closes it with one rule: the namespace of each
+target directory is seeded with **everything already in it**, and a name is NEVER released — not even
+when the file holding it is itself about to move away. That costs an occasional unnecessary `~hash`
+suffix where two files would have swapped names, and it buys the invariant that
+
+> no entry's target path equals another entry's source path, and no two entries share a target path.
+
+So there are no rename cycles, nothing is overwritten, and the executor is a plain loop rather than a
+two-phase temp-name dance. `assertNoOverlap` checks it rather than trusting it. `renameNoReplace` in
+`main/rename.ts` still reserves each name with `open(dest, 'wx')` first, because the plan was computed
+against a listing that is a moment old — `link()` would also give an atomic EEXIST and is unusable
+here, because SD cards are exFAT and have no hard links.
+
+**The naming rules are a contract with a program outside this repo.** `naming.ts` is a port of
+`H:\rename-by-date\lib\rename-by-date.pl`, and `naming.test.ts` proves it: the Perl's own
+`parse_stamp` and `stamp_epoch` were extracted and run over 937 inputs — 37 edge cases plus 900 from
+a seeded PRNG — and the TypeScript matched all 937. `__tests__/fixtures/naming-golden.ts` holds those
+answers so the guarantee survives without Perl and without the H: drive, which CI has neither of.
+**Regenerate it only by re-running the differential**, never by pasting in what this codebase
+currently produces — that turns a contract into a snapshot of a bug.
+
+Format: `YYYY-MM-DD HH-MM-SS-fff`. The timezone is discarded (wall-clock is what the photographer
+remembers), fractional seconds pad on the RIGHT (`.5` is 500 ms), the tag ladder puts every `SubSec`
+rung DIRECTLY above its plain sibling (the original shell script had those swapped and threw away
+milliseconds), and anything outside 1990-2100 is refused rather than named — exiftool prints
+`0000:00:00 00:00:00` for an empty tag and a reset camera clock reports 1970.
+
+Collisions take a **content-hash suffix, never a counter**. Straight from the Perl, and it applies
+here twice over: a counter is handed out in directory-listing order — the filesystem's, name-ordered
+on NTFS and hash-ordered on ext4 — and it shifts when a file is deleted, so a photo inherits the
+position, and in this app the CULL VERDICT, of another. A burst shot on a camera that writes no
+`SubSec` rung gives every frame the same second, so this is the normal case, not the edge case.
+
+**A rename carries files the app cannot even see, and skipping that is silent data loss.** The
+scanner admits stills and videos; it never lists `IMG_1234.ARW`, `IMG_1234.ARW.xmp` or the
+AppleDouble `._IMG_1234.JPG` every Mac-formatted card collects. Lightroom, Capture One and Bridge all
+pair RAW with JPEG **by stem**, and an XMP sidecar is where a Lightroom-first user's ratings and
+develop settings actually live. Renaming the JPEG alone dissolves both, permanently and without a
+word. So the planner's companion pass reads the full directory listing and takes them along under the
+same base name and the same suffix, matching on the stem plus a literal dot so `IMG_1` cannot swallow
+`IMG_12.JPG`, and offering each candidate only to the group with the LONGEST matching stem so a
+sidecar cannot follow the wrong photo.
+
+Two related notes. The planner groups by `(source folder, stem)` BEFORE looking up dates, which is
+where it diverges from the Perl: that tool splits dated from undated first, so a RAW whose date
+exiftool could not read would be left behind while its JPEG moved. And the listing handed to the
+planner must be the FULL directory, not just the media — a `.DS_Store` or a text note occupies a
+target name just as effectively as a photo.
+
+**The results file and the thumbnail cache are re-keyed in the MAIN process, inside the same pass as
+the rename.** Both are keyed by BASENAME, and the results file holds the one thing that exists nowhere
+else. Left un-rekeyed, three separate paths destroy it without a dialog: the next F5's prune sees the
+old record as an orphan (`planCleanUp` cannot tell a rename from a deletion), one Delete anywhere in
+the folder drops all of them via `rebuildResults`, and `projectFolderResults` actively writes an EMPTY
+record over the score on the next save. Doing it in the renderer instead would mean a crash between
+the two loses the score.
+
+The thumbnail is worth moving rather than dropping: **a rename does not change the source's mtime**,
+so `LOAD_THUMB_CACHE`'s freshness test still passes and the moved entry stays valid. One `rename` per
+file against one full decode per file. `moveThumbCache` checks the source exists BEFORE `mkdir`, or it
+leaves an empty `.photo-culler-thumbs/` in every folder a rename touches.
+
+**The renderer's rename quiesces in a specific order, and two steps are not housekeeping.**
+`applyRename` follows `rescanFolder`'s choreography — hold results writes before the first await,
+because `flushRatingWrites` awaits real IPC and a scoring result arriving in that window would
+schedule a debounce while the hold was still off — plus two of its own:
+
+- **Rating writes are FLUSHED, not cancelled.** The 300 ms debounce is keyed by the OLD path; left to
+  fire after the rename it calls `writeRating` on a file that is gone, the write fails,
+  `persistRating` rolls the star back, and the rating is gone from the only place it lived.
+- **`thumbnailWorker.rekey(old, new)` runs BEFORE the rename, not after.** It bumps the old id's
+  epoch, and that is the load-bearing half: a worker response already in flight for the pre-rename
+  path would otherwise land and `saveThumbCache(oldPath)` would re-create the very cache file main
+  just moved, where nothing but the next vacuum would find it. `rekey` rather than `invalidate`
+  because the bytes did not change — throwing away hundreds of decoded thumbnails costs a decode each
+  for nothing.
+
+Then ONE `setState` re-keys `images` (`path`, `name` **and `folder`** — consolidation moves a file to
+a different directory, and `folder` is `dirname(path)` by contract and is what `groupByFolder`
+sections by), `ratings`, `qualityScores`, `qualitySubscores`, `focusedImageId`, `selection` and
+`selectionAnchor`; then `userRatedRef` and `resultsRef`; then `fileRevision`, for the two path-keyed
+caches that have no other way to learn. A rename is also REFUSED while `isScanIncomplete`: the
+deferred metadata pass re-reads by path, `readImageMetadata` returns `{}` rather than throwing, and
+the affected images would silently lose their dates and ratings for the rest of the session.
+
+**Rename target paths are length-checked on Windows.** MAX_PATH is 260 and Node does not auto-prefix
+`\\?\`. The generated stem is 23 characters plus the extension, which is often LONGER than the camera
+name it replaces (`P1000123.JPG` is 12), so a deep tree that works today can be pushed over by the
+rename. The limit subtracts 32 for the thumbnail cache path on top — without that headroom the rename
+succeeds and thumbnails quietly stop working for those files, which is a far worse failure than
+refusing the name.
 
 **The keep classification and `picks/` are gone, data and all.** Up to 1.5.x images were classified
 keep/review/delete, Execute moved the keeps into a `picks/` subfolder, the scanner folded those
@@ -383,8 +555,8 @@ recovers lazily and can still name a photo a filter has hidden. When it names no
 out rather than shown doing nothing.
 
 **The renderer must never import the `image-utils` barrel.** It aliases
-`@photo-culler/image-utils/sorting`, `/grouping`, `/focus`, `/folders` and `/rating` deep, on
-purpose, and has **no** whole-package fallback alias: the barrel re-exports `scanner.ts`, which
+`@photo-culler/image-utils/sorting`, `/grouping`, `/focus`, `/folders`, `/rating` and `/media` deep,
+on purpose, and has **no** whole-package fallback alias: the barrel re-exports `scanner.ts`, which
 imports `node:fs/promises` and would break the browser bundle. The absence of the fallback is the
 guard — an accidental barrel or deep import fails to resolve instead of quietly bundling `node:fs`.
 That is also why `/orientation` is not in the list: only the main process needs it. `metadata.ts` is
@@ -483,6 +655,15 @@ Cost of getting this wrong: the release build fails at `pnpm vendor:mac` with
 `node-gyp|prebuild-install|node-pre-gyp|cmake-js` and fails the build on a hit. `sharp` passes only
 because it ships prebuilt binaries. Any dependency that compiles at install time will fail CI.
 
+**`PLAN_RENAME` and `EXECUTE_RENAME` are two channels on purpose.** The plan reads and computes and
+writes nothing; the execute half carries out the plan the user saw, unmodified. Nothing recomputes in
+between, so what was approved is what happens — the same reason Execute has a confirmation panel, and
+a stronger one, because a rename moves files the user never picked. `executeRename` reports EVERY file
+individually and is never optimistic: on Windows any single rename can be refused by a handle the app
+does not own — Explorer's preview pane, which the app's own "Reveal in Explorer" invites the user to
+open, the search indexer, a virus scanner — so "it did not throw" is not evidence that a file moved.
+There is a short backoff for exactly those.
+
 **Adding an IPC channel touches three files, in order:** `packages/types/src/ipc.ts` (add to
 `IPC_CHANNELS` *and* to the `ElectronAPI` interface) -> `src/preload/index.ts` (wire the invoke) ->
 `src/main/ipc-handlers.ts` (register the handler). `MENU_COMMANDS` is a closed union for the same
@@ -500,7 +681,15 @@ image in the tree — the handful of fields grouping, sorting and the rating nee
 process, on demand, for the ONE focused image: that is where the maker-note data lives (AF point,
 face detection), which exifr returns as an undecoded blob, and it is also what writes ratings and
 orientation. Don't merge them — the bulk path must stay cheap, and exiftool must stay off the
-per-image hot path. It
+per-image hot path.
+
+Since 1.8.0 exiftool has a second, BULK use: `readTimestampTags` reads the capture-time ladder for
+every file a rename plan covers. It goes through the same `-stay_open` child on purpose — `maxProcs:
+1` means a read cannot interleave with a write to the same file — and it costs a round trip each, so
+planning a folder of a few thousand takes seconds. That is acceptable because it is a deliberate,
+one-off user action behind a preview, and it is the ONLY thing that reads a video's `moov` atom.
+
+It
 used to be three paths: a renderer `exif.worker.ts` carried the bulk pass until the scanner took it
 over, so a rating could be known before the first thumbnail drew.
 
