@@ -6,6 +6,14 @@ The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Every download is about 6 MB smaller, and the installed app about 17 MB.** The image library
+  behind the old rotation code has not been used since rotation became a one-byte EXIF change in
+  1.6.0, but it was still being packaged — 19 to 21 MB of it, in every installer, on every platform.
+  Nothing about what the app does changes. Windows: installer 116.9 MB to 110.3 MB, portable zip
+  151.3 MB to 143.3 MB, installed 404 MB to 387 MB.
+
 ### Added
 
 - **A portable variant for Windows and macOS** — no installer, no admin rights. Unpack it

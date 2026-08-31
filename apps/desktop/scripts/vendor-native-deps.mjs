@@ -2,20 +2,31 @@
  * Stages the platform-specific native dependencies electron-builder must ship,
  * into `apps/desktop/vendor/<os>-<arch>/node_modules/`.
  *
- * Two problems are being solved at once:
+ * That is `exiftool-vendored` and nothing else. `sharp` used to be staged here
+ * too and is deliberately gone: no main-, preload- or renderer-side code imports
+ * it any more (rotation was its last runtime caller, and it became an EXIF
+ * Orientation tag write), so every artifact was carrying ~19-21 MB of libvips for
+ * nothing. It is still a devDependency, for `make-icons.mjs` and for the
+ * main-process tests that generate real JPEG/PNG fixtures — it just is not
+ * shipped. `verify-pack.mjs` asserts it stays out.
+ *
+ * Two problems are being solved here:
  *
  * 1. pnpm keeps a package's dependencies as siblings in its virtual store
  *    (`node_modules/.pnpm/<pkg>@<ver>/node_modules/`) and links them by symlink.
  *    electron-builder cannot follow those, so the tree has to be flattened.
  *
- * 2. The root `.npmrc` declares every supported architecture, so `pnpm install`
- *    fetches ALL of sharp's platform binaries. Copying them wholesale shipped
- *    ~115 MB of macOS and Linux libvips inside the Windows installer. Each
- *    target now gets only its own binaries.
+ * 2. Optional platform packages are installed for every platform (see
+ *    `pnpm.supportedArchitectures` in the root package.json), so each target has
+ *    to be given only its own. `exiftool-vendored.exe` and `exiftool-vendored.pl`
+ *    are the pair that matters; shipping both would put a Perl distribution in
+ *    the Windows installer and a Windows exe in the mac bundle.
  *
  * Pruning is a DENY-list, not an allow-list: only names positively identified
  * as platform-specific are dropped, so a future platform-neutral dependency of
- * sharp or exiftool-vendored is carried along automatically.
+ * exiftool-vendored is carried along automatically. The `@img/sharp-*` patterns
+ * stay in that list even though nothing reaches them now — they cost nothing and
+ * they mean re-adding a root cannot quietly ship foreign binaries again.
  *
  * Usage:
  *   node scripts/vendor-native-deps.mjs [--target <os>-<arch>]... [--verbose]
@@ -44,41 +55,19 @@ const PLATFORM_SPECIFIC = [
 ];
 
 /**
- * What each target keeps.
- *
- * Note the asymmetry, verified on disk: win32 has NO separate
- * `@img/sharp-libvips-win32-*` — the libvips DLLs live inside
- * `@img/sharp-win32-<arch>/lib/`. darwin and linux need the extra package.
+ * What each target keeps. Only the exiftool binary differs by platform now, and
+ * only by OS — `exiftool-vendored.pl` declares `"os": ["!win32"]` and there is no
+ * per-arch split — so every mac and linux target names the same package. The
+ * table stays keyed by `<os>-<arch>` because the directory name has to match
+ * electron-builder.yml's `${os}-${arch}` macro.
  */
 const TARGETS = {
-  'win-x64': { img: ['sharp-win32-x64'], exiftool: 'exiftool-vendored.exe' },
-  'win-arm64': { img: ['sharp-win32-arm64'], exiftool: 'exiftool-vendored.exe' },
-  'mac-x64': {
-    img: ['sharp-darwin-x64', 'sharp-libvips-darwin-x64'],
-    exiftool: 'exiftool-vendored.pl',
-  },
-  'mac-arm64': {
-    img: ['sharp-darwin-arm64', 'sharp-libvips-darwin-arm64'],
-    exiftool: 'exiftool-vendored.pl',
-  },
-  'linux-x64': {
-    img: [
-      'sharp-linux-x64',
-      'sharp-libvips-linux-x64',
-      'sharp-linuxmusl-x64',
-      'sharp-libvips-linuxmusl-x64',
-    ],
-    exiftool: 'exiftool-vendored.pl',
-  },
-  'linux-arm64': {
-    img: [
-      'sharp-linux-arm64',
-      'sharp-libvips-linux-arm64',
-      'sharp-linuxmusl-arm64',
-      'sharp-libvips-linuxmusl-arm64',
-    ],
-    exiftool: 'exiftool-vendored.pl',
-  },
+  'win-x64': { exiftool: 'exiftool-vendored.exe' },
+  'win-arm64': { exiftool: 'exiftool-vendored.exe' },
+  'mac-x64': { exiftool: 'exiftool-vendored.pl' },
+  'mac-arm64': { exiftool: 'exiftool-vendored.pl' },
+  'linux-x64': { exiftool: 'exiftool-vendored.pl' },
+  'linux-arm64': { exiftool: 'exiftool-vendored.pl' },
 };
 
 const OS_KEY = { win32: 'win', darwin: 'mac', linux: 'linux' };
@@ -115,7 +104,8 @@ function virtualStoreDir(pkg) {
   return dirname(dirname(pkgJson));
 }
 
-const roots = [virtualStoreDir('sharp'), virtualStoreDir('exiftool-vendored')];
+// One root now. `sharp` used to be a second one; see the header for why it is not.
+const roots = [virtualStoreDir('exiftool-vendored')];
 
 // ─── copy ────────────────────────────────────────────────────────────
 
@@ -159,7 +149,7 @@ for (const target of requested) {
   rmSync(resolve(appDir, 'vendor', target), { recursive: true, force: true });
   mkdirSync(destRoot, { recursive: true });
 
-  const keep = new Set([...spec.img.map((n) => `@img/${n}`), spec.exiftool]);
+  const keep = new Set([spec.exiftool]);
   const copied = new Set();
 
   for (const root of roots) {
@@ -171,8 +161,9 @@ for (const target of requested) {
     }
   }
 
-  // ── assertions: a silent miss here ships an app that installs fine and
-  // then dies on the first thumbnail with `Could not load the "sharp" module`.
+  // ── assertions: a silent miss here ships an app that installs fine and then
+  // loses every metadata read, rating write and rotation, because the exiftool
+  // child cannot spawn. `exiftool.ts` makes that failure sticky for the session.
   const problems = [];
 
   for (const name of keep) {
@@ -186,18 +177,15 @@ for (const target of requested) {
     }
   }
 
-  for (const n of spec.img) {
-    const dir = join(destRoot, '@img', n);
-    if (!existsSync(dir)) continue;
-    if (n.startsWith('sharp-libvips-')) {
-      const lib = join(dir, 'lib');
-      if (!existsSync(lib) || readdirSync(lib).length === 0) {
-        problems.push(`${n}/lib is empty`);
-      }
-    } else {
-      const addon = join(dir, 'lib', `${n}.node`);
-      if (!existsSync(addon)) problems.push(`missing native addon ${n}/lib/${n}.node`);
-    }
+  // sharp is a devDependency and must not be staged. Copying it back would be
+  // ~19-21 MB of libvips per artifact for code that no longer exists, and
+  // `verify-pack.mjs` would fail the build — assert it here too, where the
+  // diagnostic can name the cause.
+  if (existsSync(join(destRoot, '@img')) || copied.has('sharp')) {
+    problems.push(
+      'sharp was staged. It is a devDependency with no runtime caller — remove it ' +
+        'from `roots`/`TARGETS` rather than relaxing verify-pack.mjs.',
+    );
   }
 
   const binName = spec.exiftool.endsWith('.exe') ? 'exiftool.exe' : 'exiftool';

@@ -836,11 +836,13 @@ leaves `node_modules/.pnpm/@tailwindcss+oxide-win32-x64-msvc@*/…/oxide-win32-x
 renderer CSS should be ~36 kB, and the build log should NOT mention WASI. Fresh CI installs link
 correctly, so released artifacts have not been affected.
 
-**Native dependencies are vendored per target.** `scripts/vendor-native-deps.mjs` flattens `sharp`
-and `exiftool-vendored` out of pnpm's virtual store into `vendor/<os>-<arch>/node_modules/`, because
+**Native dependencies are vendored per target.** `scripts/vendor-native-deps.mjs` flattens
+`exiftool-vendored` out of pnpm's virtual store into `vendor/<os>-<arch>/node_modules/`, because
 electron-builder can't follow pnpm symlinks. `electron-builder.yml` picks the right one with the
-`${os}-${arch}` macro, which is expanded **per pack pass** — that is what keeps a Windows installer
-from carrying macOS and Linux libvips (it used to, ~115 MB of it).
+`${os}-${arch}` macro, which is expanded **per pack pass** — that is what kept a Windows installer
+from carrying macOS and Linux libvips (it used to, ~115 MB of it) and now keeps
+`exiftool-vendored.exe` out of the mac bundle and the `.pl` Perl distribution out of the Windows
+installer. `sharp` used to be staged here too and is deliberately gone — see the entry below.
 
 Three things to know before touching it:
 - Use `${os}` (`mac`/`win`/`linux`), **never `${platform}`** — that macro expands to the *host*
@@ -848,9 +850,10 @@ Three things to know before touching it:
 - Pruning is a **deny-list**: only names matching `@img/sharp-*`, `@img/sharp-libvips-*` and
   `exiftool-vendored.{exe,pl}` are filtered. A new platform-neutral dependency is carried along
   automatically.
-- `scripts/verify-pack.mjs` runs as `afterPack` and fails the build if foreign-platform binaries
-  slipped in. **Keep it.** A miss here builds and installs fine and only dies at runtime with
-  `Could not load the "sharp" module`.
+- `scripts/verify-pack.mjs` runs as `afterPack` and fails the build if the wrong platform's exiftool
+  slipped in, if none did, or if `sharp` reappeared. **Keep it.** A miss here builds and installs
+  fine and only dies at runtime — every metadata read, rating write and rotation failing, because
+  the exiftool child cannot spawn and `exiftool.ts` makes that failure sticky for the whole session.
 
 A fourth thing, added when the portable zip landed: **one pack pass per ARCH, not per target.**
 `computeArchToTargetNamesMap` groups by arch, so `win: [nsis, zip]` on one arch is ONE pack pass,
@@ -863,14 +866,37 @@ script's `TARGETS` table.
 This is also why `electron-builder.yml` sets `asar: false` and `npmRebuild: false`. Commits
 `cbe4229`, `8cf68b2`, and `f465675` are the original convergence on the sharp arrangement.
 
-**No main-process code imports `sharp` any more.** Rotation was its last runtime caller. What is
-left is build- and test-time: `scripts/make-icons.mjs`, and the main-process tests that use it to
-generate real JPEG/PNG fixtures. It is still a runtime `dependency` of `apps/desktop` and still
-vendored per target, so every installer carries libvips for nothing. Dropping it is a real win and a
-real risk — it means a `package.json` change, a lockfile change, and re-checking
-`vendor-native-deps.mjs` and `verify-pack.mjs`, both of which are written around sharp's platform
-packages — so it has deliberately not been done as part of the rotation change. Treat it as an open
-task, not as dead weight to be swept out in passing.
+**`sharp` is a devDependency and must NOT be shipped — `verify-pack.mjs` asserts its ABSENCE.**
+Rotation was its last runtime caller, and became an EXIF Orientation tag write; nothing in `main`,
+`preload` or the renderer imports it now (`grep -c sharp out/main/index.js` is 0, and the renderer's
+hits are all `sharpness`, the quality subscore). What is left is build- and test-time:
+`scripts/make-icons.mjs`, and four main-process tests that generate real JPEG/PNG fixtures —
+`rotate.test.ts` needs a JPEG with a real EXIF block, so replacing sharp there would mean checking
+binary fixtures into the repo. So it stays installed and stops being packaged.
+
+Measured on Windows x64: vendor tree 62 MB -> 42 MB, `win-unpacked` 404 MB -> 387 MB, installer
+116.9 MB -> 110.3 MB, portable zip 151.3 MiB -> 143.3 MiB.
+
+The direction of the check is the thing to know. Up to this change `verify-pack.mjs` **required**
+exactly one `@img/sharp-*` addon plus `sharp/lib/sharp.js`, so it would have failed the build the
+moment sharp was dropped. It now asserts the opposite — no `@img/sharp-*`, no `sharp` package — and
+`vendor-native-deps.mjs` asserts the same before packing, so the invariant is guarded at both ends.
+**If a build fails asking for sharp, do not restore the old assertion**: something started staging
+it again.
+
+Not attempted, deliberately: `pnpm.supportedArchitectures` still declares `cpu: [x64, arm64]`, which
+now only over-fetches sharp binaries into the local store. Removing it looks tidy and is exactly the
+trap two entries below — it is what makes pnpm link optional deps for every platform, which
+`exiftool-vendored.pl`'s negated `"os": ["!win32"]` needs. Leave it alone.
+
+**Cross-target vendoring does not work on a Windows dev box, and never did.** `pnpm vendor:mac`
+fails here with a raw `ENOENT` on `exiftool-vendored.pl`, because pnpm creates the symlink in the
+virtual store but does not fetch a package whose `os` excludes the host — the link dangles. Before
+sharp was dropped it failed one step earlier, on `@img/sharp-darwin-x64`, for the same reason. This
+is **pre-existing and CI-irrelevant**: the mac job runs on `macos-latest`, where those packages
+install natively. Worth knowing so nobody reads that `ENOENT` as the `supportedArchitectures`
+misconfiguration the trap below warns about — it is not, and it means mac artifacts cannot be built
+or verified locally from Windows at all (`packager.js` refuses a mac build from Windows anyway).
 
 **The portable variant is a ZIP, and `target: portable` is the trap it avoids.** Both platforms ship
 one: on macOS the `zip` target that has existed since 1.0.0 (a `.app` is relocatable by
