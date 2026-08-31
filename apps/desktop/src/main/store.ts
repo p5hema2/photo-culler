@@ -1,3 +1,7 @@
+// Not for a value — this is the DEPENDENCY EDGE that forces the userData
+// redirect to be evaluated before `new Store(...)` below, whatever order
+// index.ts happens to list its imports in. See ./portable's header.
+import './portable';
 import Store from 'electron-store';
 import type { SessionConfig } from '@photo-culler/types';
 

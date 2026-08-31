@@ -42,8 +42,24 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Nothing else in CI packages anything, so a malformed builder config would
+      # otherwise first surface on a `v*` tag push — after the tag is public.
+      # Validated against electron-builder's own scheme.json; the specific trap is
+      # that a root `zip:` block is rejected outright while `nsis:` and `portable:`
+      # are not, so the archive targets must be named via `<platform>.artifactName`.
+      - name: Validate electron-builder config
+        working-directory: apps/desktop
+        run: pnpm validate:builder
+
       - name: Build
         run: pnpm build
+
+      # Asserts on the BUILT bundle that the portable userData redirect is emitted
+      # before electron-store is constructed. Source import order does not decide
+      # this, and getting it wrong fails silently — see src/main/portable.ts.
+      - name: Verify userData redirect precedes electron-store
+        working-directory: apps/desktop
+        run: pnpm verify:path-order
 
       - name: Detect native addons
         shell: bash

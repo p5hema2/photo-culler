@@ -45,6 +45,15 @@ Run from the repo root unless noted.
 Packaging (from `apps/desktop`): `pnpm build && pnpm package:win` (or `package:mac`, or `package`
 for the current platform). Each of those vendors the target's native binaries first — see the
 vendoring trap below. Artifacts land in `apps/desktop/dist/`, versioned `0.0.0-dev`.
+`package:win` builds BOTH Windows artifacts — the nsis installer and the portable zip — from one
+pack pass; `pnpm package:win:portable` builds just the zip when iterating (~90 s against ~2 min).
+
+Two guard scripts, both also wired into `ci.yml` because nothing else there packages anything:
+
+| Command (from `apps/desktop`) | What it does |
+|---|---|
+| `pnpm validate:builder` | Validates `electron-builder.yml` against electron-builder's own `scheme.json` |
+| `pnpm verify:path-order` | Asserts on the BUILT bundle that the userData redirect precedes electron-store; run after `pnpm build` |
 
 Toolchain: pnpm 10.32.1 (`packageManager` field), Node >= 20.19.0 locally, Node 22 in CI.
 
@@ -537,6 +546,17 @@ rename. The limit subtracts 32 for the thumbnail cache path on top — without t
 succeeds and thumbnails quietly stop working for those files, which is a far worse failure than
 refusing the name.
 
+Note this budget is about **photo destination paths**, and there is a second, independent one about
+where the app itself lives — do not conflate them when a portable copy is involved. Measured: the
+deepest relative path inside the packaged tree is 113 characters
+(`resources/app/node_modules/exiftool-vendored.exe/bin/exiftool_files/lib/auto/Math/BigInt/FastCalc/FastCalc.xs.dll`),
+so unpacking to `E:\Photo Culler 1.9.0\` (22) leaves ~145 characters of headroom and nothing
+overflows. The real wall there is exiftool's own `@INC`: it starts failing with
+`Can't locate Image/ExifTool/MakerNotes.pm` once that file's path reaches 260 characters — and that
+message does **not** match `isSpawnFailure`'s regex, so `unavailable` never latches and every read
+keeps failing individually for the session. An umlaut in the path is irrelevant to the wall; twin
+trees at identical length, one ASCII and one not, failed identically.
+
 **The keep classification and `picks/` are gone, data and all.** Up to 1.5.x images were classified
 keep/review/delete, Execute moved the keeps into a `picks/` subfolder, the scanner folded those
 images back into the parent section, and the clean-up planner therefore had to accept that a parent's
@@ -832,6 +852,14 @@ Three things to know before touching it:
   slipped in. **Keep it.** A miss here builds and installs fine and only dies at runtime with
   `Could not load the "sharp" module`.
 
+A fourth thing, added when the portable zip landed: **one pack pass per ARCH, not per target.**
+`computeArchToTargetNamesMap` groups by arch, so `win: [nsis, zip]` on one arch is ONE pack pass,
+ONE `appOutDir`, ONE `${os}-${arch}` expansion and ONE `afterPack` — verified, `electron-builder
+--win` prints `packaging` and `verify-pack:` exactly once each. So an extra *target* costs the
+vendoring and `verify-pack` nothing. Adding an **arch** is what would double them, and Windows
+arm64 would need `vendor:win --target win-arm64` first — `win-arm64` is already in the vendor
+script's `TARGETS` table.
+
 This is also why `electron-builder.yml` sets `asar: false` and `npmRebuild: false`. Commits
 `cbe4229`, `8cf68b2`, and `f465675` are the original convergence on the sharp arrangement.
 
@@ -843,6 +871,77 @@ real risk — it means a `package.json` change, a lockfile change, and re-checki
 `vendor-native-deps.mjs` and `verify-pack.mjs`, both of which are written around sharp's platform
 packages — so it has deliberately not been done as part of the rotation change. Treat it as an open
 task, not as dead weight to be swept out in passing.
+
+**The portable variant is a ZIP, and `target: portable` is the trap it avoids.** Both platforms ship
+one: on macOS the `zip` target that has existed since 1.0.0 (a `.app` is relocatable by
+construction, and electron-builder has **no** `portable` target for mac), on Windows a `zip` added
+in 1.9.0 beside the nsis installer. `target: portable` looks like the obvious answer and is
+measurably wrong:
+
+- Its NSIS stub is a **self-extractor**, and `templates/nsis/portable.nsi`'s `RMDir /r $INSTDIR` is
+  **unconditional** — there is no cache at any `unpackDirName`. With `asar: false` that re-extracts
+  404 MB / 1119 files into `%TEMP%` on EVERY launch: 12.3 s to the Electron main process at best,
+  28.5–30.7 s when `extractAppPackage.nsh`'s `CopyFiles` retry ladder fires and it extracts a second
+  time, 875 MB peak `%TEMP%` held for the session. A zip launches in 0.3–0.4 s, same as installed.
+- `UNPACK_DIR_NAME` is a **build-time ksuid** (`NsisTarget.js`: `unpackDirName || ksuid()`), so
+  every launch of one build shares `%TEMP%\<ksuid>` and a second launch's wipe deletes the running
+  instance's tree. Measured: 1111 of 1119 files removed under a live instance.
+  `requestSingleInstanceLock()` is **not** the fix — it only inverts which instance is the victim.
+- The typings are inverted relative to the code: `nsisOptions.d.ts` documents `false` as "per
+  launch", but `unpackDirName || ksuid()` means only a *truthy non-string* reaches `$PLUGINSDIR`.
+- On abnormal exit the `-stay_open` exiftool child still holds handles under `exiftool_files/`, the
+  stub's `RMDir /r` ignores the failure, and 5 MiB to 909 MB strands in `%TEMP%`. `detached: false`
+  creates no job object on Windows, so the child does not die with the parent. **Choosing `zip`
+  removes this whole class**, which is the real reason, not the startup time.
+
+Two schema facts that will cost an hour otherwise. There is **no root `zip:` key** —
+`app-builder-lib/scheme.json` sets `additionalProperties: false` and has properties for `nsis`,
+`dmg` and `portable` but none for `zip`, so a root block is a hard `ValidationError` before
+`doBuild()`. It reads as though it should work because `ArchiveTarget` *does* look up
+`config["zip"]` at runtime. Name the zips through `win.artifactName` / `mac.artifactName` instead —
+and `mac.artifactName` **must** contain `${arch}`, because setting it flips `isUserForced`, which
+disables the "omit `${arch}` for the default arch" rule and would collapse the x64 and arm64 zips
+onto one filename. `scripts/validate-builder-config.mjs` checks the config against that very schema
+in CI, because `ci.yml` never packages and a config error would otherwise first appear on a public
+tag.
+
+Two more things worth knowing rather than rediscovering. The Windows zip is **flat** — 20 top-level
+entries, no wrapper folder, because `ArchiveTarget` hardcodes `withoutDir = !isMac`; that is why the
+release notes say "into an empty folder". And **never build or repack a mac zip on Windows**:
+`packager.js` refuses it outright, and rightly — the bundled `7za` writes every entry with
+`versionMadeBy` = FAT, all Unix mode bits zero, and framework symlinks dereferenced into real files.
+
+**A path override is a dependency EDGE, not a source position.** `src/main/portable.ts` redirects
+`userData` next to the executable in portable mode, and it has to run before electron-store's
+constructor reads that path. `store.ts` builds its `Store` at **module scope**, so the reflex is to
+import the redirect above `index.ts`'s `import './store'` — whose comment even claimed it existed to
+"initialize the store early". That import was **dead**: the store was already reached five lines
+above it via `./ipc-handlers`. ES module imports are hoisted and evaluated depth-first before any
+statement in the importing module runs, so a function exported from `portable.ts` and called from
+`index.ts`'s body could never be early enough either.
+
+So `portable.ts` does its work at module scope, is imported **above `'./ipc-handlers'`**, and
+`store.ts` imports it too — that second import is what makes the ordering a dependency edge an
+import sorter cannot move. Source order is not what decides it, though: the bundler's emission
+order is. `scripts/verify-path-order.mjs` therefore asserts on `out/main/index.js` that the
+`setPath('userData')` offset precedes `new ElectronStore(`, and it is proven to fail: with the
+import moved below
+`./ipc-handlers` the build still succeeds and only that guard catches it. Failure mode without the
+guard is silent — a `session.json` in `%APPDATA%` that nobody looks for.
+
+Portable mode is **opt-in by a marker file** (`portable` or `portable.txt`, because Explorer appends
+`.txt`) beside the exe, or beside the `.app` — never inside the bundle, which is read-only on a DMG
+and under Gatekeeper App Translocation, and where a write would break the ad-hoc signature
+electron-builder applies to arm64. It probes for writability with a real write rather than `W_OK`
+(Windows reports only the read-only *attribute*) and **declines silently** on failure. Declining is
+safe for exactly the reason the rest of this file documents: `userData` holds seven UI preferences
+and disposable Chromium caches, and one of those seven — `lastFolderPath` — is written but never
+read back (`restoreLastFolder` is a hardcoded `false`). Nothing irreplaceable is there, so
+degrading beats failing to start at module scope where no window exists to report an error in.
+
+One consequence for tests: `store.ts` now reaches `electron`, so any suite importing it needs
+`vi.mock('electron', () => ({ app: { isPackaged: false } }))` — the same one-liner seven other
+main-process suites already use.
 
 **Icons are generated, not hand-authored.** `build/icon-source.png` is the master; `pnpm icons`
 (`scripts/make-icons.mjs`) derives `icon.ico`, `icon.icns` and the 512px `icon.png` from it.
@@ -997,15 +1096,35 @@ git push origin v1.3.0
 ```
 
 Pushing a `v*` tag triggers `.github/workflows/build.yml`: `scripts/set-version.mjs` stamps the
-version from `GITHUB_REF_NAME`, then it packages macOS (dmg + zip, x64 + arm64) and Windows (nsis
-x64) and publishes a GitHub Release with the installers attached.
+version from `GITHUB_REF_NAME`, then it packages macOS (dmg + portable zip, x64 + arm64) and Windows
+(nsis + portable zip, x64) and publishes a GitHub Release with all six artifacts attached:
+
+| artifact | what it is |
+|---|---|
+| `…-win-x64-setup.exe` | the installer |
+| `…-win-x64-portable.zip` | the portable variant — flat, unpack into an empty folder |
+| `…-mac-x64.dmg` / `…-mac-arm64.dmg` | the installers |
+| `…-mac-x64-portable.zip` / `…-mac-arm64-portable.zip` | the portable variants |
+
+Each job **asserts each artifact by name** before uploading, because `if-no-files-found: error` only
+fires when the whole path list is empty and so cannot notice one missing file. The globs name the
+artifacts explicitly for the same reason.
 
 `set-version.mjs` also accepts an explicit argument for local testing
 (`node scripts/set-version.mjs 1.3.0`) — but that **modifies the tracked package.json**, so revert
-it before committing.
+it before committing. A `v1.9.0-rc.1`-style tag is a full rehearsal: its SEMVER regex already
+accepts prereleases and the workflow triggers on `v*`.
+
+Worth having here rather than only in the README's Code signing section: the mac builds are **not
+entirely unsigned**. `macPackager.js` computes
+`fallBackToAdhoc = (arch === arm64 || universal) && !forceCodeSigning` and signs with
+`Identity("-")`, so **arm64 is ad-hoc signed** with the hardened runtime and entitlements applied,
+while **x64 is genuinely unsigned** and `hardenedRuntime: true` is inert for it. Do not remove
+`hardenedRuntime` — arm64 needs a signature to execute at all, and this fallback supplies it.
 
 `ci.yml` runs on push/PR to `main` across a macOS + Windows matrix: format:check, lint, typecheck,
-test, build, native-addon guard.
+test, **validate:builder**, build, **verify:path-order**, native-addon guard. The two new steps
+exist because nothing else in CI packages anything — see the portable traps for what each catches.
 
 ## Conventions
 

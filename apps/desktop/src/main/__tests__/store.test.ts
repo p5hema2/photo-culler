@@ -37,6 +37,12 @@ vi.mock('electron-store', () => {
   };
 });
 
+// `store` imports `./portable` for its side effect — that is the dependency edge
+// forcing the userData redirect to be evaluated before `new Store(...)`. Under
+// `isPackaged: false` it declines immediately, which is what we want here: this
+// suite is about the session schema, not about portable mode.
+vi.mock('electron', () => ({ app: { isPackaged: false } }));
+
 // Import after mock is set up
 import { getSession, updateSession } from '../store';
 

@@ -56,7 +56,8 @@ confirmation.
 
 Grab the installer for your platform from the
 [latest release](https://github.com/p5hema2/photo-culler/releases/latest):
-`.exe` for Windows, `-mac-arm64.dmg` for Apple Silicon, `-mac-x64.dmg` for Intel.
+`-setup.exe` for Windows, `-mac-arm64.dmg` for Apple Silicon, `-mac-x64.dmg` for
+Intel. Prefer no installer? See [Portable](#portable--no-installer) below.
 
 **Both platforms will warn you the first time.** The builds carry no code-signing
 certificate — see [Code signing](#code-signing) for why — so the OS has no
@@ -81,6 +82,39 @@ Applications rather than from the disk image:
   ```
 
 You only have to do this once per installed version.
+
+### Portable — no installer
+
+Every release also carries `-portable` files that need no installer and no admin
+rights. Unpack one anywhere, including onto a USB stick, and run it from there.
+The same warnings above apply, and the same clicks get past them.
+
+**Windows.** Unpack `…-win-x64-portable.zip` into an **empty** folder and run
+`Photo Culler.exe`. The zip has no folder of its own, so it will scatter about
+twenty files into whatever folder you point it at. Tip: right-click the `.zip`,
+choose **Properties**, tick **Unblock** and apply — that clears SmartScreen for
+everything inside it in one go.
+
+**macOS.** Unpack `…-mac-arm64-portable.zip` (or `-mac-x64-` on an Intel Mac)
+**on the Mac itself**, then drag `Photo Culler.app` out of the expanded folder
+once before launching it. Both halves matter: unpacking on Windows breaks the app,
+because the bundle contains symlinks that Windows zip tools discard, and the
+single drag is what stops macOS running the app from a temporary read-only copy.
+
+Your culling work is unaffected either way. Quality scores and cached thumbnails
+live beside your photos in `.photo-culler-results.json` and
+`.photo-culler-thumbs/`, and ratings live inside the image files, so a portable
+copy and an installed copy see exactly the same thing. The only thing kept
+elsewhere is a small settings file remembering your view options.
+
+**Keeping the settings in the folder too.** Create an empty file named
+`portable.txt` next to `Photo Culler.exe`, or next to `Photo Culler.app`. With it
+there the app puts its settings and caches in a `photo-culler-data` folder of its
+own instead of in your user profile, so nothing is left behind on a machine you
+only plugged the stick into. **Help → About** prints where the settings actually
+went, so you can check it took effect. It is opt-in on purpose — an ordinary
+unpacked copy keeps the settings it already has — and on a write-protected volume
+the app falls back to the normal location rather than refusing to start.
 
 ### Code signing
 

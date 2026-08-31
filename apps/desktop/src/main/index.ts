@@ -1,13 +1,15 @@
 import { app, BrowserWindow, Menu, dialog } from 'electron';
 import path from 'node:path';
 import type { MenuCommand } from '@photo-culler/types';
+// MUST stay above './ipc-handlers'. It may redirect userData, and that import
+// transitively reaches './store', which constructs electron-store at module
+// scope — and module imports are evaluated before any statement here runs, so
+// nothing in this file's body could be early enough. See ./portable's header.
+import { portableDataDir } from './portable';
 import { registerSchemes, registerProtocolHandlers } from './protocol';
 import { registerIpcHandlers } from './ipc-handlers';
 import { endExifTool } from './exiftool';
 import { settleFileLocks } from './file-lock';
-
-// Ensure store module is initialized early
-import './store';
 
 // Register custom protocol schemes BEFORE app.whenReady()
 registerSchemes();
@@ -79,6 +81,10 @@ async function showAbout(): Promise<void> {
     `Chromium ${process.versions.chrome}`,
     `Node ${process.versions.node}`,
     `${process.platform} ${process.arch}`,
+    '',
+    // Portable mode is opt-in by a marker file and silently declines on a
+    // read-only medium, so it has to be verifiable rather than assumed.
+    `Settings: ${portableDataDir ?? app.getPath('userData')}`,
   ].join('\n');
 
   const options: Electron.MessageBoxOptions = {

@@ -25,6 +25,18 @@ publish: null
 mac:
   icon: build/icon.icns
   category: public.app-category.photography
+  # Names the ZIP, which IS the portable variant — a .app bundle is relocatable by
+  # construction, so there is nothing else to build for it, and electron-builder
+  # has no `portable` target for mac at all. `dmg.artifactName` below wins for the
+  # installer. Note there is NO root `zip:` key in electron-builder's schema
+  # (`additionalProperties: false`, and no `zip` property, though ArchiveTarget
+  # does read config["zip"] at runtime), so a root block is a hard
+  # ValidationError; this platform block is the only place a zip can be named.
+  #
+  # ${arch} is MANDATORY here: setting artifactName flips `isUserForced`, which
+  # disables the "omit ${arch} for the default arch" rule. Without it the x64 and
+  # arm64 zips collide on one filename and CI uploads whichever won the race.
+  artifactName: '${productName}-${version}-mac-${arch}-portable.${ext}'
   target:
     - target: dmg
       arch:
@@ -44,8 +56,27 @@ dmg:
 
 win:
   icon: build/icon.ico
+  # Names the zip; `nsis.artifactName` below overrides it for the installer.
+  artifactName: '${productName}-${version}-win-${arch}-portable.${ext}'
   target:
     - target: nsis
+      arch:
+        - x64
+    # The portable variant. NOT `target: portable` — electron-builder's NSIS
+    # portable stub is a self-extractor whose `RMDir /r $INSTDIR` is
+    # unconditional (templates/nsis/portable.nsi), so with `asar: false` it
+    # re-extracts the whole 404 MB / 1119-file tree into %TEMP% on EVERY launch:
+    # measured 12.3 s to the main process at best, 28.5-30.7 s when its CopyFiles
+    # retry ladder fires, against 0.3-0.4 s from an unpacked tree. It also hands
+    # every launch of one build the same `%TEMP%\<ksuid>` (NsisTarget.js:
+    # `unpackDirName || ksuid()`), so a second launch's wipe deletes the running
+    # instance's files — and a single-instance lock only changes who the victim is.
+    #
+    # A zip pays that cost once, when the user copies it. Same arch as nsis on
+    # purpose: targets are grouped by ARCH, so both share one pack pass, one
+    # appOutDir, one ${os}-${arch} expansion and one afterPack. Adding an ARCH is
+    # what would double them — and would need `vendor:win --target win-arm64` first.
+    - target: zip
       arch:
         - x64
 
