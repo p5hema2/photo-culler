@@ -37,13 +37,35 @@ jobs:
         working-directory: apps/desktop
         run: pnpm package:mac
 
+      # `if-no-files-found: error` only fires when the WHOLE path list is empty,
+      # so it cannot notice one missing artifact. Name each one instead. The
+      # -portable.zip names come from mac.artifactName: without its ${arch} the
+      # two zips would collide on one filename, and the upload would not complain.
+      - name: Assert every macOS artifact exists
+        shell: bash
+        working-directory: apps/desktop/dist
+        run: |
+          fail=0
+          check() {
+            n=$(find . -maxdepth 1 -name "$1" | wc -l)
+            if [ "$n" -ne 1 ]; then
+              echo "::error::expected exactly 1 file matching '$1', found $n"
+              fail=1
+            fi
+          }
+          check '*-mac-x64.dmg'
+          check '*-mac-arm64.dmg'
+          check '*-mac-x64-portable.zip'
+          check '*-mac-arm64-portable.zip'
+          exit $fail
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mac-builds
           path: |
             apps/desktop/dist/*.dmg
-            apps/desktop/dist/*.zip
+            apps/desktop/dist/*-portable.zip
           if-no-files-found: error
 
   build-windows:
@@ -74,11 +96,31 @@ jobs:
         working-directory: apps/desktop
         run: pnpm package:win
 
+      - name: Assert every Windows artifact exists
+        shell: bash
+        working-directory: apps/desktop/dist
+        run: |
+          fail=0
+          check() {
+            n=$(find . -maxdepth 1 -name "$1" | wc -l)
+            if [ "$n" -ne 1 ]; then
+              echo "::error::expected exactly 1 file matching '$1', found $n"
+              fail=1
+            fi
+          }
+          check '*-win-x64-setup.exe'
+          check '*-win-x64-portable.zip'
+          exit $fail
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: win-builds
-          path: apps/desktop/dist/*.exe
+          # Named explicitly rather than globbing *.exe, so a future extra target
+          # cannot ship an artifact under a name nobody chose.
+          path: |
+            apps/desktop/dist/*-win-x64-setup.exe
+            apps/desktop/dist/*-win-x64-portable.zip
           if-no-files-found: error
 
   release:
@@ -104,15 +146,42 @@ jobs:
           body: |
             ### Installing
 
-            **Windows** — SmartScreen will say "Windows protected your PC".
-            Click **More info**, then **Run anyway**.
+            **Windows** — run the `-setup.exe`. SmartScreen will say "Windows
+            protected your PC". Click **More info**, then **Run anyway**.
 
-            **macOS** — drag the app to Applications and launch it from there.
-            Control-click it and choose **Open**; on macOS 15 (Sequoia) and later,
-            let it be blocked once, then allow it under **System Settings →
+            **macOS** — open the `.dmg`, drag the app to Applications and launch it
+            from there. Control-click it and choose **Open**; on macOS 15 (Sequoia)
+            and later, let it be blocked once, then allow it under **System Settings →
             Privacy & Security → Open Anyway**. If macOS calls the app *damaged*,
             that is the download quarantine flag:
             `xattr -dr com.apple.quarantine "/Applications/Photo Culler.app"`.
+
+            ### Portable — no installer
+
+            The `-portable` files need no installer and no admin rights. Unpack one
+            anywhere, including onto a USB stick, and run it from there. The same
+            SmartScreen and Gatekeeper warnings appear, and the same clicks get past
+            them.
+
+            **Windows** — unpack `…-win-x64-portable.zip` into an **empty** folder and
+            run `Photo Culler.exe`. The zip has no folder of its own, so it will
+            scatter about twenty files into whatever folder you point it at.
+
+            **macOS** — unpack `…-mac-arm64-portable.zip` (or `-mac-x64-` on an Intel
+            Mac) **on the Mac itself**, then drag `Photo Culler.app` out of the
+            expanded folder once before launching it. Unpacking it on Windows breaks
+            the app: the bundle contains symlinks that Windows zip tools do not keep.
+
+            Your culling work is already kept beside your photos —
+            `.photo-culler-results.json` and `.photo-culler-thumbs/` live in the photo
+            folders themselves, never in the app's folder, so a portable copy and an
+            installed copy see exactly the same ratings and scores. The one thing
+            stored elsewhere is a small settings file remembering your view options.
+            To keep that inside the app's folder too, create an empty file named
+            `portable.txt` next to `Photo Culler.exe`, or next to `Photo Culler.app`.
+            With it there, the app keeps all of its own data and caches inside its own
+            folder. Check it under **Help → About**, which prints where the settings
+            actually went.
 
             These builds carry no code-signing certificate, which is why the
             warnings appear. See
