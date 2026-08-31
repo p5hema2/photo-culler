@@ -126,14 +126,14 @@ beforeEach(async () => {
 });
 
 describe('renaming one photo', () => {
-  it('renames it to its capture time and keeps the extension case', async () => {
+  it('renames it to its capture time and lower-cases the extension', async () => {
     await makeJpeg(dir, 'P1000001.JPG', CAPTURE);
 
     const { result } = await renameFolder(dir);
 
     expect(result.failed).toBe(0);
     expect(result.renamed).toBe(1);
-    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.JPG`]);
+    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.jpg`]);
   });
 
   it('is idempotent — a second run renames nothing', async () => {
@@ -144,7 +144,7 @@ describe('renaming one photo', () => {
 
     expect(result.renamed).toBe(0);
     expect(plan.counts.unchanged).toBe(1);
-    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.JPG`]);
+    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.jpg`]);
   });
 
   it('leaves a file alone when no rung of the ladder has a plausible date', async () => {
@@ -167,7 +167,37 @@ describe('renaming one photo', () => {
     const { result } = await renameFolder(dir);
 
     expect(result.renamed).toBe(1);
-    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.MP4`]);
+    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.mp4`]);
+  });
+});
+
+describe('a shouting extension on a file that is otherwise correctly named', () => {
+  // The whole path end to end on a REAL case-insensitive filesystem, because
+  // every piece of it had to be told separately: `renameNoReplace` cannot
+  // reserve a destination that IS its source, `assertNoOverlap` must not read
+  // that as a cycle, and the two basename-keyed caches have to follow along.
+  it('renames it, on disk, and keeps the bytes', async () => {
+    const existing = await makeJpeg(dir, `${CAPTURED_AS}.JPG`, CAPTURE);
+    const bytes = await readFile(existing);
+
+    const { result } = await renameFolder(dir);
+
+    expect(result.failed).toBe(0);
+    expect(result.renamed).toBe(1);
+    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.jpg`]);
+    expect(await readFile(path.join(dir, `${CAPTURED_AS}.jpg`))).toEqual(bytes);
+  });
+
+  it('carries the score and the cached thumbnail with it', async () => {
+    const image = await makeJpeg(dir, `${CAPTURED_AS}.JPG`, CAPTURE);
+    await putResults(dir, { [`${CAPTURED_AS}.JPG`]: { qualityScore: 55 } });
+    await mkdir(path.join(dir, THUMBS), { recursive: true });
+    await writeFile(hooks.thumbCachePathOf(image), 'pretend webp');
+
+    await renameFolder(dir);
+
+    expect(await getResults(dir)).toEqual({ [`${CAPTURED_AS}.jpg`]: { qualityScore: 55 } });
+    expect(await namesIn(path.join(dir, THUMBS))).toEqual([`${CAPTURED_AS}.jpg.thumb.webp`]);
   });
 });
 
@@ -182,7 +212,7 @@ describe('the quality score follows the file', () => {
 
     const images = await getResults(dir);
     expect(images['P1000001.JPG']).toBeUndefined();
-    expect(images[`${CAPTURED_AS}.JPG`]).toEqual({
+    expect(images[`${CAPTURED_AS}.jpg`]).toEqual({
       qualityScore: 87,
       qualitySubscores: { sharpness: 90 },
     });
@@ -228,7 +258,7 @@ describe('the cached thumbnail follows the file', () => {
 
     await renameFolder(dir);
 
-    expect(await namesIn(path.join(dir, THUMBS))).toEqual([`${CAPTURED_AS}.JPG.thumb.webp`]);
+    expect(await namesIn(path.join(dir, THUMBS))).toEqual([`${CAPTURED_AS}.jpg.thumb.webp`]);
   });
 
   it('stays fresh, because a rename does not move the source mtime', async () => {
@@ -240,7 +270,7 @@ describe('the cached thumbnail follows the file', () => {
 
     await renameFolder(dir);
 
-    const after = (await stat(path.join(dir, `${CAPTURED_AS}.JPG`))).mtimeMs;
+    const after = (await stat(path.join(dir, `${CAPTURED_AS}.jpg`))).mtimeMs;
     expect(after).toBe(before);
   });
 });
@@ -253,7 +283,7 @@ describe('files the app cannot see travel with the photo', () => {
     const { result } = await renameFolder(dir);
 
     expect(result.failed).toBe(0);
-    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.JPG`, `${CAPTURED_AS}.RW2`]);
+    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.jpg`, `${CAPTURED_AS}.rw2`]);
   });
 
   it('takes a full-name XMP sidecar along', async () => {
@@ -264,9 +294,9 @@ describe('files the app cannot see travel with the photo', () => {
     await renameFolder(dir);
 
     expect(await namesIn(dir)).toEqual([
-      `${CAPTURED_AS}.JPG`,
-      `${CAPTURED_AS}.RW2`,
-      `${CAPTURED_AS}.RW2.xmp`,
+      `${CAPTURED_AS}.jpg`,
+      `${CAPTURED_AS}.rw2`,
+      `${CAPTURED_AS}.rw2.xmp`,
     ]);
   });
 
@@ -277,7 +307,7 @@ describe('files the app cannot see travel with the photo', () => {
     await renameFolder(dir);
 
     // '.' (0x2e) sorts before '2' (0x32), so the twin leads.
-    expect(await namesIn(dir)).toEqual([`._${CAPTURED_AS}.JPG`, `${CAPTURED_AS}.JPG`]);
+    expect(await namesIn(dir)).toEqual([`._${CAPTURED_AS}.jpg`, `${CAPTURED_AS}.jpg`]);
   });
 
   it('does not swallow a file whose stem merely starts the same way', async () => {
@@ -287,7 +317,7 @@ describe('files the app cannot see travel with the photo', () => {
 
     await renameFolder(dir);
 
-    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.JPG`, 'P10000012.txt']);
+    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.jpg`, 'P10000012.txt']);
   });
 
   it('does not drag companions through a rename that is a no-op', async () => {
@@ -310,7 +340,7 @@ describe('files the app cannot see travel with the photo', () => {
 
     const sidecar = plan.entries.find((e) => e.srcName === 'a.1.JPG.xmp');
     expect(sidecar?.companionOf).toBe(path.join(dir, 'a.1.JPG'));
-    expect(sidecar?.targetName).toBe('2025-08-24 15-00-00-000.JPG.xmp');
+    expect(sidecar?.targetName).toBe('2025-08-24 15-00-00-000.jpg.xmp');
   });
 });
 
@@ -330,8 +360,8 @@ describe('nothing is ever overwritten', () => {
     expect(result.failed).toBe(0);
     const names = await namesIn(dir);
     expect(names).toHaveLength(2);
-    expect(names).toContain(`${CAPTURED_AS}.JPG`);
-    expect(names.some((n) => /~[0-9a-f]{4}\.JPG$/.test(n))).toBe(true);
+    expect(names).toContain(`${CAPTURED_AS}.jpg`);
+    expect(names.some((n) => /~[0-9a-f]{4}\.jpg$/.test(n))).toBe(true);
   });
 
   it('does not touch a file that already holds a target name', async () => {
@@ -347,7 +377,7 @@ describe('nothing is ever overwritten', () => {
 
     await renameFolder(dir);
 
-    expect(await readFile(path.join(dir, `${CAPTURED_AS}.JPG`))).toEqual(existingBytes);
+    expect(await readFile(path.join(dir, `${CAPTURED_AS}.jpg`))).toEqual(existingBytes);
   });
 
   it('never plans two files onto one target path', async () => {
@@ -383,8 +413,8 @@ describe('DCIM consolidation', () => {
     expect(await namesIn(dcim)).toEqual([
       '100_PANA',
       '101_PANA',
-      `${CAPTURED_AS}.JPG`,
-      '2025-08-24 15-00-00-000.JPG',
+      `${CAPTURED_AS}.jpg`,
+      '2025-08-24 15-00-00-000.jpg',
     ]);
     expect(await namesIn(path.join(dcim, '100_PANA'))).toEqual([]);
   });
@@ -398,7 +428,7 @@ describe('DCIM consolidation', () => {
     await renameFolder(dcim, { recursive: true, dcim: true });
 
     expect(await getResults(bucket)).toEqual({});
-    expect(await getResults(dcim)).toEqual({ [`${CAPTURED_AS}.JPG`]: { qualityScore: 42 } });
+    expect(await getResults(dcim)).toEqual({ [`${CAPTURED_AS}.jpg`]: { qualityScore: 42 } });
   });
 
   it('carries the thumbnail cache entry across the folder boundary too', async () => {
@@ -410,7 +440,7 @@ describe('DCIM consolidation', () => {
 
     await renameFolder(dcim, { recursive: true, dcim: true });
 
-    expect(await namesIn(path.join(dcim, THUMBS))).toEqual([`${CAPTURED_AS}.JPG.thumb.webp`]);
+    expect(await namesIn(path.join(dcim, THUMBS))).toEqual([`${CAPTURED_AS}.jpg.thumb.webp`]);
   });
 
   it('leaves the structure alone when consolidation is off', async () => {
@@ -420,7 +450,7 @@ describe('DCIM consolidation', () => {
 
     await renameFolder(dcim, { recursive: true, dcim: false });
 
-    expect(await namesIn(bucket)).toEqual([`${CAPTURED_AS}.JPG`]);
+    expect(await namesIn(bucket)).toEqual([`${CAPTURED_AS}.jpg`]);
     expect(await namesIn(dcim)).toEqual(['100_PANA']);
   });
 
@@ -430,7 +460,7 @@ describe('DCIM consolidation', () => {
 
     await renameFolder(dir, { recursive: true, dcim: true });
 
-    expect(await namesIn(deep)).toEqual([`${CAPTURED_AS}.JPG`]);
+    expect(await namesIn(deep)).toEqual([`${CAPTURED_AS}.jpg`]);
   });
 });
 
@@ -455,7 +485,7 @@ describe('scope', () => {
     const result = await executeRename(planned.plan!, hooks);
 
     expect(result.renamed).toBe(1);
-    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.JPG`, 'B.JPG']);
+    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.jpg`, 'B.JPG']);
   });
 
   it('takes a single file’s companions with it', async () => {
@@ -468,7 +498,7 @@ describe('scope', () => {
     });
     await executeRename(planned.plan!, hooks);
 
-    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.JPG`, `${CAPTURED_AS}.RW2`]);
+    expect(await namesIn(dir)).toEqual([`${CAPTURED_AS}.jpg`, `${CAPTURED_AS}.rw2`]);
   });
 
   it('ignores the results file and the thumbnail cache directory', async () => {

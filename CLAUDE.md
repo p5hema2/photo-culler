@@ -198,6 +198,68 @@ for ever and read as unfinished work that is in fact finished. `FolderOwnCounts`
 `isVideoFile` / `isPlayableVideo`. Both pairs are clamped: a thumbnail outlives its image until the
 next vacuum, and 41/40 is a bug report.
 
+**The capture-time ladder is read with exifr for stills and exiftool ONLY for videos, and that is
+a 38x difference.** Measured on the user's 22 108-file archive:
+
+| reader | ms per file |
+|---|---|
+| exiftool, one round trip per file through the `-stay_open` child | 28.55 |
+| exiftool, 200 files per invocation with `-@` the way H:\rename-by-date does | 28.5 |
+| exifr | **0.63** (cold: 0.87 over 1000 files never read) |
+
+The batching row is the one that matters: it rules out the round trip as the cost. It is exiftool
+itself. Planning a 1000-file bucket went from 33 s to 0.87 s, which is what made a folder-wide
+preview usable at all.
+
+Two things make the swap safe rather than merely fast:
+
+- **exifr has no composite tags.** exiftool's `SubSecDateTimeOriginal` is `DateTimeOriginal` with
+  `SubSecTimeOriginal` glued on; `captureLadderFromTags` does the gluing. Verified against exiftool
+  over 550 real files across three shoots — every name identical, zero deviations. That check is
+  the whole licence for this: a file's name must not depend on which reader ran.
+- **A video still goes the slow way.** `MediaCreateDate` lives in an MP4's `moov` atom and exifr
+  does not read one. 274 videos against 21 747 stills, so the slow path is 1.2% of the work — but
+  note that starting the `-stay_open` child costs seconds, so a folder with a handful of videos
+  pays that once and looks disproportionately slow for its size.
+
+`FileModifyDate` is not an EXIF tag and is spliced in from the mtime for BOTH paths
+(`fileModifyDateTag`), in LOCAL wall clock because that is what exiftool prints and the two readers
+have to agree. It is the rung that named three all-zero MP4s in the real archive: a file with no
+metadata at all still has an mtime.
+
+**The content-key cache is cleared per plan, not kept for the session.** The planner asks for BOTH
+sides of every name collision, and one file sitting on a target name can be the holder for several
+groups, so without memoisation it is re-read once per collision. On a real DCIM holding 3044
+duplicate names that hashing was 79 of the 90 seconds the plan took. It is cleared at the start of
+each plan because a path is NOT a stable identity for content here — `rotateImage` rewrites a
+file's bytes under an unchanged path — and within one plan nothing writes, so it cannot go stale.
+
+**A per-folder counter must measure against what is POSSIBLE, and its two inputs are DISJOINT.**
+`thumbsOnDisk` is a snapshot taken when the folder opened; `onThumbnailGenerated` fires only for a
+NEWLY generated thumbnail, because a disk-cache hit returns before reaching it. So they are summed.
+1.8.1 combined them with `Math.max` on the mistaken reasoning that a thumbnail generated this
+session was "already in the on-disk count" — it is not, that count never moves after the open. A
+folder holding 600 thumbnails that then generated 900 more read `max(600, 900) = 900` of 1500 and
+never reached its total.
+
+What gave it away is worth remembering: the SCORE counter was right and the THUMBS counter was not.
+Scores are derived from `qualityScores`, a live map; thumbnails from a snapshot plus a delta. When
+two counters over the same set disagree, suspect the one reading a snapshot. And note the trap that
+hid it in testing: on a folder's FIRST visit `thumbsOnDisk` is empty, and `max(0, N) = N` is
+correct by accident.
+
+**A video that fails to decode is told apart from one with no decoder.** Both get a film-strip tile,
+but a PLAYABLE container that still failed is a BROKEN FILE and says so in red. Found the hard way:
+three MP4s in the 22 108-file archive were 170 MB of pure zero bytes — a camera or a copy that never
+flushed — and they looked exactly like an unsupported container. Derived in `ThumbnailCell` from
+`isPlayableVideo` plus the error state rather than stored, so there is no third cache state to keep
+honest.
+
+Worth knowing for diagnosis: **the thumbnail cache is a de-facto integrity check over the archive.**
+Every file with a cache entry decoded successfully at least once. Comparing media files against
+cache entries per directory found exactly 3 missing out of 22 002 — and all three were those
+zero-byte MP4s.
+
 **Renaming during a scan is allowed, and the mechanism is a REMAP rather than a wait.** Up to 1.8.0
 `planRename` refused while `isScanIncomplete`, because the deferred metadata pass re-reads BY PATH
 and `readImageMetadata` answers a miss with `{}` — so a renamed image silently lost its date, its
@@ -360,6 +422,55 @@ remembers), fractional seconds pad on the RIGHT (`.5` is 500 ms), the tag ladder
 rung DIRECTLY above its plain sibling (the original shell script had those swapped and threw away
 milliseconds), and anything outside 1990-2100 is refused rather than named — exiftool prints
 `0000:00:00 00:00:00` for an empty tag and a reset camera clock reports 1970.
+
+**The extension is lower-cased, and that is the one place this DIVERGES from the Perl.** The Perl
+reattaches `$m->{ext}` verbatim (`rename-by-date.pl:466`; its `lc` on line 454 is only the
+case-insensitive `%taken` lookup, the same thing `ns` does here), so a card full of `.JPG` stays
+shouting. Requested, and it costs nothing the contract covers — the 937-input differential pins the
+STEM, `parse_stamp` and `stamp_epoch`, and never sees an extension. `targetExtension` in `naming.ts`
+is the single place that decides it, applied to the member's own extension AND to a companion's whole
+dotted tail, because `2025-… .jpg` beside `2025-… .ARW` is the inconsistency worth avoiding. Note it
+applies to a MOVE too: a move generates a name as much as a rename does, it just takes the stem from
+the file instead of the clock.
+
+**A pure case change is a REAL rename, and three separate places had to learn it.** This is the trap
+the lower-cased extension brought with it, and its symptom was the worst kind: a folder whose files
+were *already correctly named* — i.e. every run after the first — threw the entire plan away with
+`rename plan has a cycle through …` and showed the user no preview at all.
+
+- **`assertNoOverlap` compares paths case-INSENSITIVELY, and must keep doing so** — on NTFS and
+  exFAT two names differing only in case are one file, so a rename onto the other really would
+  overwrite. But its `targets` had to become a `Map` from lower-cased target to *claiming source*:
+  a target claimed by a file's OWN source is one file turning into itself, safe in any order, while
+  a target claimed by a DIFFERENT source is the cycle the check exists for. With a `Set` the two are
+  indistinguishable.
+- **`renameNoReplace` asks the FILESYSTEM whether the occupant is its own source**, not the two
+  strings. The reservation `open(dest, 'wx')` reports EEXIST against the very file being renamed, and
+  a name comparison cannot tell that from "a different file happens to differ only in case" — which
+  on a case-SENSITIVE volume is real, and treating it as benign would let `fs.rename` overwrite a
+  photo silently. `isSameFile` compares `ino` + `dev`; measured on this NTFS, `X.JPG` and `x.jpg`
+  report an identical non-zero `ino`. The rollback `unlink(dest)` is then gated on whether WE
+  reserved the name, because for a case-only rename the file sitting there is the user's photo.
+- **The planner's own "already sits there" checks were already right**, and only because they compare
+  the `ns` holder against the real `source.path` rather than comparing names. Worth knowing before
+  someone "simplifies" either of those two lines into a name comparison.
+
+- **`withFileLock` case-folds its key**, because "per path" has to mean per FILE and there are now
+  routinely two live spellings of one — the pre-rename `IMG_1.JPG` a thumbnail read is still holding
+  and the `IMG_1.jpg` the next operation asks for. Two chains over one file would let a read run
+  straight into exiftool's rename-over-the-original. On a case-sensitive volume two different files
+  then share a chain, which costs parallelism and nothing else.
+
+Both basename-keyed caches survive it unchanged: the results re-key and `moveThumbCache` are handed
+the actual old and new names, and a plain `rename` between two case-variants is legal. `rename.test.ts`
+covers the end-to-end case on a real filesystem in both packages — pure logic in `image-utils`, real
+NTFS in `apps/desktop` — because the interesting half is what the filesystem does.
+
+One consequence to expect rather than debug: the collision path may hash a target path whose file does
+not exist yet, because `allocate` seeds `ns` with the NEW path for a case-only rename. On the shipped
+platforms that path resolves to the same file, so duplicate detection stays correct; on a
+case-sensitive volume `computeContentKey`'s catch returns a path-derived key, and a byte-identical
+newcomer gets a `~hash` suffix instead of being reported 'duplicate'. A suffix, not a loss.
 
 Collisions take a **content-hash suffix, never a counter**. Straight from the Perl, and it applies
 here twice over: a counter is handed out in directory-listing order — the filesystem's, name-ordered

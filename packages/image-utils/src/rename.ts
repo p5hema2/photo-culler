@@ -21,6 +21,7 @@ import type {
 import {
   nameFromTags,
   splitBasename,
+  targetExtension,
   validateComponent,
   type TimestampTag,
   type TimestampTags,
@@ -173,7 +174,7 @@ export async function planRenames(
 }
 
 /**
- * Move files into `targetFolder`, keeping every basename.
+ * Move files into `targetFolder`, keeping every STEM.
  *
  * Shares everything below the name with `planRenames` — the namespace
  * allocation, the collision suffix, the companion pass, the post-condition —
@@ -181,9 +182,12 @@ export async function planRenames(
  * copy of them is a second thing to get wrong. The ONLY difference is where the
  * base name comes from: the clock, or the file's own stem.
  *
- * A file already in `targetFolder` comes out 'unchanged' rather than being
- * moved onto itself, so dropping a mixed selection onto the folder half of it
- * already lives in moves only the half that has somewhere to go.
+ * The stem, not the whole basename: `targetExtension` applies here too, because
+ * it lives in `planWith` above the split. So `IMG_1.JPG` arrives as
+ * `IMG_1.jpg`, and a file ALREADY in `targetFolder` comes out 'unchanged' only
+ * once its extension is already lower case — otherwise it is a case-only
+ * rename, and dropping a mixed selection onto the folder half of it lives in
+ * moves that half and quietly fixes the other half's extension.
  */
 export async function planMoves(
   sources: readonly RenameSource[],
@@ -252,7 +256,11 @@ async function planWith(
       ({ key, stem, srcFolder: source.folder, targetFolder, members: [] } as Group);
     group.members.push({
       source,
-      ext,
+      // Lower-cased HERE, once, because every target name downstream is built
+      // from `member.ext` — the collision candidate and the allocated name
+      // both — and the two must not be able to disagree. The collision lookup
+      // is unaffected either way: `ns` is keyed lower case.
+      ext: targetExtension(ext),
       stamp: found
         ? { name: found.stamp.name, epoch: found.stamp.epoch, ms: found.stamp.ms, tag: found.tag }
         : null,
@@ -359,13 +367,15 @@ async function planWith(
 
     // --- 4. Whatever travels with the photo ---------------------------------
     // Only when something actually moved: a folder already correctly named must
-    // not drag its sidecars through a no-op rename.
+    // not drag its sidecars through a no-op rename. Note that a case-only
+    // rename DOES count as movement, and should — the sidecar's extension needs
+    // the same treatment, or the pair comes out spelled two different ways.
     if (!companions || !groupRenames) continue;
 
     for (const found of companionsOf(group, listing, sourcePaths, stemsByFolder)) {
       const entry = allocate(
         { path: found.path, folder: group.srcFolder, name: found.name, tags: {} },
-        found.prefix + stemName + found.tail,
+        found.prefix + stemName + targetExtension(found.tail),
         group.targetFolder,
         ns,
         {
@@ -487,7 +497,10 @@ interface Companion {
   name: string;
   /** `'._'` for an AppleDouble twin, empty otherwise. Re-attached verbatim. */
   prefix: string;
-  /** Everything after the stem, e.g. `.ARW`, `.ARW.xmp`. Re-attached verbatim. */
+  /**
+   * Everything after the stem, e.g. `.ARW`, `.ARW.xmp` — nothing but extension,
+   * which is why `targetExtension` may lower-case the whole of it.
+   */
   tail: string;
   kind: RenameCompanionKind;
 }
@@ -554,24 +567,48 @@ function companionsOf(
  */
 function assertNoOverlap(entries: readonly RenamePlanEntry[]): void {
   const moving = entries.filter((e) => e.action === 'rename');
-  const targets = new Set<string>();
+
+  /**
+   * Lower-cased target path -> the source that claims it.
+   *
+   * A MAP rather than a set, and that is the whole of what makes a lower-cased
+   * extension survivable. Comparison has to stay case-INSENSITIVE, because on
+   * NTFS and exFAT two names differing only in case are one file and a rename
+   * onto the other really would overwrite. But a file that is already correctly
+   * named and only shouts its extension has a target that IS its own source
+   * under that comparison — one file turning into itself, safe in any order and
+   * carried out by `renameNoReplace`'s `caseOnly` branch. Only a target claimed
+   * by a DIFFERENT source is a violation.
+   *
+   * With a set it was not distinguishable, so a single `2025-… .JPG` sitting in
+   * the folder threw the whole plan away with "has a cycle" and the user got no
+   * preview at all — on the second run over a library, which is exactly when
+   * every file is already correctly named.
+   */
+  const targets = new Map<string, string>();
 
   for (const entry of moving) {
     const key = entry.targetPath.toLowerCase();
     if (targets.has(key)) {
       throw new Error(`rename plan is not injective: two files target ${entry.targetPath}`);
     }
-    targets.add(key);
+    targets.set(key, entry.src);
   }
+
+  /** Is some OTHER file's target sitting on this path? */
+  const claimedByOther = (src: string): boolean => {
+    const claimant = targets.get(src.toLowerCase());
+    return claimant !== undefined && claimant !== src;
+  };
 
   for (const entry of entries) {
     if (entry.action === 'rename') continue;
-    if (targets.has(entry.src.toLowerCase())) {
+    if (claimedByOther(entry.src)) {
       throw new Error(`rename plan would overwrite a file it leaves in place: ${entry.src}`);
     }
   }
   for (const entry of moving) {
-    if (targets.has(entry.src.toLowerCase())) {
+    if (claimedByOther(entry.src)) {
       throw new Error(`rename plan has a cycle through ${entry.src}`);
     }
   }

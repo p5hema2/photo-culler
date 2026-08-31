@@ -44,8 +44,16 @@ interface RenamePanelProps {
   onClose: () => void;
 }
 
-/** Rows shown before the list is cut off. */
-const PREVIEW_ROWS = 200;
+/**
+ * Rows of the sample list.
+ *
+ * Deliberately short. A folder-wide rename is thousands of files and nobody
+ * reads a list that long — what the user actually needs before committing is
+ * the RULES: what the name will be, what happens when two files want the same
+ * one, and what gets left alone. Those are stated above the list. This is a
+ * spot check that the rules are doing what they say.
+ */
+const PREVIEW_ROWS = 12;
 
 const ACTION_LABEL: Record<RenamePlanEntry['action'], string> = {
   rename: 'wird umbenannt',
@@ -220,7 +228,7 @@ export function RenamePanel({
             <p className="text-xs text-gray-500 mb-4">
               {scopeLabel}
               {isMove ? (
-                <> · Namen bleiben; nur bei Konflikt kommt ein Inhalts-Suffix dazu</>
+                <> · Namen bleiben bis auf die Endung; ein Suffix nur bei Konflikt</>
               ) : (
                 <>
                   {' '}
@@ -249,6 +257,61 @@ export function RenamePanel({
                 </span>
               </label>
             )}
+
+            {/*
+              What the operation will do, stated rather than enumerated. Visible
+              immediately, including while the plan is still being computed, so
+              the wait is spent reading something useful.
+            */}
+            <dl className="mb-4 space-y-1.5 rounded border border-gray-700 bg-gray-900/40 p-3 text-xs">
+              {!isMove && (
+                <div className="flex gap-2">
+                  <dt className="w-32 flex-shrink-0 text-gray-500">Name</dt>
+                  <dd className="text-gray-300">
+                    <span className="font-mono">2026-05-16 02-16-29-820.jpg</span> — Aufnahmezeit
+                    mit Millisekunden.
+                  </dd>
+                </div>
+              )}
+              {/*
+                Stated for a move as well as a rename, because a move generates
+                a name too — it just takes the stem from the file instead of the
+                clock — and this is the only part of the name it changes.
+              */}
+              <div className="flex gap-2">
+                <dt className="w-32 flex-shrink-0 text-gray-500">Endung</dt>
+                <dd className="text-gray-300">
+                  Wird kleingeschrieben: <span className="font-mono">.JPG</span> →{' '}
+                  <span className="font-mono">.jpg</span>, und ebenso bei RAW und Sidecar. Eine
+                  Datei, die sonst schon richtig heißt, wird dafür umbenannt — das ist die eine
+                  Änderung, die auch ein zweiter Durchlauf noch vornimmt.
+                </dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-32 flex-shrink-0 text-gray-500">Namenskonflikt</dt>
+                <dd className="text-gray-300">
+                  Vier Zeichen aus einem Inhalts-Hash dazu:{' '}
+                  <span className="font-mono">…-820~a3f1.jpg</span>. Bewusst <em>kein</em> laufender
+                  Zähler — ein Zähler rutscht nach, wenn eine Datei gelöscht wird, und dann erbt ein
+                  Foto das Urteil eines anderen. Der Hash hängt nur am Inhalt.
+                </dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-32 flex-shrink-0 text-gray-500">Nie überschrieben</dt>
+                <dd className="text-gray-300">
+                  Ist der Zielname schon von einer <em>inhaltsgleichen</em> Datei belegt, bleibt die
+                  Datei liegen und wird unten aufgeführt.
+                  {!isMove && ' Ohne brauchbaren Zeitstempel wird sie nicht angefasst.'}
+                </dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-32 flex-shrink-0 text-gray-500">Kommt mit</dt>
+                <dd className="text-gray-300">
+                  RAW, XMP-Sidecar und macOS-Zwilling mit gleichem Stamm — sonst zerreißt das Paar.
+                  Bewertungen und Qualitäts-Scores wandern mit.
+                </dd>
+              </div>
+            </dl>
 
             {isPlanning && (
               <p className="text-sm text-gray-400 mb-4" data-testid="rename-planning">
@@ -315,7 +378,7 @@ export function RenamePanel({
                   )}
                   {moving.length > PREVIEW_ROWS && (
                     <p className="px-2 py-1 text-[11px] text-gray-500">
-                      … und {moving.length - PREVIEW_ROWS} weitere
+                      … und {moving.length - PREVIEW_ROWS} weitere, nach denselben Regeln
                     </p>
                   )}
                 </div>

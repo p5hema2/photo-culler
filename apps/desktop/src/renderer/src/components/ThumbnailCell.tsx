@@ -148,14 +148,22 @@ export function ThumbnailCell({
   // clicked anyway; where they can, they are the affordance.
   const showStars = !isVideo && (stars.interactive || (rating ?? 0) > 0);
   /**
-   * A video the app lists but cannot draw a frame from.
+   * A video the app lists but cannot draw a frame from — and WHY.
    *
-   * Either the container has no decoder here (AVI, MKV, MTS, M2TS, 3GP — see
-   * PLAYABLE_VIDEO_EXTENSIONS) or the decode failed. Both get the same tile,
-   * because both mean the same thing to the user: the file is there, it can be
-   * renamed and deleted, there is just no picture.
+   * The two reasons are worth telling apart, which is the whole point of
+   * deriving this rather than storing one 'error' state: a container with no
+   * decoder here (AVI, MKV, MTS, M2TS, 3GP — see PLAYABLE_VIDEO_EXTENSIONS) is
+   * a limitation the user can do nothing about and need not worry about. A
+   * PLAYABLE container that still failed to decode is a broken file, and that
+   * is something they want to know.
+   *
+   * Found the hard way: three MP4s in a 22 000-file archive turned out to be
+   * 170 MB of pure zero bytes — a camera or a copy that never flushed. They
+   * looked exactly like an unsupported container.
    */
-  const videoWithoutPoster = isVideo && (thumbnail === 'error' || !isPlayableVideo(image.name));
+  const playable = isVideo && isPlayableVideo(image.name);
+  const videoWithoutPoster = isVideo && (thumbnail === 'error' || !playable);
+  const videoBroken = playable && thumbnail === 'error';
 
   return (
     <div
@@ -214,7 +222,7 @@ export function ThumbnailCell({
             data-testid="thumbnail-video-placeholder"
           >
             <svg
-              className="w-8 h-8 text-gray-500"
+              className={`h-8 w-8 ${videoBroken ? 'text-red-500/70' : 'text-gray-500'}`}
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -228,9 +236,21 @@ export function ThumbnailCell({
               <line x1="17" y1="9.5" x2="21.5" y2="9.5" />
               <line x1="17" y1="14.5" x2="21.5" y2="14.5" />
             </svg>
-            <span className="text-[10px] font-mono uppercase tracking-wide text-gray-400">
+            <span
+              className={`font-mono text-[10px] uppercase tracking-wide ${
+                videoBroken ? 'text-red-400' : 'text-gray-400'
+              }`}
+            >
               {extensionOf(image.name)}
             </span>
+            {videoBroken && (
+              <span
+                className="text-[9px] normal-case text-red-400"
+                data-testid="thumbnail-video-broken"
+              >
+                nicht lesbar
+              </span>
+            )}
           </div>
         )}
         {thumbnail === 'error' && !isVideo && (

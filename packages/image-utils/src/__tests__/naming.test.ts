@@ -6,6 +6,7 @@ import {
   nameFromTags,
   validateComponent,
   splitBasename,
+  targetExtension,
 } from '../naming';
 import { PERL_GOLDEN } from './fixtures/naming-golden';
 
@@ -197,7 +198,9 @@ describe('validateComponent', () => {
 });
 
 describe('splitBasename', () => {
-  it('preserves the extension case', () => {
+  it('reports the extension as the file spells it', () => {
+    // A pure split — it reads a SOURCE name. Deciding what a generated name
+    // does with the case is `targetExtension`'s job, below.
     expect(splitBasename('P1000001.JPG')).toEqual({ stem: 'P1000001', ext: 'JPG' });
   });
 
@@ -213,5 +216,25 @@ describe('splitBasename', () => {
     // Not a case we generate, but the allocator must not turn ".hidden" into
     // an extension-only name.
     expect(splitBasename('.hidden')).toEqual({ stem: '', ext: 'hidden' });
+  });
+});
+
+describe('targetExtension', () => {
+  it('lower-cases a bare extension', () => {
+    expect(targetExtension('JPG')).toBe('jpg');
+  });
+
+  it('lower-cases a whole dotted tail, which is what a sidecar carries', () => {
+    // `IMG_1.ARW.xmp` reaches the planner as stem `IMG_1` plus this tail, so
+    // both halves have to come out quiet or the pair reads inconsistently.
+    expect(targetExtension('.ARW.xmp')).toBe('.arw.xmp');
+  });
+
+  it('leaves an already lower-case extension alone', () => {
+    expect(targetExtension('mov')).toBe('mov');
+  });
+
+  it('has nothing to do for a file with no extension', () => {
+    expect(targetExtension('')).toBe('');
   });
 });

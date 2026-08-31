@@ -28,10 +28,12 @@ Built with Electron, React, TypeScript, and Tailwind CSS.
   the cursor
 - **Folder operations** — right-click a folder to create a subfolder or delete it (with a
   confirmation that counts what is really in there, RAW files and sidecars included)
-- **Move files** — drag a selection onto a folder, or right-click and pick a target. Names are kept;
-  only a genuine collision adds a content suffix, and nothing is ever overwritten
+- **Move files** — drag a selection onto a folder, or right-click and pick a target. Names are kept
+  apart from the extension, which is lower-cased; only a genuine collision adds a content suffix,
+  and nothing is ever overwritten
 - **Rename by capture time** — right-click a photo or a folder header to rename to
-  `YYYY-MM-DD HH-MM-SS-fff`, the same format `rename-by-date` produces, with a preview of every
+  `YYYY-MM-DD HH-MM-SS-fff`, the same stem format `rename-by-date` produces (the extension is
+  lower-cased here, which is the one place the two differ), with a preview of every
   move before anything happens. The RAW, the XMP sidecar and the macOS twin beside a photo come with
   it, and quality scores and cached thumbnails follow the new names. Camera bucket folders under
   `DCIM` can be merged into `DCIM` in the same pass — the only change it ever makes to your folders

@@ -16,6 +16,25 @@
 const chains = new Map<string, Promise<unknown>>();
 
 /**
+ * The lock's key: the path, case-folded.
+ *
+ * Because "per path" has to mean per FILE, and since the renamer lower-cases
+ * extensions there are routinely two live spellings of one file — the pre-rename
+ * `IMG_1.JPG` a thumbnail read is still holding, and the `IMG_1.jpg` the next
+ * operation asks for. On NTFS and on APFS those are one file, and two separate
+ * chains over it would let a read run straight into exiftool's
+ * rename-over-the-original, which is the exact collision this module exists to
+ * prevent.
+ *
+ * On a case-SENSITIVE volume two different files then share a chain. That costs
+ * a little parallelism between those two files and nothing else — the safe
+ * direction, and the only one available without a `stat` per lock acquisition.
+ */
+function lockKey(filePath: string): string {
+  return filePath.toLowerCase();
+}
+
+/**
  * Run `fn` with exclusive access to `filePath`.
  *
  * The chain is per path and self-cleaning: the map entry is dropped once the
@@ -23,13 +42,14 @@ const chains = new Map<string, Promise<unknown>>();
  * promises behind.
  */
 export function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
-  const previous = chains.get(filePath) ?? Promise.resolve();
+  const key = lockKey(filePath);
+  const previous = chains.get(key) ?? Promise.resolve();
   // `.then(fn, fn)`: a failed predecessor must not cancel the queue behind it.
   const result = previous.then(fn, fn);
   const chain = result.catch(() => undefined);
-  chains.set(filePath, chain);
+  chains.set(key, chain);
   void chain.then(() => {
-    if (chains.get(filePath) === chain) chains.delete(filePath);
+    if (chains.get(key) === chain) chains.delete(key);
   });
   return result;
 }

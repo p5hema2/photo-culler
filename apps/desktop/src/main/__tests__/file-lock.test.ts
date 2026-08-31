@@ -99,4 +99,25 @@ describe('withFileLock', () => {
   it('settleFileLocks resolves when nothing is queued', async () => {
     await expect(settleFileLocks()).resolves.toBeUndefined();
   });
+
+  it('treats two spellings of one path as one file', async () => {
+    // Not hypothetical: the renamer lower-cases extensions, so a thumbnail read
+    // still holding `IMG_1.JPG` and the write that follows on `IMG_1.jpg` are
+    // the same file on NTFS. Two chains over it would let a read run into
+    // exiftool's rename-over-the-original.
+    const order: string[] = [];
+    const gate = deferred();
+
+    const first = withFileLock('/photos/IMG_1.JPG', async () => {
+      await gate.promise;
+      order.push('first');
+    });
+    const second = withFileLock('/photos/IMG_1.jpg', async () => {
+      order.push('second');
+    });
+
+    gate.resolve();
+    await Promise.all([first, second]);
+    expect(order).toEqual(['first', 'second']);
+  });
 });

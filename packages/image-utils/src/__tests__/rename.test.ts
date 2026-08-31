@@ -101,20 +101,20 @@ describe('joinPath', () => {
 });
 
 describe('planRenames — the basic rename', () => {
-  it('renames to the capture time and keeps the extension case', () => {
+  it('renames to the capture time and lower-cases the extension', () => {
     const s = [src('/d/P1000001.JPG', DATE('2025:08:24 14:30:12'))];
     return planRenames(s, opts(['/d/P1000001.JPG'])).then((plan) => {
       expect(plan.entries[0]).toMatchObject({
         action: 'rename',
-        targetName: '2025-08-24 14-30-12-000.JPG',
-        targetPath: '/d/2025-08-24 14-30-12-000.JPG',
+        targetName: '2025-08-24 14-30-12-000.jpg',
+        targetPath: '/d/2025-08-24 14-30-12-000.jpg',
         tag: 'DateTimeOriginal',
       });
     });
   });
 
   it('reports a file that already has its correct name as unchanged', async () => {
-    const path = '/d/2025-08-24 14-30-12-000.JPG';
+    const path = '/d/2025-08-24 14-30-12-000.jpg';
     const plan = await planRenames([src(path, DATE('2025:08:24 14:30:12'))], opts([path]));
     expect(plan.entries[0]!.action).toBe('unchanged');
     expect(plan.counts.rename).toBe(0);
@@ -148,7 +148,7 @@ describe('planRenames — the basic rename', () => {
       [src('/d/C0001.MP4', { MediaCreateDate: '2025:08:24 15:00:00' })],
       opts(['/d/C0001.MP4']),
     );
-    expect(plan.entries[0]!.targetName).toBe('2025-08-24 15-00-00-000.MP4');
+    expect(plan.entries[0]!.targetName).toBe('2025-08-24 15-00-00-000.mp4');
   });
 
   it('returns entries in the caller order, not the allocation order', async () => {
@@ -161,6 +161,57 @@ describe('planRenames — the basic rename', () => {
   });
 });
 
+describe('planRenames — extension case', () => {
+  it('lower-cases an extension that is already correctly stemmed', async () => {
+    // The regression that made this worth a test block of its own. A pure case
+    // change is a target that, compared case-insensitively, IS its own source —
+    // and `assertNoOverlap` used to read that as a cycle and THROW, so one
+    // already-renamed `.JPG` anywhere in a folder discarded the entire plan.
+    // Which is the second run over a library, i.e. every run after the first.
+    const path = '/d/2025-08-24 14-30-12-000.JPG';
+    const plan = await planRenames([src(path, DATE('2025:08:24 14:30:12'))], opts([path]));
+    expect(plan.entries[0]).toMatchObject({
+      action: 'rename',
+      targetName: '2025-08-24 14-30-12-000.jpg',
+    });
+    expect(plan.counts.rename).toBe(1);
+    // And NOT via the collision path: the file holding the name is itself.
+    expect(plan.entries[0]!.targetName).not.toContain('~');
+  });
+
+  it('does not read a pure case change as a cycle, even with companions', async () => {
+    const jpg = '/d/2025-08-24 14-30-12-000.JPG';
+    const raw = '/d/2025-08-24 14-30-12-000.ARW';
+    const xmp = '/d/2025-08-24 14-30-12-000.ARW.xmp';
+    const plan = await planRenames([src(jpg, DATE('2025:08:24 14:30:12'))], opts([jpg, raw, xmp]));
+    expect(plan.entries.map((e) => e.targetName)).toEqual([
+      '2025-08-24 14-30-12-000.jpg',
+      '2025-08-24 14-30-12-000.arw',
+      '2025-08-24 14-30-12-000.arw.xmp',
+    ]);
+  });
+
+  it('lower-cases what travels with the photo, or the pair reads inconsistently', async () => {
+    const jpg = '/d/P1000001.JPG';
+    const plan = await planRenames(
+      [src(jpg, DATE('2025:08:24 14:30:12'))],
+      opts([jpg, '/d/P1000001.ARW', '/d/P1000001.ARW.xmp', '/d/._P1000001.JPG']),
+    );
+    expect(plan.entries.map((e) => e.targetName).sort()).toEqual([
+      '._2025-08-24 14-30-12-000.jpg',
+      '2025-08-24 14-30-12-000.arw',
+      '2025-08-24 14-30-12-000.arw.xmp',
+      '2025-08-24 14-30-12-000.jpg',
+    ]);
+  });
+
+  it('leaves a lower-case extension alone', async () => {
+    const path = '/d/2025-08-24 14-30-12-000.jpg';
+    const plan = await planRenames([src(path, DATE('2025:08:24 14:30:12'))], opts([path]));
+    expect(plan.entries[0]!.action).toBe('unchanged');
+  });
+});
+
 describe('planRenames — RAW + JPEG pairs', () => {
   it('gives both members the same base name', async () => {
     const paths = ['/d/P1000001.JPG', '/d/P1000001.RW2'];
@@ -169,7 +220,7 @@ describe('planRenames — RAW + JPEG pairs', () => {
       opts(paths),
     );
     const names = plan.entries.map((e) => e.targetName);
-    expect(names).toEqual(['2025-08-24 14-30-12-000.JPG', '2025-08-24 14-30-12-000.RW2']);
+    expect(names).toEqual(['2025-08-24 14-30-12-000.jpg', '2025-08-24 14-30-12-000.rw2']);
   });
 
   it('names the pair from its dated member when the other has no date', async () => {
@@ -181,8 +232,8 @@ describe('planRenames — RAW + JPEG pairs', () => {
       opts(paths),
     );
     expect(plan.entries.map((e) => e.targetName)).toEqual([
-      '2025-08-24 14-30-12-000.JPG',
-      '2025-08-24 14-30-12-000.RW2',
+      '2025-08-24 14-30-12-000.jpg',
+      '2025-08-24 14-30-12-000.rw2',
     ]);
     expect(plan.counts['no-date']).toBe(0);
   });
@@ -202,7 +253,7 @@ describe('planRenames — RAW + JPEG pairs', () => {
       ],
       opts(paths),
     );
-    expect(plan.entries[0]!.targetName).toBe('2025-08-24 14-30-12-900.JPG');
+    expect(plan.entries[0]!.targetName).toBe('2025-08-24 14-30-12-900.jpg');
   });
 
   it('gives both members the SAME collision suffix', async () => {
@@ -213,7 +264,7 @@ describe('planRenames — RAW + JPEG pairs', () => {
       opts([...paths, occupied], { contentKey: keyer({ [paths[0]!]: 'abcdef01' }) }),
     );
     const names = plan.entries.map((e) => e.targetName);
-    expect(names).toEqual(['2025-08-24 14-30-12-000~abcd.JPG', '2025-08-24 14-30-12-000~abcd.RW2']);
+    expect(names).toEqual(['2025-08-24 14-30-12-000~abcd.jpg', '2025-08-24 14-30-12-000~abcd.rw2']);
   });
 });
 
@@ -225,7 +276,7 @@ describe('planRenames — collisions', () => {
       [src(mine, DATE('2025:08:24 14:30:12'))],
       opts([mine, occupied], { contentKey: keyer({ [mine]: 'deadbeef', [occupied]: 'other' }) }),
     );
-    expect(plan.entries[0]!.targetName).toBe('2025-08-24 14-30-12-000~dead.JPG');
+    expect(plan.entries[0]!.targetName).toBe('2025-08-24 14-30-12-000~dead.jpg');
   });
 
   it('leaves a byte-identical duplicate where it is rather than deleting it', async () => {
@@ -261,7 +312,7 @@ describe('planRenames — collisions', () => {
     );
     const names = plan.entries.map((e) => e.targetName);
     expect(new Set(names).size).toBe(2);
-    expect(names).toContain('2025-08-24 14-30-12-000.JPG');
+    expect(names).toContain('2025-08-24 14-30-12-000.jpg');
     expect(names.some((n) => n.includes('~'))).toBe(true);
   });
 
@@ -274,7 +325,7 @@ describe('planRenames — collisions', () => {
       [src(mine, DATE('2025:08:24 14:30:12'))],
       opts([mine, note], { contentKey: keyer({ [mine]: 'ffff0000', [note]: 'zzz' }) }),
     );
-    expect(plan.entries[0]!.targetName).toBe('2025-08-24 14-30-12-000~ffff.JPG');
+    expect(plan.entries[0]!.targetName).toBe('2025-08-24 14-30-12-000~ffff.jpg');
   });
 
   it('treats names case-insensitively, as Windows does', async () => {
@@ -310,8 +361,8 @@ describe('planRenames — DCIM consolidation', () => {
       opts(paths, { consolidateDcim: true }),
     );
     expect(plan.entries.map((e) => e.targetPath)).toEqual([
-      '/card/DCIM/2025-08-24 14-30-12-000.JPG',
-      '/card/DCIM/2025-08-24 15-00-00-000.JPG',
+      '/card/DCIM/2025-08-24 14-30-12-000.jpg',
+      '/card/DCIM/2025-08-24 15-00-00-000.jpg',
     ]);
   });
 
@@ -354,7 +405,7 @@ describe('planRenames — DCIM consolidation', () => {
         contentKey: keyer({ [mine]: '99887766', [sitting]: 'other' }),
       }),
     );
-    expect(plan.entries[0]!.targetName).toBe('2025-08-24 14-30-12-000~9988.JPG');
+    expect(plan.entries[0]!.targetName).toBe('2025-08-24 14-30-12-000~9988.jpg');
   });
 
   it('reports both the source and the target folder as touched', async () => {
@@ -436,10 +487,19 @@ describe('planMoves', () => {
     const plan = await planMoves([src(p)], DEST, moveOpts([p]));
     expect(plan.entries[0]).toMatchObject({
       action: 'rename',
-      targetPath: '/dest/P1000001.JPG',
-      targetName: 'P1000001.JPG',
+      targetPath: '/dest/P1000001.jpg',
+      targetName: 'P1000001.jpg',
       tag: null,
     });
+  });
+
+  it('lower-cases the extension of a moved file too', async () => {
+    // A move keeps the STEM and generates the rest, so the same rule applies —
+    // otherwise dragging a file into a folder would leave the one shouting
+    // extension in a folder full of quiet ones.
+    const p = '/d/IMG_1.JPG';
+    const plan = await planMoves([src(p)], DEST, moveOpts([p]));
+    expect(plan.entries[0]!.targetName).toBe('IMG_1.jpg');
   });
 
   it('needs no timestamp at all', async () => {
@@ -452,14 +512,14 @@ describe('planMoves', () => {
   });
 
   it('reports a file already in the target as unchanged', async () => {
-    const p = '/dest/already.JPG';
+    const p = '/dest/already.jpg';
     const plan = await planMoves([src(p)], DEST, moveOpts([p]));
     expect(plan.entries[0]!.action).toBe('unchanged');
     expect(plan.counts.rename).toBe(0);
   });
 
   it('moves only the half of a mixed selection that has somewhere to go', async () => {
-    const here = '/dest/here.JPG';
+    const here = '/dest/here.jpg';
     const there = '/d/there.JPG';
     const plan = await planMoves([src(here), src(there)], DEST, moveOpts([here, there]));
     expect(plan.counts).toMatchObject({ unchanged: 1, rename: 1 });
@@ -475,7 +535,7 @@ describe('planMoves', () => {
         contentKey: keyer({ [mine]: 'abcd1234', [sitting]: 'other' }),
       }),
     );
-    expect(plan.entries[0]!.targetName).toBe('IMG_1~abcd.JPG');
+    expect(plan.entries[0]!.targetName).toBe('IMG_1~abcd.jpg');
   });
 
   it('leaves a byte-identical duplicate where it is', async () => {
@@ -500,7 +560,7 @@ describe('planMoves', () => {
         contentKey: keyer({ [jpg]: 'beef0000', [sitting]: 'other' }),
       }),
     );
-    expect(plan.entries.map((e) => e.targetName)).toEqual(['IMG_1~beef.JPG', 'IMG_1~beef.RW2']);
+    expect(plan.entries.map((e) => e.targetName)).toEqual(['IMG_1~beef.jpg', 'IMG_1~beef.rw2']);
   });
 
   it('takes companions the app cannot see along', async () => {
@@ -511,10 +571,10 @@ describe('planMoves', () => {
       moveOpts([jpg, '/d/IMG_1.RW2', '/d/IMG_1.RW2.xmp', '/d/._IMG_1.JPG']),
     );
     expect(plan.entries.map((e) => e.targetName).sort()).toEqual([
-      '._IMG_1.JPG',
-      'IMG_1.JPG',
-      'IMG_1.RW2',
-      'IMG_1.RW2.xmp',
+      '._IMG_1.jpg',
+      'IMG_1.jpg',
+      'IMG_1.rw2',
+      'IMG_1.rw2.xmp',
     ]);
     expect(plan.entries.every((e) => e.targetFolder === DEST)).toBe(true);
   });

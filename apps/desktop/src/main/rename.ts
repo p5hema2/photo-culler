@@ -45,8 +45,12 @@ import type {
   ResultsFile,
 } from '@photo-culler/types';
 import { planMoves, planRenames, type RenameSource } from '@photo-culler/image-utils/rename';
-import { isMediaFile } from '@photo-culler/image-utils/media';
-import { readImageMetadata } from '@photo-culler/image-utils/metadata';
+import { isMediaFile, isVideoFile } from '@photo-culler/image-utils/media';
+import {
+  readImageMetadata,
+  readCaptureLadder,
+  fileModifyDateTag,
+} from '@photo-culler/image-utils/metadata';
 import { readTimestampTags, forgetCachedMetadata } from './exiftool';
 import { isScanPassRunning, remapScanPass } from './scan-pass';
 import { withFileLock } from './file-lock';
@@ -97,7 +101,32 @@ const WINDOWS_MAX_TARGET_PATH = 259 - 32;
  * hash — it exists to tell two photos apart, and reading 2.6 GB of video to
  * decide a filename suffix would be absurd. It is not an integrity check.
  */
+/**
+ * Memoised for the duration of ONE plan, and cleared at the start of each.
+ *
+ * The planner asks for BOTH sides of every name collision, and a file already
+ * sitting on a target name can be the holder for several groups — so without
+ * this it is re-read once per collision it takes part in. Each answer is 64 kB
+ * and a seek: measured on a real DCIM holding 3044 duplicate names, the hashing
+ * was 79 of the 90 seconds the whole plan took.
+ *
+ * Cleared per plan rather than kept for the session, because a path is not a
+ * stable identity for CONTENT here — `rotateImage` rewrites a file's bytes
+ * under an unchanged path. Within one plan nothing writes, so the cache cannot
+ * go stale; across two, it could say "byte-identical" about a photo somebody
+ * has since turned. The saving is entirely within a single plan anyway.
+ */
+const contentKeyCache = new Map<string, string>();
+
 async function contentKey(filePath: string): Promise<string> {
+  const cached = contentKeyCache.get(filePath);
+  if (cached !== undefined) return cached;
+  const computed = await computeContentKey(filePath);
+  contentKeyCache.set(filePath, computed);
+  return computed;
+}
+
+async function computeContentKey(filePath: string): Promise<string> {
   try {
     const info = await stat(filePath);
     const handle = await open(filePath, 'r');
@@ -189,14 +218,84 @@ async function listDirectories(
   return listings;
 }
 
+/**
+ * Reads the capture-time ladder in flight, per file.
+ *
+ * Deliberately more than `METADATA_CONCURRENCY`'s reasoning would suggest,
+ * because these reads are 0.63 ms of parse against one seeking 64 kB read: the
+ * limit is about not queueing thousands of handles at once, and 16 is enough to
+ * keep a fast disk busy without punishing a network share.
+ */
+const LADDER_CONCURRENCY = 16;
+
+/**
+ * The capture-time ladder for every file, from the cheapest reader that can
+ * answer for it.
+ *
+ * **exifr for stills, exiftool for videos.** Measured on the user's archive,
+ * exiftool costs 28.55 ms per file — and batching it 200-per-invocation the way
+ * H:\rename-by-date does measured 28.5 ms too, so the cost is exiftool itself
+ * rather than the round trip. exifr reads the same EXIF block in 0.63 ms cold.
+ * That is the difference between six seconds and four and a half minutes on a
+ * 9354-file folder, which is what made the preview unusable.
+ *
+ * A video has to go the slow way: its date lives in the `moov` atom and exifr
+ * does not read one. There are 274 of those against 21 747 stills in the
+ * archive this was measured on, so the slow path is 1.2% of the work.
+ *
+ * `FileModifyDate` is spliced in from the mtime for BOTH paths — it is not an
+ * EXIF tag, and it is the rung that names a file with no metadata at all.
+ */
+async function readCaptureTags(
+  paths: readonly string[],
+): Promise<Map<string, Record<string, string>>> {
+  const out = new Map<string, Record<string, string>>();
+
+  const videos = paths.filter((p) => isVideoFile(p));
+  const stills = paths.filter((p) => !isVideoFile(p));
+
+  if (videos.length > 0) {
+    for (const [filePath, tags] of await readTimestampTags(videos)) {
+      out.set(filePath, { ...tags });
+    }
+  }
+
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < stills.length) {
+      const filePath = stills[next++]!;
+      out.set(filePath, await readCaptureLadder(filePath));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(LADDER_CONCURRENCY, stills.length) }, worker));
+
+  // The bottom rung, for every file, from a stat rather than a read.
+  await Promise.all(
+    paths.map(async (filePath) => {
+      const tags = out.get(filePath) ?? {};
+      if (tags.FileModifyDate === undefined) {
+        try {
+          tags.FileModifyDate = fileModifyDateTag((await stat(filePath)).mtimeMs);
+        } catch {
+          // Gone. It has no date and the planner will leave it alone.
+        }
+      }
+      out.set(filePath, tags);
+    }),
+  );
+
+  return out;
+}
+
 export async function planRename(request: RenameRequest): Promise<RenamePlanResult> {
   try {
+    contentKeyCache.clear();
     const paths = await collectSources(request);
     if (paths.length === 0) {
       return { plan: { entries: [], counts: emptyCounts(), touchedFolders: [] } };
     }
 
-    const tagsByPath = await readTimestampTags(paths);
+    const tagsByPath = await readCaptureTags(paths);
 
     const sources: RenameSource[] = paths.map((filePath) => ({
       path: filePath,
@@ -250,22 +349,27 @@ function emptyCounts(): RenamePlan['counts'] {
  */
 async function renameNoReplace(src: string, dest: string): Promise<void> {
   // A pure case change is not a collision and is not a no-op: NTFS and APFS are
-  // case-insensitive but case-PRESERVING, so `IMG.JPG` -> `img.JPG` must go
-  // through — and any existence check would report the destination as taken,
-  // because it IS the source.
-  const caseOnly = src !== dest && src.toLowerCase() === dest.toLowerCase();
-
-  if (!caseOnly) {
-    let handle;
-    try {
-      handle = await open(dest, 'wx');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-        throw new Error(`Ziel existiert bereits: ${path.basename(dest)}`);
-      }
-      throw err;
-    }
+  // case-insensitive but case-PRESERVING, so `IMG.JPG` -> `img.jpg` must go
+  // through — and the reservation reports the destination as taken, because it
+  // IS the source. Since the extension is lower-cased, that is not an edge case
+  // any more: it is every file on every run after the first.
+  //
+  // Which is why the question is asked of the FILESYSTEM and not of the two
+  // strings. A name comparison cannot tell "the occupant is my own source" from
+  // "a different file happens to differ only in case" — and on a case-SENSITIVE
+  // volume (case-sensitive APFS, an SMB share from Linux) the second is real,
+  // and treating it as benign would let `fs.rename` overwrite a photo silently.
+  // That is the one thing this function exists to prevent.
+  let reserved = false;
+  try {
+    const handle = await open(dest, 'wx');
     await handle.close();
+    reserved = true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    if (!(await isSameFile(src, dest))) {
+      throw new Error(`Ziel existiert bereits: ${path.basename(dest)}`);
+    }
   }
 
   const delays = [0, 120, 400];
@@ -279,11 +383,35 @@ async function renameNoReplace(src: string, dest: string): Promise<void> {
       const transient = code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
       if (!transient || attempt === delays.length - 1) {
         // Drop our own reservation, or the next attempt sees a 0-byte file
-        // sitting on the name and reports "already exists".
-        if (!caseOnly) await unlink(dest).catch(() => undefined);
+        // sitting on the name and reports "already exists". Only OUR
+        // reservation: for a case-only rename there is none, and the file
+        // sitting on that name is the user's photo.
+        if (reserved) await unlink(dest).catch(() => undefined);
         throw err;
       }
     }
+  }
+}
+
+/**
+ * Are these two paths the same file on disk?
+ *
+ * `ino` + `dev`, which is the only portable answer. Measured on this NTFS:
+ * `X.JPG` and `x.jpg` report an identical, non-zero `ino` and `dev`, so the
+ * case-insensitive-but-case-preserving case is answered correctly; on a
+ * case-sensitive volume two different files report different `ino`s and the
+ * caller refuses, which is the whole point of asking.
+ *
+ * Answers false when either side cannot be stat'ed. A missing destination means
+ * the reservation should have succeeded, and the caller's next `rename` reports
+ * whatever is really wrong far better than a guess here would.
+ */
+async function isSameFile(a: string, b: string): Promise<boolean> {
+  try {
+    const [sa, sb] = await Promise.all([stat(a), stat(b)]);
+    return sa.ino !== 0 && sa.ino === sb.ino && sa.dev === sb.dev;
+  } catch {
+    return false;
   }
 }
 
@@ -515,6 +643,7 @@ export async function planMove(
   targetFolder: string,
 ): Promise<RenamePlanResult> {
   try {
+    contentKeyCache.clear();
     const media = paths.filter((p) => isMediaFile(p));
     if (media.length === 0) {
       return { plan: { entries: [], counts: emptyCounts(), touchedFolders: [] } };

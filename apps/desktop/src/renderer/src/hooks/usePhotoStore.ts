@@ -1865,12 +1865,20 @@ export function usePhotoStore(): PhotoStoreAPI {
       (own[folder] ??= {}).thumbs = count;
     }
     for (const [folder, count] of Object.entries(generatedByFolder)) {
-      // Not summed with the on-disk figure: a thumbnail generated this session
-      // is ON DISK by the time it is counted, and the two would double it. The
-      // larger of the pair is the honest answer — the on-disk count is a
-      // snapshot from when the folder opened.
+      // SUMMED, and the two sets really are disjoint: `thumbsOnDisk` is a
+      // snapshot taken when the folder opened, and `onThumbnailGenerated` fires
+      // only for a NEWLY generated thumbnail — a disk-cache hit returns before
+      // reaching it. So nothing is counted twice.
+      //
+      // This was `Math.max` in 1.8.1, on the mistaken reasoning that a
+      // thumbnail generated this session is "already in the on-disk count". It
+      // is not: that count never moves after the folder opens. A folder holding
+      // 600 thumbnails that then generated 900 more showed max(600, 900) = 900
+      // of 1500 and never reached its total — while the score counter, read
+      // from a LIVE map rather than a snapshot, did. That asymmetry is what
+      // gave it away.
       const entry = (own[folder] ??= {});
-      entry.thumbs = Math.max(entry.thumbs ?? 0, count);
+      entry.thumbs = (entry.thumbs ?? 0) + count;
     }
 
     return rollUpCounts(folderTree, own);

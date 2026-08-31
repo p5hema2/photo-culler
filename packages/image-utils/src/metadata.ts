@@ -219,3 +219,100 @@ export async function readImageMetadata(filePath: string): Promise<ImageMetadata
     return {};
   }
 }
+
+/* ----------------------------------------------------- capture-time ladder -- */
+
+/**
+ * The capture-time tag ladder, built from what exifr returns.
+ *
+ * ## Why this exists at all
+ *
+ * The rename planner used to read these tags with exiftool, one round trip per
+ * file through the `-stay_open` child. Measured on the user's archive that is
+ * **28.55 ms per file** — and batching it the way H:\rename-by-date does, 200
+ * files per process invocation with `-@`, came out at 28.5 ms too. So the cost
+ * is not the round trip; it is exiftool. exifr reads the same EXIF block in
+ * **0.63 ms**, cold, which makes a 9354-file folder six seconds instead of four
+ * and a half minutes.
+ *
+ * ## Why splicing is legitimate
+ *
+ * exiftool exposes composite tags — `SubSecDateTimeOriginal` is
+ * `DateTimeOriginal` with `SubSecTimeOriginal` glued on. exifr has no
+ * composites and returns the two fields exactly as they sit in the file, so
+ * this does the gluing. Verified against exiftool over 550 real files across
+ * three shoots: **every name identical, zero deviations.** That check is the
+ * only thing that makes this safe, because a file's name must not depend on
+ * which reader happened to run.
+ *
+ * ## What it cannot do
+ *
+ * `MediaCreateDate` and its SubSec sibling live in an MP4's `moov` atom, which
+ * exifr does not read — so a VIDEO still needs exiftool. There are 274 of those
+ * against 21 747 stills in the archive this was measured on.
+ *
+ * `FileModifyDate` is not an EXIF tag at all; the caller splices it in from the
+ * file's mtime, which it has already stat-ed. See `fileModifyDateTag`.
+ */
+export function captureLadderFromTags(
+  parsed: Record<string, unknown> | null | undefined,
+): Record<string, string> {
+  const tags: Record<string, string> = {};
+  if (!parsed) return tags;
+
+  const str = (key: string): string | null => {
+    const value = parsed[key];
+    return typeof value === 'string' && value.length > 0 ? value : null;
+  };
+
+  const plain = (key: string): void => {
+    const value = str(key);
+    if (value) tags[key] = value;
+  };
+
+  /** `base` with `sub` glued on, which is what exiftool's composite is. */
+  const splice = (base: string, sub: string, into: string): void => {
+    const b = str(base);
+    if (!b) return;
+    const s = str(sub);
+    tags[into] = s ? `${b}.${s}` : b;
+  };
+
+  plain('DateTimeOriginal');
+  plain('CreateDate');
+  splice('DateTimeOriginal', 'SubSecTimeOriginal', 'SubSecDateTimeOriginal');
+  splice('CreateDate', 'SubSecTimeDigitized', 'SubSecCreateDate');
+
+  return tags;
+}
+
+/**
+ * A file's mtime as exiftool would print `FileModifyDate`: LOCAL wall clock.
+ *
+ * Local rather than UTC because that is what exiftool reports, and the two
+ * readers have to agree — `parseStamp` discards the offset, so only the
+ * components matter. This is the ladder's bottom rung, and it is what gave the
+ * three all-zero MP4s in the user's archive a sensible name: a file with no
+ * metadata at all still has an mtime.
+ */
+export function fileModifyDateTag(mtimeMs: number): string {
+  const d = new Date(mtimeMs);
+  const p2 = (n: number): string => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}:${p2(d.getMonth() + 1)}:${p2(d.getDate())} ` +
+    `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`
+  );
+}
+
+/**
+ * Read one image's capture-time ladder. Never throws; {} is a normal outcome.
+ *
+ * Stills only — see captureLadderFromTags.
+ */
+export async function readCaptureLadder(filePath: string): Promise<Record<string, string>> {
+  try {
+    return captureLadderFromTags(await exifr.parse(filePath, PARSE_OPTIONS));
+  } catch {
+    return {};
+  }
+}

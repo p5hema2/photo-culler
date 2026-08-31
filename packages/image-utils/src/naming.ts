@@ -189,12 +189,46 @@ export function validateComponent(name: string): string | null {
 /**
  * Split a basename into stem and extension.
  *
- * The extension keeps its ORIGINAL CASE: a card full of `.JPG` stays `.JPG`,
- * and lower-casing it would be a second, invisible rename on a case-insensitive
- * filesystem — the kind that shows up as "nothing happened" until someone
- * copies the folder to a Mac.
+ * A pure split: the extension comes back exactly as the file spells it, because
+ * this also reads the SOURCE's own name. What a generated name does with it is
+ * `targetExtension`'s decision, one layer up.
  */
 export function splitBasename(basename: string): { stem: string; ext: string } {
   const m = /^(.*)\.([^.]+)$/.exec(basename);
   return m ? { stem: m[1]!, ext: m[2]! } : { stem: basename, ext: '' };
+}
+
+/**
+ * The extension a GENERATED name carries: lower case.
+ *
+ * Accepts either form the planner holds — a bare extension (`JPG`) or a whole
+ * dotted tail (`.ARW.xmp`, which is what a sidecar's name is made of after its
+ * stem) — because both are nothing but extension, and a photo whose name is
+ * lower case beside a sidecar that shouts is the inconsistency this exists to
+ * prevent.
+ *
+ * **A deliberate divergence from H:\rename-by-date**, which reattaches
+ * `$m->{ext}` verbatim (`rename-by-date.pl:466`, with `lc` used only for the
+ * case-insensitive `%taken` lookup on line 454) and therefore leaves a card
+ * full of `.JPG` shouting. Requested, and it costs nothing the contract
+ * covers: the differential in `naming.test.ts` pins the STEM — `parse_stamp`
+ * and `stamp_epoch` — and never sees an extension.
+ *
+ * The old objection to doing this, which the comment above used to carry, was
+ * that on a case-insensitive filesystem it is an invisible second rename that
+ * only surfaces when the folder reaches a Mac. It is answered rather than
+ * avoided, in two places that both had to be right:
+ *
+ * - `renameNoReplace` skips its `open(dest, 'wx')` reservation for a pure case
+ *   change, because on NTFS the destination IS the source and the reservation
+ *   would report EEXIST against the very file being renamed.
+ * - `assertNoOverlap` compares paths case-insensitively and had to learn that a
+ *   target claimed by a file's OWN source is not a cycle. Until it did, one
+ *   already-correctly-named `.JPG` threw the whole folder's plan away.
+ *
+ * So `2025-08-24 14-30-12-000.JPG` -> `….jpg` is a real rename that really
+ * happens, not an 'unchanged' and not a crash.
+ */
+export function targetExtension(ext: string): string {
+  return ext.toLowerCase();
 }
